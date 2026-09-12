@@ -152,13 +152,18 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 /* ---------- 无封面书的占位封面（lib/cover.js 生成）----------
    做法：真封面 img 盖在占位图上面；图挂了就把它藏起来露出占位图，
    所以占位图必须在底层且默认可见（不再闪一下破图）。 */
-.cover-slot { position: relative; display: block; overflow: hidden; }
+.cover-slot {
+  position: relative; display: block; overflow: hidden;
+  /* 作为容器查询基准：里面占位封面的字号按它的宽度缩放。
+     注意容器查询不能查自己，所以容器放在父级 .cover-slot、字号写在子级 .cover-ph。 */
+  container-type: inline-size;
+}
 .cover-ph {
   position: absolute; inset: 0; z-index: 0;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  gap: .38em;
-  padding: 12% 12% 12% 16%;
+  gap: 3cqi;
+  padding: 8% 8% 8% 12%;
   background: linear-gradient(150deg, var(--ph-a), var(--ph-b));
   color: var(--ph-ink);
   text-align: center;
@@ -172,20 +177,26 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 }
 /* 书名上方的小金线：书封常见装饰，克制的一条 */
 .cover-ph-rule {
-  width: 26%; height: 2px; border-radius: 2px;
+  width: 26%; height: max(1px, 1.2cqi); border-radius: 2px;
   background: var(--ph-accent);
   opacity: .85; flex: 0 0 auto;
 }
+/* 字号由 cover.js 按容器尺寸与字数算好，以 cqi 注入（--ph-fs）。
+   cqi = 容器宽度的 1%，所以同一套公式在 58px 缩略图和 290px 大图上都成立。 */
 .cover-ph-title {
-  font-size: var(--ph-size, 1.6em);
+  font-size: var(--ph-fs, 13cqi);
   font-weight: 700; line-height: 1.25;
   letter-spacing: .02em;
-  max-height: 4.2em; overflow: hidden;
   word-break: break-word;
+  /* 必须限宽，否则长书名会横向溢出容器（滚动条/出框）。
+     纵向不再用 max-height 裁切（会切字），靠 cover.js 算准字号保证放得下。 */
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .cover-ph-sub {
-  font-size: .72em; opacity: .72; letter-spacing: .04em;
+  font-size: max(6px, 6.2cqi); opacity: .72; letter-spacing: .02em;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 0 0 auto;
 }
 /* 各处的尺寸适配：容器负责尺寸，里面的真封面/占位图都铺满它 */
 .cover-slot > img {
@@ -203,14 +214,11 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 }
 .cover-ph-list { border-radius: 10px; }
 .cover-ph-player { border-radius: 26px; }
-/* 小尺寸（列表 / 继续听小卡）把装饰收掉，避免糊 */
+/* 小尺寸（58px 列表缩略图）把装饰收掉，避免糊；字号已由 cqi 自适应 */
 .cover-ph-list .cover-ph-rule,
 .cover-ph-list .cover-ph-sub { display: none; }
-.cover-ph-list { padding: 6% 4% 6% 12%; gap: .2em; }
-.cover-ph-list .cover-ph-title {
-  font-size: 1.05em; line-height: 1.2;
-  max-height: 2.5em; letter-spacing: 0;
-}
+.cover-ph-list { padding: 7% 5% 7% 13%; gap: 0; }
+.cover-ph-list .cover-ph-title { letter-spacing: 0; line-height: 1.15; }
 .book-meta { padding: 11px 12px 13px; }
 .book-title {
   font-size: 15px; font-weight: 700; line-height: 1.35;
@@ -264,6 +272,20 @@ input, textarea { user-select: text; -webkit-user-select: text; }
   background: rgba(23, 20, 54, .96);
   backdrop-filter: blur(18px);
   border-top: 1px solid rgba(255,255,255,.07);
+  /* 迷你播放条出现时把底栏抬起来，否则 mini（z-index 70）会整个盖住底栏按钮，
+     孩子点不到「书架 / 找书 / 设置」。--mini-lift 由 body[data-mini="1"] 设置。 */
+  bottom: var(--mini-lift, 0px);
+  transition: bottom .2s ease;
+}
+/* 迷你条显示时：底栏上移，给 mini 条让位 */
+body[data-mini="1"] { --mini-lift: calc(var(--mini-h) + 8px); }
+body[data-mini="1"] #view { padding-bottom: calc(var(--safe-bottom) + var(--mini-h) * 2 + 20px); }
+/* 儿童模式有底栏（约 70px），内容底部要再留出它，否则最后一行卡片被压 */
+body[data-view="kidhome"] #view,
+body[data-view="search"] #view { padding-bottom: calc(var(--safe-bottom) + var(--mini-h) + 92px); }
+body[data-view="kidhome"][data-mini="1"] #view,
+body[data-view="search"][data-mini="1"] #view {
+  padding-bottom: calc(var(--safe-bottom) + var(--mini-h) * 2 + 96px);
 }
 .kid-tab {
   flex: 1; background: none; border: none; color: var(--text-dim);
@@ -289,6 +311,13 @@ input, textarea { user-select: text; -webkit-user-select: text; }
   height: 8px; border-radius: 4px; background: rgba(255,255,255,.15);
   position: relative; cursor: pointer;
 }
+/* 进度条本身只有 8px 高，手指几乎点不准。
+   用透明伪元素把实际触摸区上下各撑到 30px（视觉不变，命中区变大）。 */
+.seek-bar::before {
+  content: '';
+  position: absolute; left: -6px; right: -6px; top: -11px; bottom: -11px;
+  border-radius: 12px;
+}
 .seek-fill { height: 100%; border-radius: 4px; background: var(--accent); position: relative; }
 .seek-knob {
   position: absolute; right: -9px; top: 50%; transform: translateY(-50%);
@@ -304,25 +333,31 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .ctrl {
   border: none; background: none; color: var(--text);
   cursor: pointer; display: grid; place-items: center;
+  /* 触摸目标至少 44×44（儿童模式更该宽松）：按钮视觉大小靠 font-size，
+     点击区靠 min-width/min-height 撑开，否则 30px 的上/下一集很难点中。 */
+  min-width: 56px; min-height: 56px;
 }
-.ctrl.big { font-size: 54px; }
-.ctrl.mid { font-size: 30px; color: var(--text-dim); }
-.ctrl.side { font-size: 26px; width: 52px; }
+.ctrl.big { font-size: 54px; min-width: 72px; min-height: 72px; }
+.ctrl.mid { font-size: 32px; color: var(--text-dim); }
+.ctrl.side { font-size: 26px; min-width: 56px; }
 .ctrl:active { transform: scale(.92); }
 
 .player-tools { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
 .tool-chip {
   border: none; background: var(--card); color: var(--text);
-  padding: 10px 16px; border-radius: 20px;
+  /* 高度补到 44 以上，保证儿童也能点中 */
+  padding: 13px 18px; border-radius: 22px; min-height: 44px;
   font-size: 14px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center;
 }
 .tool-chip:active { transform: scale(.95); }
-.tool-chip.on { background: var(--accent); }
-.tool-chip.warn { background: rgba(255,181,77,.16); color: var(--warn); }
 
 /* ---------- 语音搜索 ---------- */
 .voice-fab {
-  position: fixed; right: 18px; bottom: calc(var(--safe-bottom) + var(--mini-h) + 18px);
+  position: fixed; right: 18px;
+  /* 底部偏移要跟着底栏一起抬高（body[data-mini] 时 --mini-lift 生效），
+     否则迷你条出现时会压住儿童模式底栏的「设置」 */
+  bottom: calc(var(--safe-bottom) + var(--mini-h) + 18px + var(--mini-lift, 0px));
   width: 62px; height: 62px; border-radius: 50%; z-index: 60;
   border: none; cursor: pointer;
   background: linear-gradient(140deg, var(--accent), var(--accent-2));
@@ -357,7 +392,6 @@ input, textarea { user-select: text; -webkit-user-select: text; }
   padding: 8px 14px; border-radius: 18px; font-size: 13px;
   border: none; cursor: pointer;
 }
-.voice-close { margin-top: 14px; }
 
 /* ---------- 迷你播放条 ---------- */
 .mini {
@@ -449,14 +483,6 @@ input, textarea { user-select: text; -webkit-user-select: text; }
   font-size: 16px; outline: none;
 }
 .search-bar input:focus { border-color: var(--accent); }
-
-.chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; scrollbar-width: none; }
-.chips::-webkit-scrollbar { display: none; }
-.chip {
-  flex: 0 0 auto; border: none; background: var(--card); color: var(--text-dim);
-  padding: 9px 15px; border-radius: 18px; font-size: 13px; font-weight: 600; cursor: pointer;
-}
-.chip.active { background: var(--accent); color: #fff; }
 
 /* 章节表 */
 .chapter-item {

@@ -44,7 +44,8 @@
       <div class="lock-card">
         <div class="lock-title">家长确认</div>
         <div class="lock-sub">请输入家长密码</div>
-        <input id="lockPin" class="lock-input" type="number" inputmode="numeric" placeholder="••••" />
+        <input id="lockPin" class="lock-input" type="text" inputmode="numeric" autocomplete="off"
+               maxlength="6" pattern="[0-9]*" placeholder="••••" />
         <div id="lockErr" class="lock-err"></div>
         <div class="lock-actions">
           <button id="lockCancel" class="btn ghost">取消</button>

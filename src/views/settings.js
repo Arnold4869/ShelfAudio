@@ -2,7 +2,7 @@
 import { abs } from '../lib/api.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { state, go, toast, esc, requireParentPin, stopCurrent, updateMini } from '../app.js'
-import { stopListening, voiceSupported } from '../lib/voice.js'
+import { voiceSupported } from '../lib/voice.js'
 import { checkVoicePermission, requestVoicePermission, openSystemSettings, onAppResume } from '../lib/permissions.js'
 
 export async function renderSettings(root, { firstRun = false } = {}) {
@@ -101,21 +101,15 @@ export async function renderSettings(root, { firstRun = false } = {}) {
     </div>
 
     <div class="hint" style="margin-top:8px">
-      听书 v0.1.0 · 音频来自你自己的 Audiobookshelf 服务器
+      听书 v${typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '—'} · 音频来自你自己的 Audiobookshelf 服务器
     </div>
   `
 
   const $ = s => root.querySelector(s)
 
-  const finish = async (target) => {
-    if (firstRun) await go(state.mode === 'adult' ? 'shelf' : 'kidhome')
-    else if (target) await go(target)
-  }
-
-  $('#btnBack').onclick = async () => {
-    if (firstRun) await go(state.mode === 'adult' ? 'shelf' : 'kidhome')
-    else await go(state.mode === 'adult' ? 'shelf' : 'kidhome')
-  }
+  // 返回一律回到当前模式的主页（成人→书架，儿童→儿童书架）
+  const goHome = () => go(state.mode === 'adult' ? 'shelf' : 'kidhome')
+  $('#btnBack').onclick = goHome
 
   // ---- 语音权限：显示实时状态 + 重新申请 + 跳设置 ----
   const micState = $('#micState')
@@ -157,11 +151,11 @@ export async function renderSettings(root, { firstRun = false } = {}) {
   $('#rowPin').onclick = () => openPinDialog()
 
   $('#rowKid').onclick = async () => {
-    if (state.mode === 'kid') { await finish('kidhome'); return }
+    if (state.mode === 'kid') { await goHome(); return }
     await switchMode('kid')
   }
   $('#rowAdult').onclick = async () => {
-    if (state.mode === 'adult') { await finish('shelf'); return }
+    if (state.mode === 'adult') { await goHome(); return }
     // 进成人模式要家长密码
     if (state.kidPin) {
       const ok = await requireParentPin()
@@ -202,9 +196,9 @@ export async function renderSettings(root, { firstRun = false } = {}) {
     modal.innerHTML = `<div class="lock-card">
       <div class="lock-title">${state.kidPin ? '修改家长密码' : '设置家长密码'}</div>
       <div class="lock-sub">4-6 位数字，别忘了</div>
-      ${state.kidPin ? `<input class="lock-input" id="pinOld" type="number" inputmode="numeric" placeholder="当前密码" style="margin-bottom:10px">` : ''}
-      <input class="lock-input" id="pin1" type="number" inputmode="numeric" placeholder="新密码">
-      <input class="lock-input" id="pin2" type="number" inputmode="numeric" placeholder="再输一次" style="margin-top:10px">
+      ${state.kidPin ? `<input class="lock-input" id="pinOld" type="text" inputmode="numeric" autocomplete="off" maxlength="6" pattern="[0-9]*" placeholder="当前密码" style="margin-bottom:10px">` : ''}
+      <input class="lock-input" id="pin1" type="text" inputmode="numeric" autocomplete="off" maxlength="6" pattern="[0-9]*" placeholder="新密码">
+      <input class="lock-input" id="pin2" type="text" inputmode="numeric" autocomplete="off" maxlength="6" pattern="[0-9]*" placeholder="再输一次" style="margin-top:10px">
       <div class="lock-err" id="pinErr"></div>
       <div class="lock-actions">
         <button class="btn ghost" id="pinCancel">取消</button>

@@ -36,6 +36,19 @@ export function coverPalette(seed) {
 }
 
 /**
+ * 占位封面尺寸表：容器实际尺寸（px，按 390pt 手机估）与留白比例。
+ * 用它们把字号算成 cqi（容器宽度的百分比）——cqi 与容器同比例缩放，
+ * 所以一套公式在 58px 缩略图和 290px 大图上都成立。
+ */
+const SIZES = {
+  // cls 片段 -> { w, h } 容器尺寸
+  list: { w: 58, h: 58 },
+  continue: { w: 200, h: 120 },
+  player: { w: 281, h: 281 },
+  card: { w: 171, h: 171 },
+}
+
+/**
  * 生成占位封面 HTML
  * @param {object} opts
  *   title   书名（必填，用于配色与文字）
@@ -50,13 +63,31 @@ export function fallbackCover({ title = '', author = '', cls = '' } = {}) {
     // 只留前 6 个字（小尺寸下勉强可辨），并去掉结尾的孤立标点/括号
     name = [...name].slice(0, 6).join('').replace(/[\s·・:：,，。.、\[\]【】()（）\-—_]+$/g, '') || name.slice(0, 6)
   }
-  // 书名过长时缩小字号：短名大、长名小，避免撑破
-  const len = [...name].length
-  const size = len <= 4 ? '2.05em' : len <= 7 ? '1.65em' : len <= 11 ? '1.32em' : '1.05em'
+
+  const chars = [...name].length
+  // 行数：短名 1 行、中等 2 行、长名 3 行
+  const lines = chars <= 4 ? 1 : chars <= 8 ? 2 : 3
+  const perLine = Math.max(1, Math.ceil(chars / lines))
+  // 空格会被当作换行点，所以每个空格分隔的片段必须能单独放进一行 ——
+  // 否则会出现「太空历险记」这种整段放不下、横向溢出 5px 的情况。
+  const tokens = name.split(/\s+/).filter(Boolean)
+  const longestRun = Math.max(perLine, ...tokens.map(t => [...t].length))
+  // 容器尺寸（按 cls 选），换算成 cqi 后与实际像素无关，可跨尺寸复用
+  const box = cls.includes('list') ? SIZES.list
+            : cls.includes('continue') ? SIZES.continue
+            : cls.includes('player') ? SIZES.player
+            : SIZES.card
+  // 横向约束：每行字数 × 字号 ≤ 可用宽度（留出 padding 与书脊）
+  // 纵向约束：行数 × 行高 × 字号 ≤ 可用高度
+  const WIDTH_SAFE = 66, HEIGHT_SAFE = 56, LINE_H = 1.25
+  const byWidth = WIDTH_SAFE / longestRun
+  const byHeight = (HEIGHT_SAFE / (lines * LINE_H)) * (box.h / box.w)
+  const fsCqi = Math.max(7, Math.min(34, Math.min(byWidth, byHeight)))
+
   const sub = String(author || '').trim().slice(0, 12)
 
   return `<div class="cover-ph ${cls}" aria-hidden="true"
-    style="--ph-a:${p.bg[0]};--ph-b:${p.bg[1]};--ph-ink:${p.ink};--ph-accent:${p.accent};--ph-size:${size}">
+    style="--ph-a:${p.bg[0]};--ph-b:${p.bg[1]};--ph-ink:${p.ink};--ph-accent:${p.accent};--ph-fs:${fsCqi.toFixed(2)}cqi">
     <span class="cover-ph-spine"></span>
     <span class="cover-ph-rule"></span>
     <span class="cover-ph-title">${escapeHTML(name)}</span>

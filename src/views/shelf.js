@@ -118,9 +118,35 @@ export async function renderShelf(root, { kid }) {
       }).join('')}
     </div>` : ''
 
+  // 成人模式用紧凑列表（一屏看更多、带进度百分比），儿童模式用大卡片网格。
+  // 之前两个分支都渲染 shelf-grid + cardHTML，第二参数只影响封面分辨率，
+  // 导致成人模式和儿童模式长得一模一样（成人模式应有的信息密度完全没有）。
+  const rowHTML = (it) => {
+    const m = it.media?.metadata || {}
+    const title = m.title || '未命名'
+    const prog = progressMap[it.id]
+    const pct = prog && prog.duration ? Math.min(100, Math.round((prog.currentTime || 0) / prog.duration * 100)) : 0
+    const done = prog?.isFinished
+    const dur = fmtDur(it.media?.duration)
+    const who = m.authorName || m.narratorName || ''
+    const tail = done ? '已听完' : (pct > 0 ? pct + '%' : '▶')
+    return `
+      <div class="list-item" data-id="${it.id}">
+        <div class="cover-slot">
+          ${fallbackCover({ title, author: who, cls: 'cover-ph-list' })}
+          <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">
+        </div>
+        <div class="list-main">
+          <div class="list-title">${esc(title)}</div>
+          <div class="list-sub">${esc(who)}${who && dur ? ' · ' : ''}${esc(dur)}</div>
+        </div>
+        <div class="list-pct">${tail}</div>
+      </div>`
+  }
+
   root.innerHTML = head + continueHTML +
     (kid ? `<div class="shelf-grid">${items.map(it => cardHTML(it, true)).join('')}</div>`
-         : `<div class="shelf-grid">${items.map(it => cardHTML(it, false)).join('')}</div>`)
+         : `<div class="shelf-list">${items.map(rowHTML).join('')}</div>`)
 
   if (kid) {
     root.insertAdjacentHTML('beforeend', `

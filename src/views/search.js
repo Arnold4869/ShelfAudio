@@ -1,7 +1,7 @@
 /** 搜索页：文字 + 语音（语音走同一入口，识别结果可当指令也可当关键词） */
 import { abs } from '../lib/api.js'
 import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini } from '../app.js'
-import { listen, parseCommand, voiceSupported } from '../lib/voice.js'
+import { voiceSupported } from '../lib/voice.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 

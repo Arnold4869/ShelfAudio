@@ -40,8 +40,12 @@ export function fmtTime(sec) {
 }
 
 export function fmtDur(sec) {
-  const hh = Math.floor((sec || 0) / 3600)
-  const mm = Math.round(((sec || 0) % 3600) / 60)
+  // 先整体四舍五入到分钟再拆分，否则 7199s 会算成「1 小时 60 分」（分钟进位没同步到小时）
+  const s = Math.max(0, Math.round(sec || 0))
+  if (s < 60) return `${s} 秒`            // 避免出现「0 分钟」
+  const totalMin = Math.round(s / 60)
+  const hh = Math.floor(totalMin / 60)
+  const mm = totalMin % 60
   if (hh > 0) return `${hh} 小时 ${mm} 分`
   return `${mm} 分钟`
 }
@@ -221,10 +225,13 @@ export async function stopCurrent() {
 // ---------------- 迷你条 ----------------
 function updateMini() {
   const mini = $('#mini'), c = state.current, p = state.player
-  if (!c || !p) { mini.classList.add('hidden'); return }
-  if (document.body.dataset.view === 'player') { mini.classList.add('hidden'); return }
+  // data-mini 让 CSS 知道"迷你条显示了"，据此把儿童模式底栏抬起来（否则被盖住点不到）
+  const liftOff = () => { document.body.dataset.mini = '0' }
+  if (!c || !p) { mini.classList.add('hidden'); liftOff(); return }
+  if (document.body.dataset.view === 'player') { mini.classList.add('hidden'); liftOff(); return }
 
   mini.classList.remove('hidden')
+  document.body.dataset.mini = '1'
   const cov = $('#miniCover')
   cov.src = c.cover || ''
   $('#miniTitle').textContent = c.title
