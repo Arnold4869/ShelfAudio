@@ -5,6 +5,63 @@
  */
 import { SpeechRecognition } from '@capgo/capacitor-speech-recognition'
 
+// ---------------- 中文数字解析 ----------------
+const CN_DIGIT = { 零: 0, 〇: 0, 一: 1, 壹: 1, 二: 2, 两: 2, 俩: 2, 贰: 2, 三: 3, 叁: 3, 四: 4, 肆: 4, 五: 5, 伍: 5, 六: 6, 陆: 6, 七: 7, 柒: 7, 八: 8, 捌: 8, 九: 9, 玖: 9 }
+const CN_UNIT = { 十: 10, 拾: 10, 百: 100, 佰: 100, 千: 1000, 仟: 1000 }
+
+/**
+ * 把中文数字串转成数字，支持：
+ *   五 → 5 | 十 → 10 | 十五 → 15 | 三十 → 30 | 四十五 → 45
+ *   一点五 → 1.5 | 两 → 2 | 半 → 0.5
+ * 返回 null 表示无法解析。
+ */
+export function cnNum(s) {
+  if (!s) return null
+  s = String(s).trim()
+  // 已经是阿拉伯数字（含小数）
+  if (/^\d+(\.\d+)?$/.test(s)) return parseFloat(s)
+
+  // 小数：X点Y  → 1.5 这种；"点" 前可有中文数字，后为逐位读法
+  const dotIdx = s.indexOf('点')
+  if (dotIdx >= 0) {
+    const intPart = s.slice(0, dotIdx)
+    const fracPart = s.slice(dotIdx + 1)
+    const intVal = intPart === '' ? 0 : (cnNum(intPart) ?? 0)
+    if (!fracPart) return intVal
+    // 小数部分逐位：五 → 5 即 .5；二五 → .25
+    let frac = ''
+    for (const ch of fracPart) {
+      const d = CN_DIGIT[ch]
+      if (d === undefined) return null
+      frac += String(d)
+    }
+    return parseFloat(`${intVal}.${frac}`)
+  }
+
+  // 纯 "半"
+  if (s === '半') return 0.5
+
+  // 整数：累加式解析（十=10, 十五=15, 三十=30, 一百二十=120）
+  let total = 0, section = 0, found = false
+  for (const ch of s) {
+    if (ch in CN_DIGIT) {
+      section = CN_DIGIT[ch]
+      found = true
+    } else if (ch in CN_UNIT) {
+      const unit = CN_UNIT[ch]
+      // "十五"：十前面没有数字时按 1 算
+      total += (section === 0 ? 1 : section) * unit
+      section = 0
+      found = true
+    } else {
+      return null
+    }
+  }
+  return found ? total + section : null
+}
+
+const NUM_CHARS = '0-9零〇一壹二两俩贰三叁四肆五伍六陆七柒八捌九玖十拾百佰千仟点半'
+
 let rec = null
 
 export function voiceSupported() {
@@ -33,39 +90,43 @@ export async function ensurePermission() {
  *  intent: 'search' | 'play' | 'pause' | 'next' | 'prev' | 'louder' | 'quieter' | 'rate' | 'sleep' | 'unknown'
  */
 export function parseCommand(text) {
-  const t = (text || '').replace(/\s+/g, '').replace(/[，。！？,.!?]/g, '')
+  const t = (text || '').replace(/\s+/g, '').replace(/[，。！？,.!?、；;]/g, '')
+  if (!t) return { intent: 'unknown' }
 
   // 音量
-  if (/(大声|声音大|大点声|调大|音量加|音量大)/.test(t)) return { intent: 'louder' }
-  if (/(小声|声音小|小点声|调小|音量减|音量小)/.test(t)) return { intent: 'quieter' }
+  if (/(大声|声音大|大点声|大一点声|调大|音量加|音量大|大声一点)/.test(t)) return { intent: 'louder' }
+  if (/(小声|声音小|小点声|小一点声|调小|音量减|音量小|小声一点)/.test(t)) return { intent: 'quieter' }
 
-  // 倍速
-  const rateM = t.match(/([0-9一二三四五六]+)\s*倍/)
+  // 倍速：X倍 / X倍速（支持 1.5倍、两倍、一倍半）
+  const rateM = t.match(new RegExp(`([${NUM_CHARS}]+)\\s*倍`))
   if (rateM) {
-    const map = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6 }
-    let v = map[rateM[1]] ?? parseFloat(rateM[1])
-    if (v > 6) v = v / 10   // "一点五倍" → 15 → 1.5
-    if (v >= 0.5 && v <= 3) return { intent: 'rate', rate: v }
+    const v = cnNum(rateM[1])
+    if (v !== null && v >= 0.5 && v <= 4) return { intent: 'rate', rate: v }
   }
-  if (/(正常速度|原速)/.test(t)) return { intent: 'rate', rate: 1 }
+  if (/(正常速度|原速|正常语速)/.test(t)) return { intent: 'rate', rate: 1 }
 
-  // 睡眠定时
-  const sleepM = t.match(/([0-9一二三四五六七八九十]+)\s*(分钟|小时)/)
-  if (sleepM && /(定时|睡眠|听完|睡后|关掉|关闭|停止)/.test(t)) {
-    const map = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }
-    let n = map[sleepM[1]] ?? parseInt(sleepM[1], 10)
-    if (sleepM[2] === '小时') n *= 60
-    return { intent: 'sleep', minutes: n }
+  // 睡眠定时：X分钟后关闭 / 定时X分钟 / X小时
+  if (/(定时|睡眠|睡后|听完|关闭|关掉|停止|暂停)/.test(t)) {
+    const unitM = t.match(new RegExp(`([${NUM_CHARS}]+)\\s*(分钟|小时|钟头)`))
+    if (unitM) {
+      let n = cnNum(unitM[1])
+      if (n !== null) {
+        if (unitM[2] !== '分钟') n *= 60
+        return { intent: 'sleep', minutes: Math.round(n) }
+      }
+    }
+    // "半小时后关闭"
+    if (/半\s*小时/.test(t)) return { intent: 'sleep', minutes: 30 }
   }
 
   // 播放控制
-  if (/(暂停|停一下|别播了|不听了)/.test(t)) return { intent: 'pause' }
-  if (/(上一集|上一个|前一集|往回)/.test(t)) return { intent: 'prev' }
-  if (/(下一集|下一个|后一集|跳过|快进到下一)/.test(t)) return { intent: 'next' }
-  if (/(继续播放|接着播|继续听|接着听|播放)/.test(t) && t.length <= 6) return { intent: 'play' }
+  if (/(暂停|停一下|停下|别播了|不听了)/.test(t)) return { intent: 'pause' }
+  if (/(上一集|上一条|上一个|前一集|往回)/.test(t)) return { intent: 'prev' }
+  if (/(下一集|下一条|下一个|后一集|跳过)/.test(t)) return { intent: 'next' }
+  if (/^(继续播放|接着播|继续听|接着听|播放|继续|恢复播放)$/.test(t)) return { intent: 'play' }
 
   // 剩下的都当搜索词：去掉动词前缀
-  let q = t.replace(/^(我要听|我想听|播放|放一下|找一下|找找|找|搜索|搜|听|打开)/, '')
+  let q = t.replace(/^(我要听|我想听|我想看|播放|放一下|放|找一下|找找|找|搜索|搜|查一下|听|打开|来一段|来一本)/, '')
   if (!q) q = t
   return { intent: 'search', query: q }
 }
