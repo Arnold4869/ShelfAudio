@@ -55,7 +55,11 @@ const factory = new Function('store', 'CONFIG_KEYS', src)
 const S = factory(fakeStore, CONFIG_KEYS)
 
 // 控制时间：把 Date.now / setInterval 换成可控的
-let NOW = new Date('2026-09-12T09:00:00+08:00').getTime()
+// ⚠️ 用本地时区构造时间戳（不要硬编码 +08:00）。
+// stats 的分时段是按手机**本地时区**判断的（孩子在当地 9 点听就是"上午"），
+// 所以测试必须在任意 TZ 下都通过 —— 硬编码偏移会在 CI（UTC）上失败。
+const at = (h, m = 0) => new Date(2026, 8, 12, h, m, 0, 0).getTime()
+let NOW = at(9)
 const realNow = Date.now
 const realSetTimeout = globalThis.setTimeout
 const realSetInterval = globalThis.setInterval
@@ -121,17 +125,17 @@ async function run() {
   console.log("\n=== 4. 上午/下午/晚上分时段 ===")
   await reset()
   // 上午 9 点
-  NOW = new Date('2026-09-12T09:00:00+08:00').getTime()
+  NOW = at(9)
   await S.startListening('b', '书')
   advance(60000); await new Promise(r => realSetTimeout(r, 20))
   await S.stopListening()
   // 下午 14 点
-  NOW = new Date('2026-09-12T14:00:00+08:00').getTime()
+  NOW = at(14)
   await S.startListening('b', '书')
   advance(120000); await new Promise(r => realSetTimeout(r, 20))
   await S.stopListening()
   // 晚上 20 点
-  NOW = new Date('2026-09-12T20:00:00+08:00').getTime()
+  NOW = at(20)
   await S.startListening('b', '书')
   advance(180000); await new Promise(r => realSetTimeout(r, 20))
   await S.stopListening()
@@ -140,10 +144,10 @@ async function run() {
   ok("上午约 60 秒", per.morning >= 55 && per.morning <= 65, String(per.morning))
   ok("下午约 120 秒", per.afternoon >= 115 && per.afternoon <= 125, String(per.afternoon))
   ok("晚上约 180 秒", per.evening >= 175 && per.evening <= 185, String(per.evening))
-  ok("periodOf 边界：11:59→上午", S.periodOf(new Date('2026-09-12T11:59:00+08:00').getTime()) === 'morning')
-  ok("periodOf 边界：12:00→下午", S.periodOf(new Date('2026-09-12T12:00:00+08:00').getTime()) === 'afternoon')
-  ok("periodOf 边界：17:59→下午", S.periodOf(new Date('2026-09-12T17:59:00+08:00').getTime()) === 'afternoon')
-  ok("periodOf 边界：18:00→晚上", S.periodOf(new Date('2026-09-12T18:00:00+08:00').getTime()) === 'evening')
+  ok("periodOf 边界：11:59→上午", S.periodOf(at(11, 59)) === 'morning')
+  ok("periodOf 边界：12:00→下午", S.periodOf(at(12)) === 'afternoon')
+  ok("periodOf 边界：17:59→下午", S.periodOf(at(17, 59)) === 'afternoon')
+  ok("periodOf 边界：18:00→晚上", S.periodOf(at(18)) === 'evening')
 
   console.log("\n=== 5. 分时段明细（sessions）===")
   const byBook5 = await S.summaryByBook('2026-09-12')
@@ -165,7 +169,7 @@ async function run() {
 
   console.log("\n=== 7. 日期归属 & 清理 ===")
   await reset()
-  NOW = new Date('2026-09-12T23:59:00+08:00').getTime()
+  NOW = at(23, 59)
   await S.startListening('b', '书')
   advance(30000); await new Promise(r => realSetTimeout(r, 20))
   await S.stopListening()
