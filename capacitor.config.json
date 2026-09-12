@@ -19,6 +19,9 @@
   "plugins": {
     "NativeAudio": {
       "hls": false
+    },
+    "CapacitorHttp": {
+      "enabled": true
     }
   }
 }

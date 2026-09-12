@@ -9,6 +9,73 @@
 
 const DEFAULT_TIMEOUT = 20000
 
+/**
+ * ⚠️ 为什么不用 fetch：
+ * ABS 的 CORS 白名单只有 `capacitor://localhost` 和 `http://localhost`（见 ABS
+ * server/Server.js），而 WebView 里的页面 origin 是 `https://localhost`（Android）
+ * 或 `capacitor://localhost`（iOS）—— 请求你自己的服务器属于跨域，预检 OPTIONS
+ * 被拒 → fetch 直接失败，表现成"地址没错但连不上"。
+ *
+ * 解法：走 Capacitor 的 CapacitorHttp 原生层发请求（http.native 包一层）。
+ * 在 capacitor.config.json 里开 `plugins.CapacitorHttp.enabled = true`，
+ * Capacitor 会把 window.fetch 自动 patch 成原生实现（绕过 CORS），
+ * 这里的封装负责拿到真实的原生错误信息 + 超时控制。
+ */
+import { CapacitorHttp } from '@capacitor/core'
+
+function nativeHttp() {
+  // 用官方导出（@capacitor/core 直接导出 CapacitorHttp），比 window.Capacitor.Plugins 内部路径稳
+  return CapacitorHttp || null
+}
+
+/** 是否在原生壳里运行 */
+function isNativeShell() {
+  try {
+    return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())
+  } catch (_) { return false }
+}
+
+/** 发一次请求：原生优先，浏览器回退 fetch */
+async function request(url, { method = 'GET', headers = {}, data, timeout = DEFAULT_TIMEOUT } = {}) {
+  if (isNativeShell() && nativeHttp()) {
+    const res = await nativeHttp().request({ url, method, headers, data, readTimeout: timeout, connectTimeout: timeout })
+    return {
+      status: res.status,
+      ok: res.status >= 200 && res.status < 300,
+      headers: res.headers || {},
+      _data: res.data,
+      _native: true,
+    }
+  }
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeout)
+  try {
+    const r = await fetch(url, { method, headers, body: data ? JSON.stringify(data) : undefined, signal: ctrl.signal })
+    return { status: r.status, ok: r.ok, headers: Object.fromEntries(r.headers.entries()), _res: r, _native: false }
+  } finally { clearTimeout(timer) }
+}
+
+async function readBody(r) {
+  if (r._native) {
+    const d = r._data
+    if (d === null || d === undefined || d === '') return null
+    // 原生层：JSON 响应已被解析成对象，其它是字符串
+    if (typeof d === 'object') return d
+    try { return JSON.parse(d) } catch (_) { return d }
+  }
+  const text = await r._res.text()
+  if (!text.trim()) return null
+  try { return JSON.parse(text) } catch (_) { return text }
+}
+
+function errText(r) {
+  if (r._native) {
+    const d = r._data
+    return typeof d === 'string' ? d.slice(0, 300) : JSON.stringify(d || {}).slice(0, 300)
+  }
+  return ''
+}
+
 export class AbsApi {
   constructor() {
     this.baseUrl = ''
@@ -31,7 +98,7 @@ export class AbsApi {
     if (!this.baseUrl) throw new Error('未配置服务器地址')
     let url = this.baseUrl + path
     const params = new URLSearchParams(query || {})
-    // GET 走 query token（AWS 等场景下更省事）；POST 走 header
+    // GET 走 query token（部分场景更省事）；POST 走 header
     if (method === 'GET' && this.token) params.set('token', this.token)
     const qs = params.toString()
     if (qs) url += (url.includes('?') ? '&' : '?') + qs
@@ -39,28 +106,30 @@ export class AbsApi {
     const headers = { 'Content-Type': 'application/json' }
     if (method !== 'GET' && this.token) headers['Authorization'] = 'Bearer ' + this.token
 
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), timeout)
     let res
     try {
-      res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: ctrl.signal })
+      res = await request(url, { method, headers, data: body, timeout })
     } catch (e) {
-      clearTimeout(timer)
-      if (e.name === 'AbortError') throw new Error('连接超时，检查服务器地址和网络')
-      throw new Error('连不上服务器：' + (e.message || e))
+      const msg = String(e?.message || e)
+      if (/timeout|timed out|abort/i.test(msg)) throw new Error('连接超时：检查服务器地址、网络和反向代理是否正常')
+      if (/cleartext|not permitted/i.test(msg)) throw new Error('这台设备不允许明文 HTTP，请用 https 地址')
+      if (/unable to resolve host|nodename nor servname|unknown host/i.test(msg)) throw new Error('域名解析失败：检查地址是否写错')
+      if (/connect|refused|unreachable|network/i.test(msg)) throw new Error('连不上服务器：' + msg)
+      throw new Error('请求失败：' + msg)
     }
-    clearTimeout(timer)
 
-    if (res.status === 401) throw new Error('登录已失效，请重新登录')
+    if (res.status === 0) throw new Error('网络不可达，检查网络或被代理拦截')
+    if (res.status === 401) {
+      // 登录接口自己处理 401（"用户名或密码不对"），这里只处理已登录后的失效
+      if (/^\/login/.test(path)) return null
+      throw new Error('登录已失效，请重新登录')
+    }
     if (!res.ok) {
-      let detail = ''
-      try { detail = (await res.text()).slice(0, 200) } catch (_) {}
+      const detail = errText(res)
       throw new Error(`请求失败 ${res.status}${detail ? '：' + detail : ''}`)
     }
     if (raw) return res
-    const text = await res.text()
-    if (!text.trim()) return null
-    try { return JSON.parse(text) } catch (_) { return text }
+    return await readBody(res)
   }
 
   get(path, query, opts = {}) { return this._fetch(path, { method: 'GET', query, ...opts }) }
@@ -69,17 +138,17 @@ export class AbsApi {
   // ---- 认证 ----
   static async serverStatus(origin) {
     const base = (origin || '').replace(/\/+$/, '')
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 10000)
+    let res
     try {
-      const res = await fetch(base + '/status', { signal: ctrl.signal })
-      clearTimeout(timer)
-      if (!res.ok) throw new Error('HTTP ' + res.status)
-      return await res.json()
+      res = await request(base + '/status', { timeout: 10000 })
     } catch (e) {
-      clearTimeout(timer)
+      const msg = String(e?.message || e)
+      if (/timeout|timed out/i.test(msg)) throw new Error('连接超时：检查地址、网络和反向代理')
+      if (/unable to resolve/i.test(msg)) throw new Error('域名解析失败：检查地址是否写错')
       throw new Error('连不上这台服务器，检查地址是否正确、NAS 是否开机')
     }
+    if (!res.ok) throw new Error('这台服务器返回了 ' + res.status + '，确认地址指向 Audiobookshelf')
+    return await readBody(res)
   }
 
   async login(origin, username, password) {
@@ -88,14 +157,19 @@ export class AbsApi {
     // 先探活，给出更友好的报错
     await AbsApi.serverStatus(base)
 
-    const res = await fetch(base + '/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    })
+    let res
+    try {
+      res = await request(base + '/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        data: { username, password },
+      })
+    } catch (e) {
+      throw new Error('登录请求失败：' + String(e?.message || e))
+    }
     if (res.status === 401) throw new Error('用户名或密码不对')
-    if (!res.ok) throw new Error('登录失败 HTTP ' + res.status)
-    const data = await res.json()
+    if (!res.ok) throw new Error('登录失败 HTTP ' + res.status + (errText(res) ? '：' + errText(res) : ''))
+    const data = await readBody(res)
     const token = data?.user?.token
     if (!token) throw new Error('登录响应里没有 token')
     this.configure(base, token)
@@ -222,7 +296,7 @@ export class AbsApi {
     return this.post(`/api/collections/${collectionId}/book`, { id: itemId })
   }
   removeFromCollection(collectionId, itemId) {
-    return fetch(`${this.baseUrl}/api/collections/${collectionId}/book/${itemId}`, {
+    return request(`${this.baseUrl}/api/collections/${collectionId}/book/${itemId}`, {
       method: 'DELETE',
       headers: { Authorization: 'Bearer ' + this.token },
     })
