@@ -16,10 +16,31 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // 固定签名：CI 从 GitHub Secret 解码 keystore 到 android/app/ 下并设以下环境变量。
+    // 之前用 debug 签名 —— 每个 CI runner 的 debug keystore 都不一样，
+    // 导致每版签名不同，覆盖安装报「签名不一致」，只能卸载重装（老板 2026-09-12 反馈）。
+    // 本地没有这些变量时（如某人手动 gradlew）回退到 debug 签名，不影响本地开发。
+    def ksPath = System.getenv('SA_KEYSTORE_PATH')
+    if (ksPath != null && file(ksPath).exists()) {
+        signingConfigs {
+            fixed {
+                storeFile file(ksPath)
+                storePassword System.getenv('SA_KEYSTORE_PASS')
+                keyAlias System.getenv('SA_KEY_ALIAS') ?: 'shelfaudio'
+                keyPassword System.getenv('SA_KEYSTORE_PASS')
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (ksPath != null && file(ksPath).exists()) signingConfig signingConfigs.fixed
+        }
+        debug {
+            // 覆盖安装要签名一致 → debug 构建也用固定签名
+            if (ksPath != null && file(ksPath).exists()) signingConfig signingConfigs.fixed
         }
     }
 }

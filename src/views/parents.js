@@ -11,13 +11,11 @@
  */
 import { abs } from '../lib/api.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
-import { state, go, toast, esc, requireParentPin, stopCurrent, updateMini } from '../app.js'
+import { state, go, toast, esc, requireParentPin, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { haptic, setHaptics, hapticsEnabled } from '../lib/haptics.js'
 
 export async function renderParent(root) {
-  const server = await store.get(CONFIG_KEYS.server, '')
-  const username = await store.get(CONFIG_KEYS.username, '')
   const scope = (await store.get(CONFIG_KEYS.progressScope, 'track')) === 'book' ? 'book' : 'track'
 
   root.innerHTML = `
@@ -68,27 +66,12 @@ export async function renderParent(root) {
 
     <div class="section-h">服务器</div>
     <div class="settings-group">
-      <div class="setting-row">
-        <div class="setting-ic">${icon('server', 22)}</div>
-        <div class="setting-main">
-          <div class="setting-label">服务器与账号</div>
-          <div class="setting-value">${esc(server.replace(/^https?:\/\//, ''))} · ${esc(username)}</div>
-        </div>
-      </div>
       <div class="setting-row" id="rowReload">
         <div class="setting-ic">${icon('refresh', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">刷新书库</div>
-
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
-      </div>
-      <div class="setting-row" id="rowLogout">
-        <div class="setting-ic">${icon('exit', 22)}</div>
-        <div class="setting-main">
-          <div class="setting-label" style="color:var(--danger)">退出登录</div>
-
-        </div>
       </div>
     </div>
   `
@@ -123,18 +106,6 @@ export async function renderParent(root) {
       state.libraryId = state.libraries[0]?.id || null
       toast('书库已刷新')
     } catch (e) { toast('刷新失败：' + e.message) }
-  }
-
-  $('#rowLogout').onclick = async () => {
-    haptic.tap()
-    // 已经在本页（密码已验证过），退出登录再确认一次即可
-    if (state.kidPin) { if (!(await requireParentPin())) return }
-    await stopCurrent()
-    await store.remove(CONFIG_KEYS.token)
-    await store.remove(CONFIG_KEYS.server)
-    await store.remove(CONFIG_KEYS.username)
-    toast('已退出登录')
-    await go('login')
   }
 
   function openPinDialog() {

@@ -47,27 +47,69 @@ jobs:
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs
 
+      - name: Update-check version compare
+        run: node scripts/test-updater.mjs
+
       - name: Build web assets
         run: npm run build
 
       - name: Sync Capacitor android
         run: npx cap sync android
 
+      - name: Stamp version into build.gradle
+        # versionCode 必须随版本递增，否则 Android 覆盖安装时拒装（老板反馈的另一个隐患）
+        run: |
+          VER=$(cat VERSION | tr -d '[:space:]')
+          # 注意：绝不能留下前导 0（"%02d%02d" 会产出 00401，Groovy 把前导 0 当八进制字面量，值错甚至编译失败）
+          CODE=$(printf '%s' "$VER" | awk -F. '{printf "%d", $1*10000 + $2*100 + $3}')
+          python3 - "$CODE" "$VER" <<'PY'
+          import re, sys, pathlib
+          code, ver = sys.argv[1], sys.argv[2]
+          p = pathlib.Path('android/app/build.gradle')
+          s = p.read_text()
+          s = re.sub(r'versionCode \d+', f'versionCode {code}', s)
+          s = re.sub(r'versionName "[^"]*"', f'versionName "{ver}"', s)
+          p.write_text(s)
+          print('stamped:', code, ver)
+          PY
+          grep -n 'versionCode\|versionName' android/app/build.gradle
+
+      - name: Decode signing keystore
+        # 固定签名的 keystore 存在 GitHub Secret（base64），解码到 android/app/ 供 build.gradle 使用。
+        # 之前用 debug 签名，每个 runner 的 debug keystore 都不同 → 覆盖安装报「签名不一致」。
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then echo "缺少 ANDROID_KEYSTORE_B64 secret"; exit 1; fi
+          echo "$KEYSTORE_B64" | base64 -d > android/app/shelfaudio.keystore
+          ls -l android/app/shelfaudio.keystore
+
       - name: Make gradlew executable
         # actions/checkout 不保留可执行位，缺这步会 Permission denied (exit 126)
         run: chmod +x android/gradlew
 
-      - name: Build debug APK
+      - name: Build APK (fixed signature)
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        env:
+          SA_KEYSTORE_PATH: shelfaudio.keystore
+          SA_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          SA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Package APK
         run: |
           VER=$(cat VERSION | tr -d '[:space:]')
           mkdir -p output
-          SRC=$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)
+          SRC=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
           cp "$SRC" "output/ShelfAudio-${VER}.apk"
           ls -lh output
+
+      - name: Verify APK signature (must be the fixed key)
+        run: |
+          APK=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
+          # apksigner 在 Android SDK build-tools 里
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --print-certs "$APK" | grep -E 'Signer #1 certificate (DN|SHA-256)' | head -4
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -115,6 +157,9 @@ jobs:
 
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs
+
+      - name: Update-check version compare
+        run: node scripts/test-updater.mjs
 
       - name: Build web assets
         run: npm run build
@@ -203,6 +248,21 @@ jobs:
       - name: List files
         run: ls -lh artifacts
 
+      - name: Write update manifest
+        # 简易更新清单：老板想把「指定位置」换成自己的服务器/NAS 时，
+        # 把这个 update.json 放到那儿、App 里填地址即可（格式见 src/lib/updater.js）
+        run: |
+          VER=${{ steps.v.outputs.version }}
+          cat > artifacts/update.json <<EOF
+          {
+            "version": "$VER",
+            "apk": "https://github.com/${{ github.repository }}/releases/download/v$VER/ShelfAudio-$VER.apk",
+            "ipa": "https://github.com/${{ github.repository }}/releases/download/v$VER/ShelfAudio-unsigned.ipa",
+            "notes": "见 Release 说明"
+          }
+          EOF
+          cat artifacts/update.json
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -229,6 +289,7 @@ jobs:
           files: |
             artifacts/**.ipa
             artifacts/**.apk
+            artifacts/update.json
           fail_on_unmatched_files: true
           draft: false
           prerelease: false
