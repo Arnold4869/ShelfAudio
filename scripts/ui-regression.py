@@ -175,7 +175,7 @@ with sync_playwright() as pw:
     ok("书架用网格", pg.evaluate("!!document.querySelector('.shelf-grid')")
        and not pg.evaluate("!!document.querySelector('.shelf-list')"))
     nxt = pg.evaluate("()=>({tabs:!!document.querySelector('.kid-tabs'),"
-                      "fab:!!document.querySelector('.voice-fab'),fav:!!document.querySelector('#btnFavEntry')})")
+                      "fab:!!document.querySelector('.voice-fab'),fav:!!document.querySelector('#favEntryCard')})")
     ok("有底栏与语音球", nxt['tabs'] and nxt['fab'], json.dumps(nxt))
     ok("首页有收藏入口", nxt['fav'], json.dumps(nxt))
     # 即使本地存着老的 adult 值，也必须还是同一套界面（不能被卡在旧模式）
@@ -262,8 +262,10 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(800)
     pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
     pg.wait_for_timeout(1200)
+    pg.evaluate("(()=>{const e=document.querySelector('#rowAbout'); if(e) e.click()})()")
+    pg.wait_for_timeout(900)
     ver = pg.evaluate("(document.body.innerText.match(/听书 v([\\d.]+)/)||[])[1] || null")
-    ok("设置页显示真实版本（非写死的 0.1.0）", bool(ver) and ver != '0.1.0', f"ver={ver}")
+    ok("关于页显示真实版本（非写死的 0.1.0）", bool(ver) and ver != '0.1.0', f"ver={ver}")
     ents = pg.evaluate("document.querySelectorAll('.setting-row').length")
     ok("设置页渲染出行项", ents > 0, f"{ents} 行")
     ctx.close()

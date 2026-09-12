@@ -1,0 +1,103 @@
+/**
+ * 关于页：系统版本 + 权限状态 + 服务器信息
+ *
+ * 老板 2026-09-12：语音麦克风设置收进"关于系统信息"这类菜单；
+ * 关于里放系统版本、语音权限有没有开启等。
+ */
+import { state, go, toast, esc } from '../app.js'
+import { store, CONFIG_KEYS } from '../lib/store.js'
+import { icon } from '../lib/icons.js'
+import { haptic } from '../lib/haptics.js'
+import { checkVoicePermission, requestVoicePermission, openSystemSettings, onAppResume } from '../lib/permissions.js'
+import { voiceSupported } from '../lib/voice.js'
+
+export async function renderAbout(root) {
+  const server = await store.get(CONFIG_KEYS.server, '')
+  const username = await store.get(CONFIG_KEYS.username, '')
+  root.innerHTML = `
+    <div class="page-head">
+      <button class="icon-btn" id="btnBack" aria-label="返回">${icon('back', 22)}</button>
+      <div class="page-title">关于</div>
+    </div>
+
+    <div class="section-h">系统</div>
+    <div class="settings-group">
+      <div class="setting-row">
+        <div class="setting-ic">${icon('info', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">版本</div>
+          <div class="setting-value">听书 v${typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '—'}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-h">权限</div>
+    <div class="settings-group">
+      <div class="setting-row" id="rowMic">
+        <div class="setting-ic">${icon('mic', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">麦克风 / 语音识别</div>
+          <div class="setting-value" id="micState">检查中…</div>
+        </div>
+      </div>
+      <div class="setting-row" id="rowMicSettings">
+        <div class="setting-ic">${icon('cog', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">打开系统设置</div>
+        </div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
+      </div>
+    </div>
+
+    <div class="section-h">服务器</div>
+    <div class="settings-group">
+      <div class="setting-row">
+        <div class="setting-ic">${icon('server', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">服务器与账号</div>
+          <div class="setting-value">${esc(server.replace(/^https?:\/\//, ''))} · ${esc(username)}</div>
+        </div>
+      </div>
+    </div>
+  `
+
+  const $ = s => root.querySelector(s)
+  $('#btnBack').onclick = () => { haptic.tap(); go('settings') }
+
+  const micState = $('#micState')
+  const descMap = {
+    granted: '已开启',
+    denied: '已被拒绝',
+    prompt: '未申请',
+    'prompt-with-rationale': '未申请',
+    web: '当前环境不支持',
+    error: '查询失败',
+  }
+  async function refreshMic() {
+    if (!voiceSupported()) { micState.textContent = '当前环境不支持'; return }
+    try {
+      const p = await checkVoicePermission()
+      micState.textContent = descMap[p.state] || p.state
+    } catch (_) { micState.textContent = '查询失败' }
+  }
+  refreshMic()
+  onAppResume(() => { if (document.body.dataset.view === 'about') refreshMic() })
+
+  $('#rowMic').onclick = async () => {
+    haptic.tap()
+    if (!voiceSupported()) { toast('仅真机可用'); return }
+    const cur = await checkVoicePermission()
+    if (cur.granted) { refreshMic(); return }
+    micState.textContent = '正在申请…'
+    const r = await requestVoicePermission()
+    if (!r.granted && r.needsSettings) toast('请在系统设置里开启')
+    refreshMic()
+  }
+
+  $('#rowMicSettings').onclick = async () => {
+    haptic.tap()
+    const ok = await openSystemSettings()
+    if (!ok) toast('打不开系统设置')
+  }
+
+}

@@ -101,9 +101,11 @@ export async function renderShelf(root) {
   // 页头：标题 + 收藏入口（老板要求收藏在首页有入口）
   const head = `<div class="page-head">
          <div class="page-title">我的书架</div>
-         <button class="icon-btn" id="btnFavEntry" aria-label="我的收藏">${icon('heart', 21)}</button>
        </div>`
 
+  const favCardHTML = `<button class="fav-entry-card" id="favEntryCard" aria-label="我的收藏">
+        ${icon('heart', 30)}<span>我的收藏</span>
+      </button>`
   const continueHTML = inProgress.length ? `
     <div class="section-h">继续听 <small>长按移除</small></div>
     <div class="continue-row">
@@ -124,7 +126,10 @@ export async function renderShelf(root) {
           </div>
         </div>`
       }).join('')}
-    </div>` : ''
+      ${favCardHTML}
+    </div>` : `
+    <div class="section-h">继续听</div>
+    <div class="continue-row">${favCardHTML}</div>`
 
   // （原来这里有一套"成人模式紧凑列表"分支，随模式分类一起移除了）
   const rowHTML = (it) => {
@@ -159,7 +164,7 @@ export async function renderShelf(root) {
   wireKidTabs(root, { go, requireParentPin })
 
   // 收藏入口（首页直达）
-  root.querySelector('#btnFavEntry').onclick = () => { haptic.tap(); go('favorites') }
+  root.querySelector('#favEntryCard')?.addEventListener('click', () => { haptic.tap(); go('favorites') })
 
   // 无封面的书用占位封面兜底
   wireCoverFallback(root)

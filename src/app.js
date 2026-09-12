@@ -13,6 +13,7 @@ import { renderShelf } from './views/shelf.js'
 import { renderPlayer } from './views/player.js'
 import { renderSearch } from './views/search.js'
 import { renderSettings } from './views/settings.js'
+import { renderAbout } from './views/about.js'
 import { openVoiceOverlay } from './lib/voice-ui.js'
 import { startListening, stopListening } from './lib/stats.js'
 import { localTrackMap } from './lib/offline.js'
@@ -86,7 +87,9 @@ export async function go(name, params = {}) {
     await forceStopCurrent()
   } catch (_) {}
 
-  document.querySelectorAll('.kid-tabs').forEach(e => e.remove())
+  // 旧底栏**先留在 dock 上**，等新页面 render 完用新底栏原地替换 ——
+  // 之前是先删掉旧的，新底栏要等 render（可能含网络 await）完才出现，
+  // 期间 dock 空一下，切页签时底栏「闪一下」（老板 2026-09-12 报告）。
   const root = $('#view')
   root.innerHTML = ''
   await fn(root, params)
@@ -95,7 +98,10 @@ export async function go(name, params = {}) {
   // 在这一个地方处理，各视图只管往 root 里插 .kid-tabs 即可。
   const tabsEl = root.querySelector('.kid-tabs')
   const dock = $('#dock')
-  if (tabsEl && dock) dock.appendChild(tabsEl)
+  if (tabsEl && dock) {
+    document.querySelectorAll('.kid-tabs').forEach(e => e.remove())
+    dock.appendChild(tabsEl)
+  }
   document.body.dataset.tabs = tabsEl ? '1' : '0'
   updateMini()
   syncDockHeight()
@@ -374,6 +380,12 @@ route('stats', async (root, params) => {
   document.body.dataset.view = 'stats'
   const { renderStats } = await import('./views/stats.js')
   await renderStats(root, params)
+})
+
+// 关于页：版本/权限/服务器信息
+route('about', async (root) => {
+  document.body.dataset.view = 'about'
+  await renderAbout(root)
 })
 
 // 家长设置（需要家长密码）：进度口径、触感、统计、服务器

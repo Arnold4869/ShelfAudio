@@ -252,10 +252,19 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 }
 .continue-row::-webkit-scrollbar { display: none; }
 .continue-card {
-  flex: 0 0 200px; background: var(--card);
+  flex: 0 0 min(46vw, 180px); background: var(--card);
   border-radius: var(--radius); overflow: hidden; cursor: pointer;
   position: relative;
 }
+/* 首页继续听行尾的「收藏」入口卡：与继续听卡片同尺寸并排（老板 2026-09-12 布局） */
+.fav-entry-card {
+  flex: 0 0 min(46vw, 180px); background: var(--card);
+  border-radius: var(--radius); overflow: hidden; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; color: var(--text-dim); min-height: 148px;
+}
+.fav-entry-card .ic { color: var(--accent); }
+.fav-entry-card:active { transform: scale(.97); }
 /* 长按删除：按住时轻微下沉，给个明确反馈 */
 .continue-card.longpress { transform: scale(.96); }
 .continue-card:active { transform: scale(.97); }
@@ -592,7 +601,7 @@ body[data-tabs="0"] .mini {
 .dl-pct { font-size: 12.5px; color: var(--text-dim); text-align: center; }
 
 /* 收藏行：心形 + 书签，放在播放控件上方 */
-.fav-row { margin-bottom: 6px; }
+.fav-row { margin-bottom: 6px; justify-content: flex-start; }
 .tool-chip.on { background: rgba(255,122,198,.2); color: var(--accent); border-color: transparent; }
 .seek-whole { color: var(--text-dim); font-size: 11px; }
 
