@@ -116,8 +116,8 @@ def rect(pg, sel):
 with sync_playwright() as pw:
     br = pw.chromium.launch()
 
-    print("\n=== 1. 占位封面文字不被裁切（全部书 × 两种模式）===")
-    for mode in ['kid', 'adult']:
+    print("\n=== 1. 占位封面文字不被裁切（全部书）===")
+    for mode in ['kid']:
         ctx, pg = newpg(br, mode)
         r = pg.evaluate("""() => {
           const bad = [];
@@ -170,41 +170,50 @@ with sync_playwright() as pw:
        f"接缝={tabs2['top'] - mini['bottom']:.1f}px")
     ctx.close()
 
-    print("\n=== 3. 儿童/成人布局必须不同 ===")
+    print("\n=== 3. 只有一套界面（儿童/成人模式已取消）===")
     ctx, pg = newpg(br, 'kid')
-    kid_grid = pg.evaluate("!!document.querySelector('.shelf-grid')")
-    kid_list = pg.evaluate("!!document.querySelector('.shelf-list')")
-    ok("儿童模式用网格", kid_grid and not kid_list, f"grid={kid_grid} list={kid_list}")
+    ok("书架用网格", pg.evaluate("!!document.querySelector('.shelf-grid')")
+       and not pg.evaluate("!!document.querySelector('.shelf-list')"))
+    nxt = pg.evaluate("()=>({tabs:!!document.querySelector('.kid-tabs'),"
+                      "fab:!!document.querySelector('.voice-fab'),fav:!!document.querySelector('#btnFavEntry')})")
+    ok("有底栏与语音球", nxt['tabs'] and nxt['fab'], json.dumps(nxt))
+    ok("首页有收藏入口", nxt['fav'], json.dumps(nxt))
+    # 即使本地存着老的 adult 值，也必须还是同一套界面（不能被卡在旧模式）
     ctx.close()
     ctx, pg = newpg(br, 'adult')
-    ad_grid = pg.evaluate("!!document.querySelector('.shelf-grid')")
-    ad_list = pg.evaluate("!!document.querySelector('.shelf-list')")
-    ad_rows = pg.evaluate("document.querySelectorAll('.shelf-list .list-item').length")
-    ok("成人模式用列表（不是网格）", ad_list and not ad_grid, f"grid={ad_grid} list={ad_list}")
-    ok("成人列表渲染出条目", ad_rows > 0, f"{ad_rows} 行")
-    nxt = pg.evaluate("()=>({tabs:!!document.querySelector('.kid-tabs'),"
-                      "fab:!!document.querySelector('.voice-fab')})")
-    ok("成人模式无底栏/无 FAB", not nxt['tabs'] and not nxt['fab'], json.dumps(nxt))
+    ok("本地残留 mode=adult 也走同一套界面（有底栏、无 shelf-list）",
+       pg.evaluate("!!document.querySelector('.kid-tabs')")
+       and not pg.evaluate("!!document.querySelector('.shelf-list')"))
 
-    print("\n=== 4. 列表文本要么放得下、要么正确省略号截断 ===")
+    print("\n=== 4. 书架卡片文字不横向溢出 ===")
+    # 没有"成人列表"了，改为检查卡片标题/副标题是否溢出（有省略号才算正常）
+    # 判据必须是"文字真的画到卡片外面"，而不是 scrollWidth > clientWidth：
+    # -webkit-line-clamp 多行截断时 scrollWidth 本来就会大于 clientWidth，
+    # 但那是被 overflow:hidden 正确裁掉的（实测右边缘仍在卡片内），不算 bug。
     r = pg.evaluate("""() => {
       const bad = [];
-      const ellipsis = e => { const c = getComputedStyle(e);
-        return c.textOverflow === 'ellipsis' && c.whiteSpace === 'nowrap'; };
-      document.querySelectorAll('.shelf-list .list-item').forEach((el, i) => {
-        for (const sel of ['.list-title', '.list-sub']) {
+      const clipped = e => {
+        const c = getComputedStyle(e);
+        return c.overflow === 'hidden' || c.overflowX === 'hidden' || c.overflowY === 'hidden';
+      };
+      document.querySelectorAll('.book-card').forEach((el, i) => {
+        const card = el.getBoundingClientRect();
+        for (const sel of ['.book-title', '.book-sub']) {
           const e = el.querySelector(sel);
-          if (e && e.scrollWidth > e.clientWidth + 1 && !ellipsis(e))
-            bad.push({i, sel, text: e.textContent.slice(0, 18)});
+          if (!e) continue;
+          const r = e.getBoundingClientRect();
+          // 真的出框：元素边界越过了卡片，且没有被裁掉
+          if ((r.right > card.right + 1 || r.left < card.left - 1) && !clipped(e))
+            bad.push({i, sel, text: e.textContent.slice(0, 18), right: Math.round(r.right), card: Math.round(card.right)});
         }
       });
       return bad;
     }""")
-    ok("无未截断的溢出", len(r) == 0, json.dumps(r[:3], ensure_ascii=False))
+    ok("卡片文字无未截断的溢出", len(r) == 0, json.dumps(r[:3], ensure_ascii=False))
     ctx.close()
 
     print("\n=== 5. 图标：全部自绘 SVG，界面无 emoji ===")
-    for mode in ['kid', 'adult']:
+    for mode in ['kid']:
         ctx, pg = newpg(br, mode)
         n_svg = pg.evaluate("document.querySelectorAll('svg.ic-svg').length")
         leftover = pg.evaluate("""() => [...document.querySelectorAll('*')]
@@ -247,9 +256,12 @@ with sync_playwright() as pw:
     ctx.close()
 
     print("\n=== 7. 设置页版本号来自 VERSION 文件 ===")
-    ctx, pg = newpg(br, 'adult')
-    pg.evaluate("document.querySelector('#btnGear')?.click()")
-    pg.wait_for_timeout(900)
+    ctx, pg = newpg(br, 'kid')
+    # 设置从底栏进（成人模式的右上角齿轮已随模式分类一起移除）
+    pg.evaluate("document.querySelector('[data-nav=\"settings\"]')?.click()")
+    pg.wait_for_timeout(800)
+    pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+    pg.wait_for_timeout(1200)
     ver = pg.evaluate("(document.body.innerText.match(/听书 v([\\d.]+)/)||[])[1] || null")
     ok("设置页显示真实版本（非写死的 0.1.0）", bool(ver) and ver != '0.1.0', f"ver={ver}")
     ents = pg.evaluate("document.querySelectorAll('.setting-row').length")
@@ -304,7 +316,7 @@ with sync_playwright() as pw:
     ctx.close()
 
     print("\n=== 10. 顶部/底部无白色安全区条带 ===")
-    for mode in ['kid', 'adult']:
+    for mode in ['kid']:
         ctx, pg = newpg(br, mode)
         px_top = pg.evaluate("""() => {
           const b = document.body, h = document.documentElement;

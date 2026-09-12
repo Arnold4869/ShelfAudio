@@ -55,7 +55,7 @@ export const CONFIG_KEYS = {
   token: 'token',
   username: 'username',
   mode: 'mode',                 // 'kid' | 'adult'
-  kidPin: 'kidPin',             // 退出儿童模式的家长密码
+  kidPin: 'kidPin',             // 家长密码（进「家长设置」需要）
   playbackRate: 'playbackRate',
   sleepMinutes: 'sleepMinutes',
   kidLibraryIds: 'kidLibraryIds',

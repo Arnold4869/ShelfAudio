@@ -16,7 +16,7 @@ import {
 } from '../lib/stats.js'
 
 export async function renderStats(root, params = {}) {
-  const kid = state.mode !== 'adult'
+  const kid = true   // 只有一种模式
   const days = await daysWithRecords()
   const day = params.day || days[0] || todayKey()
 
@@ -94,7 +94,7 @@ export async function renderStats(root, params = {}) {
   `
 
   const $ = s => root.querySelector(s)
-  $('#btnBack').onclick = () => { haptic.tap(); go('settings') }
+  $('#btnBack').onclick = () => { haptic.tap(); go('parents') }
 
   // 切日期
   root.querySelectorAll('[data-day]').forEach(b => {

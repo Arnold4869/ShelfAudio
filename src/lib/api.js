@@ -126,6 +126,13 @@ export class AbsApi {
     }
     if (!res.ok) {
       const detail = errText(res)
+      // 403 最常见的原因是 ABS 账号权限不足，而不是"没登录"：
+      // 改收藏夹需要 update 权限（实测普通账号默认 update=false，会返回纯 "Forbidden"）。
+      // 直接说清楚该去哪改，否则用户只看到"请求失败 403"完全无从下手。
+      if (res.status === 403) {
+        throw new Error('服务器拒绝了这个操作：当前账号没有「修改」权限。'
+          + '到 Audiobookshelf 后台 → 用户 → 你的账号，勾上「修改」(Update) 后重试。')
+      }
       throw new Error(`请求失败 ${res.status}${detail ? '：' + detail : ''}`)
     }
     if (raw) return res

@@ -11,7 +11,7 @@ import { haptic } from '../lib/haptics.js'
 let lastQuery = ''
 
 export async function renderSearch(root, params = {}) {
-  const kid = state.mode !== 'adult'
+  const kid = true   // 只有一种模式（老板要求取消儿童/成人分类）
   const initialQ = params.q || lastQuery
 
   root.innerHTML = `
@@ -42,7 +42,7 @@ export async function renderSearch(root, params = {}) {
     root.insertAdjacentHTML('beforeend', kidTabsHTML('search'))
     wireKidTabs(root, { go, requireParentPin })
   }
-  $('#btnBack').onclick = () => go(kid ? 'kidhome' : 'shelf')
+  $('#btnBack').onclick = () => go('kidhome')
 
   const renderList = (items, q) => {
     if (!items.length) {

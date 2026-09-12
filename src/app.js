@@ -1,9 +1,8 @@
 /**
  * ShelfAudio 主程序：路由 + 模式切换 + 各视图渲染
  *
- * 两种模式：
- *  - kid   儿童模式：大卡片书架 + 语音搜索 + 极简大字播放页 + 家长锁保护
- *  - adult 成人模式：列表 + 搜索 + 章节/倍速/睡眠定时/收藏夹/继续听
+ * 界面只有一套（2026-09-12 老板要求取消儿童/成人模式分类）：
+ *   大卡片书架 + 语音搜索 + 极简大字播放页；家长相关的操控项收在「家长设置」里（要密码）。
  */
 import { abs } from './lib/api.js'
 import { store, CONFIG_KEYS } from './lib/store.js'
@@ -18,6 +17,7 @@ import { openVoiceOverlay } from './lib/voice-ui.js'
 import { startListening, stopListening } from './lib/stats.js'
 import { localTrackMap } from './lib/offline.js'
 import { initHaptics } from './lib/haptics.js'
+import { syncToServer } from './lib/favs.js'
 
 window.__abs = abs   // player.js 需要
 
@@ -312,8 +312,9 @@ async function boot() {
   // 恢复配置
   const server = await store.get(CONFIG_KEYS.server)
   const token = await store.get(CONFIG_KEYS.token)
-  const mode = await store.get(CONFIG_KEYS.mode, 'kid')
-  state.mode = mode === 'adult' ? 'adult' : 'kid'
+  // 不再分儿童/成人模式（老板要求取消）；state.mode 保留但恒为 'kid'，
+  // 老用户本地存的 mode 值不再读取，避免他们被卡在"成人模式"界面。
+  state.mode = 'kid'
   state.kidPin = (await store.get(CONFIG_KEYS.kidPin, '')) || ''
 
   if (server && token) {
@@ -323,7 +324,10 @@ async function boot() {
       state.libraries = libs
       state.libraryId = libs[0]?.id || null
       initPlayer()
-      await go(state.mode === 'adult' ? 'shelf' : 'kidhome')
+      await go('kidhome')
+      // 本机收藏补齐到服务器：用户若在 ABS 后台补了 update 权限，
+      // 之前只能存本机的收藏会自动同步过去（失败就算了，不打扰用户）
+      syncToServer(abs).catch(() => {})
     } catch (e) {
       console.warn('恢复会话失败，回登录页', e)
       await go('login')
@@ -345,12 +349,7 @@ route('login', async (root) => {
 
 route('kidhome', async (root) => {
   document.body.dataset.view = 'kidhome'
-  await renderShelf(root, { kid: true })
-})
-
-route('shelf', async (root) => {
-  document.body.dataset.view = 'shelf'
-  await renderShelf(root, { kid: false })
+  await renderShelf(root)
 })
 
 route('player', async (root) => {
@@ -375,6 +374,13 @@ route('stats', async (root, params) => {
   document.body.dataset.view = 'stats'
   const { renderStats } = await import('./views/stats.js')
   await renderStats(root, params)
+})
+
+// 家长设置（需要家长密码）：进度口径、触感、统计、服务器
+route('parents', async (root) => {
+  document.body.dataset.view = 'parents'
+  const { renderParent } = await import('./views/parents.js')
+  await renderParent(root)
 })
 
 // 我的收藏（心形按钮加的收藏在这里看）

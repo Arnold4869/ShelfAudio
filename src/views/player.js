@@ -1,15 +1,17 @@
-/** 播放页：儿童模式=大圆按钮极简；成人模式=附加章节列表、倍速、睡眠定时、收藏 */
+/** 播放页：大圆按钮极简 + 章节/倍速/睡眠定时/收藏；内容操作收在右上角三个点菜单里 */
 import { abs } from '../lib/api.js'
-import { state, go, toast, esc, fmtTime, updateMini, requireParentPin } from '../app.js'
+import { state, go, toast, esc, fmtTime, updateMini } from '../app.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { haptic } from '../lib/haptics.js'
+import { isCached, downloadBook, removeBook } from '../lib/offline.js'
+import { hasLocal, addLocal, removeLocal } from '../lib/favs.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { icon } from '../lib/icons.js'
 
 let sleepTimer = null
 let sleepAt = 0
 let adultTab = 'chapters'
-let chaptersOpen = false   // 章节面板是否展开（儿童模式默认收起，点「选集」才展开）
+let chaptersOpen = false   // 章节面板是否展开（默认收起，点「选集」或三个点才展开）
 // 进度条口径：'track' = 当前这一集（默认）；'book' = 整部作品。
 // 之前写死了整本（ABS 的 currentTime 是全书累计秒），用户看着"进度条是整个作品的"很别扭。
 let progressScope = 'track'
@@ -37,30 +39,44 @@ export async function renderPlayer(root) {
   const p = state.player
   if (!c || !p) {
     root.innerHTML = `<div class="empty"><div class="glyph">${icon('headphones', 48)}</div>还没有在播放的书<div style="margin-top:18px"><button class="btn" id="toShelf">去书架</button></div></div>`
-    root.querySelector('#toShelf').onclick = () => go(state.mode === 'adult' ? 'shelf' : 'kidhome')
+    root.querySelector('#toShelf').onclick = () => go('kidhome')
     return
   }
 
-  const kid = state.mode !== 'adult'
+  // 只有一种模式了（原来分儿童/成人两套界面，老板要求取消分类）。
+  // 保留 kid 变量只是为了让下面已有的分支保持可读，值恒为 true。
+  const kid = true
   // 进度条口径（默认单集）
   progressScope = (await store.get(CONFIG_KEYS.progressScope, 'track')) === 'book' ? 'book' : 'track'
   const meta = c.item.media?.metadata || {}
   const chapters = c.chapters || []
-  // 成人模式沿用「进来就能看到章节列表」；儿童模式收起，点 📑 选集 才展开
-  chaptersOpen = !kid
+  // 章节列表默认收起，点「选集」或右上角三个点再展开
+  chaptersOpen = false
 
-  // 这本书是否已在某个收藏夹里（决定心形是实心还是空心）
-  let favState = { on: false, collections: [], itemId: c.item.id }
+  // 这本书是否已收藏（决定心形是实心还是空心）。
+  // 服务器收藏夹 + 本机收藏（服务器没权限写时的兜底）都算。
+  let favState = { on: false, local: false, collections: [], itemId: c.item.id }
   try {
     const cols = await abs.collections()
     favState.collections = cols || []
-    favState.on = (cols || []).some(col => (col.books || []).some(b => b.id === c.item.id))
+    if ((cols || []).some(col => (col.books || []).some(b => b.id === c.item.id))) {
+      favState.on = true
+    }
   } catch (_) { }
+  if (!favState.on) {
+    try {
+      if (await hasLocal(c.item.id)) { favState.on = true; favState.local = true }
+    } catch (_) { }
+  }
+
+  // 这本书是否已缓存到本机（决定三个点菜单里那项显示"缓存"还是"已缓存"）
+  let cachedNow = false
+  try { cachedNow = await isCached(c.item.id, c.tracks?.length) } catch (_) { }
 
   const shell = () => `
     <div class="page-head">
       <button class="icon-btn" id="btnBack" aria-label="返回">${icon('back', 22)}</button>
-      <div class="page-title" style="font-size:20px">${kid ? '正在听' : esc(c.title)}</div>
+      <div class="page-title" style="font-size:20px">正在听</div>
       <button class="icon-btn" id="btnMore" aria-label="更多">${icon('more', 22)}</button>
     </div>
 
@@ -89,7 +105,6 @@ export async function renderPlayer(root) {
         <button class="tool-chip ${favState.on ? 'on' : ''}" id="btnFavTop">
           ${icon('heart', 18)} <span id="favLabel">${favState.on ? '已收藏' : '收藏'}</span>
         </button>
-        <button class="tool-chip" id="btnBookmark">${icon('bookmark', 18)} 加书签</button>
       </div>
 
       <div class="player-controls">
@@ -101,13 +116,9 @@ export async function renderPlayer(root) {
       </div>
 
       <div class="player-tools">
-        ${kid
-          ? `<button class="tool-chip" id="btnRate">1.0×</button>
-             <button class="tool-chip" id="btnSleep">${icon('timer', 18)} 定时</button>
-             <button class="tool-chip" id="btnChapters">${icon('list', 18)} 选集</button>`
-          : `<button class="tool-chip" id="btnRate">1.0×</button>
-             <button class="tool-chip" id="btnSleep">${icon('timer', 18)} 定时</button>
-             <button class="tool-chip" id="btnChaptersA">${icon('list', 18)} 章节</button>`}
+        <button class="tool-chip" id="btnRate">1.0×</button>
+        <button class="tool-chip" id="btnSleep">${icon('timer', 18)} 定时</button>
+        <button class="tool-chip" id="btnChapters">${icon('list', 18)} 选集</button>
       </div>
 
       <div id="extra"></div>
@@ -160,14 +171,15 @@ export async function renderPlayer(root) {
     window.removeEventListener('mouseup', endDrag)
   }
 
-  $('#btnBack').onclick = () => { haptic.tap(); go(kid ? 'kidhome' : 'shelf') }
+  $('#btnBack').onclick = () => { haptic.tap(); go('kidhome') }
   $('#btnPlay').onclick = () => { haptic.tap(); p.toggle() }
   $('#btnPrev').onclick = () => { haptic.tap(); p.prevTrack() }
   $('#btnNext').onclick = () => { haptic.tap(); p.nextTrack() }
   $('#btnR15').onclick = () => { haptic.tap(); p.seek(Math.max(0, p.position().currentTime - 15)) }
   $('#btnF15').onclick = () => { haptic.tap(); p.seek(p.position().currentTime + 15) }
   $('#btnFavTop').onclick = () => { haptic.tap(); toggleFav() }
-  $('#btnBookmark').onclick = () => { haptic.tap(); addBookmark() }
+  // ⚠️ 不要再引用已从模板里删掉的元素：$('#x') 返回 null，给 null 赋 onclick 会抛
+  // TypeError，**把它之后的所有初始化全部中断**（三个点菜单就是这么失效的）。
 
   // 拖动进度条
   let dragging = false
@@ -207,7 +219,7 @@ export async function renderPlayer(root) {
     $('#btnRate').textContent = next.toFixed(2).replace(/0$/, '') + '×'
     await store.set(CONFIG_KEYS.playbackRate, String(next))
     toast('播放速度 ' + next + '×')
-    if (!kid && adultTab === 'info') renderExtra()
+    if (adultTab === 'info' && chaptersOpen) renderExtra()
   }
 
   // ---- 睡眠定时 ----
@@ -254,9 +266,9 @@ export async function renderPlayer(root) {
         <span class="sheet-ic">${icon('heart', 20)}</span>
         <span class="sheet-label">${favState.on ? '取消收藏' : '收藏这本书'}</span>
       </button>
-      <button class="sheet-item" data-act="bookmark">
-        <span class="sheet-ic">${icon('bookmark', 20)}</span>
-        <span class="sheet-label">在当前位置加书签</span>
+      <button class="sheet-item" data-act="download">
+        <span class="sheet-ic">${icon('download', 20)}</span>
+        <span class="sheet-label">${cachedNow ? '已缓存（点击删除）' : '缓存到本机（离线听）'}</span>
       </button>
       <button class="sheet-item" data-act="chapters">
         <span class="sheet-ic">${icon('list', 20)}</span>
@@ -283,7 +295,7 @@ export async function renderPlayer(root) {
       haptic.select()
       modal.remove()
       if (act === 'fav') await toggleFav()
-      else if (act === 'bookmark') await addBookmark()
+      else if (act === 'download') await toggleDownload()
       else if (act === 'chapters') { chaptersOpen = true; adultTab = 'chapters'; renderExtra(); $('#extra')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
       else if (act === 'rate') $('#btnRate').click()
       else if (act === 'sleep') $('#btnSleep').click()
@@ -291,7 +303,15 @@ export async function renderPlayer(root) {
     })
   }
 
-  /** 收藏 / 取消收藏（切换状态，心形跟着变） */
+  /**
+   * 收藏 / 取消收藏（切换状态，心形跟着变）。
+   *
+   * 写的顺序很关键：ABS 改收藏夹要 **update 权限**，账号没这权限会返回 403
+   * （实测用户账号就是这种，纯 "Forbidden"）。所以：
+   *   能写服务器 → 写服务器（换设备也在，与其它 ABS 客户端共享）
+   *   被拒(403)  → 退到本机收藏，功能照用，并明确告诉用户"只在这台手机"
+   * 不静默失败、也不假装同步成功。
+   */
   async function toggleFav() {
     try {
       let cols = favState.collections
@@ -299,20 +319,59 @@ export async function renderPlayer(root) {
         cols = await abs.collections()
         favState.collections = cols
       }
-      let col = cols.find(x => (x.books || []).some(b => b.id === c.item.id))
-      if (!col) col = cols[0]
-      if (!col) { toast('ABS 里还没有收藏夹，先去服务器建一个'); return }
+      let col = cols.find(x => (x.books || []).some(b => b.id === c.item.id)) || cols[0]
+
+      // ---- 取消收藏 ----
       if (favState.on) {
-        await abs.removeFromCollection(col.id, c.item.id)
+        if (favState.local) {
+          await removeLocal(c.item.id)
+        } else if (col) {
+          await abs.removeFromCollection(col.id, c.item.id)
+        }
         favState.on = false
+        favState.local = false
         haptic.success()
         toast('已取消收藏')
-      } else {
-        await abs.addToCollection(col.id, c.item.id)
-        favState.on = true
-        haptic.success()
-        toast('已收藏到「' + col.name + '」')
+        paintFav()
+        return
       }
+
+      // ---- 添加收藏 ----
+      if (!col) {
+        // 服务器一个收藏夹都没有 → 试着建一个（ABS 建收藏夹同样需要 update 权限，
+        // 没权限会 403，那就落本机兜底）。
+        // libraryId 必须是这本书所在的库，不能省 —— ABS 会按它校验归属。
+        try {
+          const libId = c.item.libraryId || state.libraryId
+          if (libId) {
+            await abs.post('/api/collections', { name: '我的收藏', libraryId: libId })
+            cols = await abs.collections()
+            favState.collections = cols
+            col = cols?.[0]
+          }
+        } catch (_) { }
+      }
+
+      if (col) {
+        try {
+          await abs.addToCollection(col.id, c.item.id)
+          favState.on = true
+          favState.local = false
+          haptic.success()
+          toast('已收藏到「' + col.name + '」')
+          paintFav()
+          return
+        } catch (e) {
+          // 403 等 → 落本机兜底，不要弹"失败"了事
+          if (!/403|修改/.test(e.message)) throw e
+        }
+      }
+
+      await addLocal({ id: c.item.id, title: c.title, author: c.author, duration: c.duration })
+      favState.on = true
+      favState.local = true
+      haptic.success()
+      toast('已收藏（存在本机 · 服务器账号没有修改权限）')
       paintFav()
     } catch (e) { haptic.error(); toast('收藏失败：' + e.message) }
   }
@@ -321,21 +380,87 @@ export async function renderPlayer(root) {
     const b = $('#btnFavTop')
     if (!b) return
     b.classList.toggle('on', favState.on)
-    $('#favLabel').textContent = favState.on ? '已收藏' : '收藏'
+    // 本机收藏要让用户能看出来（否则他会以为换设备也在）
+    $('#favLabel').textContent = favState.local ? '已收藏·本机' : (favState.on ? '已收藏' : '收藏')
   }
 
-  /** 在当前位置加书签（ABS 原生书签，跟 App 内其它客户端同步） */
-  async function addBookmark() {
+  /**
+   * 缓存这本书到本机 / 删除缓存。
+   * 老板要求：缓存的操作入口放这里（三个点菜单里），不占播放页的按钮位。
+   */
+  async function toggleDownload() {
+    // 已缓存 → 删除
+    if (cachedNow) {
+      const modal = document.createElement('div')
+      modal.className = 'lock'
+      modal.innerHTML = `<div class="lock-card">
+        <div class="lock-title">删除缓存？</div>
+        <div class="lock-sub">「${esc(c.title)}」的音频会从手机里删掉，之后要联网才能听。</div>
+        <div class="lock-actions">
+          <button class="btn ghost" id="dcCancel">取消</button>
+          <button class="btn danger" id="dcOk">删除</button>
+        </div>
+      </div>`
+      document.body.appendChild(modal)
+      modal.querySelector('#dcCancel').onclick = () => modal.remove()
+      modal.querySelector('#dcOk').onclick = async () => {
+        modal.remove()
+        try {
+          await removeBook(c.item.id)
+          cachedNow = false
+          haptic.success()
+          toast('已删除缓存')
+        } catch (e) { haptic.error(); toast('删除失败：' + e.message) }
+      }
+      return
+    }
+
+    // 未缓存 → 下载，带进度
+    const modal = document.createElement('div')
+    modal.className = 'lock'
+    modal.innerHTML = `<div class="lock-card">
+      <div class="lock-title">缓存中</div>
+      <div class="lock-sub">${esc(c.title)}</div>
+      <div class="dl-bar"><i id="dlFill" style="width:0%"></i></div>
+      <div class="dl-pct" id="dlPct">0%</div>
+      <div class="lock-actions"><button class="btn ghost" id="dlClose">后台继续</button></div>
+    </div>`
+    document.body.appendChild(modal)
+    let closed = false
+    modal.querySelector('#dlClose').onclick = () => { closed = true; modal.remove() }
+
     try {
-      const at = Math.floor(p.position().currentTime)
-      const ch = chapters[p.trackIndex]
-      await abs.post(`/api/me/item/${c.item.id}/bookmark`, {
-        time: at,
-        title: (ch?.title ? ch.title + ' ' : '') + fmtTime(at),
-      })
-      haptic.success()
-      toast('已加书签 ' + fmtTime(at))
-    } catch (e) { haptic.error(); toast('加书签失败：' + e.message) }
+      // 音轨要从详情接口按 ino 拼直链 ——
+      // /play 给的是 HLS 播放列表（/hls/xxx/output.m3u8），下它拿不到音频。
+      const detail = await abs.getItem(c.item.id)
+      const files = detail?.media?.audioFiles || []
+      const tracks = files.map((af, i) => ({
+        index: i + 1,
+        title: (c.chapters?.[i]?.title) || `第${i + 1}集`,
+        contentUrl: `/api/items/${c.item.id}/file/${af.ino}`,
+        duration: af.duration || 0,
+      }))
+      if (!tracks.length) { modal.remove(); haptic.error(); toast('这本书没有音频文件'); return }
+
+      const res = await downloadBook(
+        { id: c.item.id, title: c.title, tracks },
+        ({ pct, label }) => {
+          if (closed) return
+          const f = modal.querySelector('#dlFill')
+          if (f) f.style.width = pct + '%'
+          const t = modal.querySelector('#dlPct')
+          if (t) t.textContent = pct + '% · ' + String(label || '').slice(0, 14)
+        }
+      )
+      cachedNow = res.fail === 0
+      modal.remove()
+      if (res.fail) { haptic.warn(); toast(`缓存完成：${res.ok} 集成功，${res.fail} 集失败`) }
+      else { haptic.success(); toast('已缓存 ' + res.ok + ' 集，之后断网也能听') }
+    } catch (e) {
+      modal.remove()
+      haptic.error()
+      toast('缓存失败：' + (e.message || e))
+    }
   }
   if ($('#btnChapters')) {
     // 同样必须用 innerHTML，否则图标被抹掉
@@ -352,11 +477,6 @@ export async function renderPlayer(root) {
       else scrollPlayerIntoView()
     }
   }
-  // 成人模式的「章节」按钮（原来这里是 btnInfo / btnFav，已合并进收藏行与三个点菜单）
-  if ($('#btnChaptersA')) {
-    $('#btnChaptersA').onclick = () => { haptic.tap(); adultTab = 'chapters'; chaptersOpen = true; renderExtra(); $('#extra')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
-  }
-
   /** 把播放区滚回视野中央：选完章节后用户应看到封面+播放按钮，而不是页面底部的列表 */
   function scrollPlayerIntoView() {
     const target = root.querySelector('.player-cover-wrap') || root.querySelector('.player-controls')
@@ -376,7 +496,7 @@ export async function renderPlayer(root) {
     if (adultTab === 'chapters' || kid) {
       box.innerHTML = `
         <div class="section-h" style="margin-top:22px">章节 <small>共 ${chapters.length} 集</small></div>
-        <div class="${kid ? 'chapters kid-chapters' : 'chapters'}">
+        <div class="chapters kid-chapters">
         ${chapters.map((ch, i) => `
           <div class="chapter-item ${i === p.trackIndex ? 'active' : ''}" data-ch="${i}">
             <div class="chapter-idx">${i + 1}</div>

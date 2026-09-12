@@ -64,14 +64,11 @@ export async function renderLogin(root) {
       initPlayer()
       toast(`欢迎，${u?.username || user}`)
       // 首次登录：如果是管理员账号，引导设置家长密码
+      // 首次登录且是管理账号：引导设置家长密码（进设置页也要它）
       if (!state.kidPin && (u?.type === 'root' || u?.type === 'admin')) {
-        await store.set(CONFIG_KEYS.mode, 'kid')
-        state.mode = 'kid'
         await go('settings', { firstRun: true })
       } else {
-        const mode = (await store.get(CONFIG_KEYS.mode, 'kid')) === 'adult' ? 'adult' : 'kid'
-        state.mode = mode
-        await go(mode === 'adult' ? 'shelf' : 'kidhome')
+        await go('kidhome')
       }
     } catch (e) {
       errEl.textContent = e.message || '连接失败'

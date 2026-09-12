@@ -98,7 +98,8 @@ with sync_playwright() as pw:
     pg.evaluate("document.querySelector('.book-card')?.click()")
     pg.wait_for_timeout(2600)
     ok("播放页有心形收藏按钮", pg.evaluate("!!document.querySelector('#btnFavTop')"))
-    ok("播放页有加书签按钮", pg.evaluate("!!document.querySelector('#btnBookmark')"))
+    # 老板要求：收藏和书签重复，只要收藏
+    ok("播放页没有重复的书签按钮", not pg.evaluate("!!document.querySelector('#btnBookmark')"))
     # 三个点 → 菜单出现，且不再跳设置页
     pg.evaluate("document.querySelector('#btnMore').click()")
     pg.wait_for_timeout(400)
@@ -107,7 +108,10 @@ with sync_playwright() as pw:
        and pg.evaluate("document.body.dataset.view") == 'player')
     items = pg.evaluate("[...document.querySelectorAll('.sheet-item .sheet-label')].map(e=>e.textContent.trim())")
     print("     菜单项:", items)
-    ok("菜单含收藏/书签/选集", any('收藏' in (i or '') for i in items) and any('书签' in (i or '') for i in items))
+    ok("菜单含收藏/缓存/选集", any('收藏' in (i or '') for i in items)
+       and any('缓存' in (i or '') for i in items)
+       and any('选集' in (i or '') for i in items))
+    ok("菜单不含书签项（与收藏重复，已去掉）", not any('书签' in (i or '') for i in items))
     ok("菜单无 JS 报错", not errs, str(errs[:2]))
     ctx.close()
 
@@ -153,7 +157,11 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(800)
     pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
     pg.wait_for_timeout(1300)
-    ok("设置页有收听统计入口", pg.evaluate("!!document.querySelector('#rowStats')"))
+    pg.evaluate("document.querySelector('#rowParent').click()")
+    pg.wait_for_timeout(700)
+    if pg.evaluate("!!document.querySelector('#lockPin')"):
+        pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+        pg.wait_for_timeout(1400)
     pg.evaluate("document.querySelector('#rowStats').click()")
     pg.wait_for_timeout(1600)
     ok("统计页能打开（有家长密码时需验证）",
@@ -174,15 +182,52 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(800)
     pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
     pg.wait_for_timeout(1300)
-    for sel, name in [('#rowScope', '进度条显示'), ('#rowHaptics', '触感反馈'),
-                      ('#rowCache', '缓存管理'), ('#rowFav', '收藏的书')]:
+    for sel, name in [('#rowCache', '缓存管理'), ('#rowFav', '收藏的书'), ('#rowParent', '家长设置')]:
         ok(f"设置页有「{name}」", pg.evaluate(f"!!document.querySelector('{sel}')"))
-    # 切进度口径
+    # 操控类设置不该直接出现在设置页（老板要求收进需密码的家长设置）
+    for sel, name in [('#rowScope', '进度条显示'), ('#rowHaptics', '触感反馈'), ('#rowStats', '收听统计')]:
+        ok(f"设置页没有直接暴露「{name}」（应在家长设置里）",
+           not pg.evaluate(f"!!document.querySelector('{sel}')"))
+    ok("设置页没有儿童/成人模式选项", not pg.evaluate("!!document.querySelector('#rowKid, #rowAdult')"))
+    ok("设置页无 JS 报错", not errs, str(errs[:2]))
+    ctx.close()
+
+    print("\n=== F2. 家长设置（需密码）===")
+    ctx, pg, errs = mk(br, 'kid')
+    pg.evaluate("document.querySelector('[data-nav=\"settings\"]')?.click()")
+    pg.wait_for_timeout(800)
+    pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+    pg.wait_for_timeout(1300)
+    pg.evaluate("document.querySelector('#rowParent').click()")
+    pg.wait_for_timeout(700)
+    # 应该弹家长锁
+    ok("进家长设置要输密码", pg.evaluate("!!document.querySelector('#lockPin')"))
+    pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+    pg.wait_for_timeout(1500)
+    ok("输对密码后进入家长设置", pg.evaluate("document.body.dataset.view") == 'parents',
+       pg.evaluate("document.body.dataset.view"))
+    for sel, name in [('#rowScope', '进度条显示'), ('#rowHaptics', '触感反馈'),
+                      ('#rowStats', '收听统计'), ('#rowPin', '家长密码')]:
+        ok(f"家长设置有「{name}」", pg.evaluate(f"!!document.querySelector('{sel}')"))
     pg.evaluate("document.querySelector('#rowScope').click()")
     pg.wait_for_timeout(400)
     v = pg.evaluate("document.querySelector('#scopeVal')?.textContent")
     ok("能切换进度条口径", '整部' in (v or ''), v)
-    ok("设置页无 JS 报错", not errs, str(errs[:2]))
+    ok("家长设置无 JS 报错", not errs, str(errs[:2]))
+    ctx.close()
+
+    print("\n=== F3. 输错密码进不去 ===")
+    ctx, pg, errs = mk(br, 'kid')
+    pg.evaluate("document.querySelector('[data-nav=\"settings\"]')?.click()")
+    pg.wait_for_timeout(800)
+    pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+    pg.wait_for_timeout(1300)
+    pg.evaluate("document.querySelector('#rowParent').click()")
+    pg.wait_for_timeout(700)
+    pg.evaluate("document.querySelector('#lockPin').value='9999';document.querySelector('#lockOk').click()")
+    pg.wait_for_timeout(1200)
+    ok("输错密码不进入家长设置", pg.evaluate("document.body.dataset.view") != 'parents',
+       pg.evaluate("document.body.dataset.view"))
     ctx.close()
 
     print("\n=== G. 缓存页 ===")

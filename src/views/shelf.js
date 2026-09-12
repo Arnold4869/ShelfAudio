@@ -1,4 +1,4 @@
-/** 书架：儿童模式=大卡片网格；成人模式=列表 + 排序 */
+/** 书架：大卡片网格 + 继续听（只有一种模式，见 2026-09-12 老板要求取消模式分类） */
 import { abs } from '../lib/api.js'
 import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini } from '../app.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
@@ -9,7 +9,9 @@ import { haptic } from '../lib/haptics.js'
 
 let cache = { items: [], at: 0, libraryId: null }
 
-export async function renderShelf(root, { kid }) {
+export async function renderShelf(root) {
+  // 只有一种模式了（老板要求取消儿童/成人分类）。保留 kid 常量便于阅读，恒为 true。
+  const kid = true
   root.innerHTML = `<div class="empty"><div class="glyph">${icon('loader', 40, 'spin')}</div>正在加载书架…</div>`
 
   if (!state.libraryId) {
@@ -95,16 +97,11 @@ export async function renderShelf(root, { kid }) {
       </div>`
   }
 
-  // 儿童模式：设置入口只留底栏那个（右上角齿轮去掉，两个入口重复）
-  const head = kid
-    ? `<div class="page-head">
+  // 设置入口只留底栏那个（右上角不再放齿轮，避免两个入口重复）
+  // 页头：标题 + 收藏入口（老板要求收藏在首页有入口）
+  const head = `<div class="page-head">
          <div class="page-title">我的书架</div>
-       </div>`
-    : `<div class="page-head">
-         <button class="icon-btn" id="btnBack" aria-label="返回">${icon('back', 22)}</button>
-         <div class="page-title">全部书籍</div>
-         <button class="icon-btn" id="btnSearch" aria-label="搜索">${icon('search', 21)}</button>
-         <button class="icon-btn" id="btnGear" aria-label="设置">${icon('cog', 21)}</button>
+         <button class="icon-btn" id="btnFavEntry" aria-label="我的收藏">${icon('heart', 21)}</button>
        </div>`
 
   const continueHTML = inProgress.length ? `
@@ -129,9 +126,7 @@ export async function renderShelf(root, { kid }) {
       }).join('')}
     </div>` : ''
 
-  // 成人模式用紧凑列表（一屏看更多、带进度百分比），儿童模式用大卡片网格。
-  // 之前两个分支都渲染 shelf-grid + cardHTML，第二参数只影响封面分辨率，
-  // 导致成人模式和儿童模式长得一模一样（成人模式应有的信息密度完全没有）。
+  // （原来这里有一套"成人模式紧凑列表"分支，随模式分类一起移除了）
   const rowHTML = (it) => {
     const m = it.media?.metadata || {}
     const title = m.title || '未命名'
@@ -156,27 +151,15 @@ export async function renderShelf(root, { kid }) {
   }
 
   root.innerHTML = head + continueHTML +
-    (kid ? `<div class="shelf-grid">${items.map(it => cardHTML(it, true)).join('')}</div>`
-         : `<div class="shelf-list">${items.map(rowHTML).join('')}</div>`)
+    `<div class="shelf-grid">${items.map(it => cardHTML(it, true)).join('')}</div>`
 
-  if (kid) {
-    root.insertAdjacentHTML('beforeend',
-      `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>`
-      + kidTabsHTML('kidhome'))
-    wireKidTabs(root, { go, requireParentPin })
-  } else {
-    root.querySelector('#btnSearch').onclick = () => go('search')
-    root.querySelector('#btnBack').onclick = () => go('kidhome')
-  }
-  // 儿童模式的设置入口只有底栏那个（右上角齿轮已去掉，避免两个入口重复），
-  // 所以这里要判空 —— 之前直接 .onclick 会抛错、整页渲染失败、被踢回登录页。
-  const gear = root.querySelector('#btnGear')
-  if (gear) {
-    // 成人模式直接进设置（自己人用，不用家长锁）
-    gear.onclick = kid
-      ? async () => { if (await requireParentPin()) go('settings') }
-      : () => go('settings')
-  }
+  root.insertAdjacentHTML('beforeend',
+    `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>`
+    + kidTabsHTML('kidhome'))
+  wireKidTabs(root, { go, requireParentPin })
+
+  // 收藏入口（首页直达）
+  root.querySelector('#btnFavEntry').onclick = () => { haptic.tap(); go('favorites') }
 
   // 无封面的书用占位封面兜底
   wireCoverFallback(root)
@@ -262,7 +245,7 @@ async function confirmRemoveFromContinue(itemId) {
       haptic.success()
       toast('已从继续听移除')
       cache.at = 0   // 让书架重新拉取
-      await go(state.mode === 'adult' ? 'shelf' : 'kidhome')
+      await go('kidhome')
     } catch (e) { haptic.error(); toast('移除失败：' + e.message) }
   }
 }

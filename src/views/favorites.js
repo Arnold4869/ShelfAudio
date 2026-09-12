@@ -14,6 +14,7 @@ import { state, go, toast, esc, fmtDur, playItem, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
+import { listLocal, removeLocal } from '../lib/favs.js'
 
 export async function renderFavorites(root) {
   root.innerHTML = `<div class="empty"><div class="glyph">${icon('loader', 40, 'spin')}</div>正在读取收藏…</div>`
@@ -21,10 +22,10 @@ export async function renderFavorites(root) {
   let cols = []
   try {
     cols = (await abs.collections()) || []
-  } catch (e) {
-    root.innerHTML = `<div class="empty"><div class="glyph">${icon('warning', 44)}</div>${esc(e.message)}</div>`
-    return
-  }
+  } catch (_) { }
+  // 本机收藏：服务器账号没有 update 权限时收藏会存在这里（见 lib/favs.js），
+  // 不显示出来的话用户会以为收藏丢了。
+  const localList = await listLocal()
 
   // 每个收藏夹补上完整书籍信息（列表返回的是精简对象，缺 media/duration）
   const groups = []
@@ -43,6 +44,21 @@ export async function renderFavorites(root) {
     groups.push({ id: c.id, name: c.name || '收藏', books })
   }
 
+  // 服务器收藏夹里已有的 id（避免本机收藏重复展示）
+  const onServer = new Set(groups.flatMap(g => g.books.map(b => b.id)))
+  const localOnly = localList.filter(x => !onServer.has(x.id))
+  if (localOnly.length) {
+    groups.push({
+      id: '__local__',
+      name: '本机收藏',
+      local: true,
+      books: localOnly.map(x => ({
+        id: x.id,
+        media: { metadata: { title: x.title, authorName: x.author }, duration: x.duration },
+      })),
+    })
+  }
+
   const total = groups.reduce((a, g) => a + g.books.length, 0)
 
   root.innerHTML = `
@@ -52,7 +68,7 @@ export async function renderFavorites(root) {
     </div>
 
     ${total ? groups.map(g => g.books.length ? `
-      <div class="section-h">${esc(g.name)} <small>${g.books.length} 本</small></div>
+      <div class="section-h">${esc(g.name)} <small>${g.books.length} 本${g.local ? ' · 只在这台手机' : ''}</small></div>
       <div class="settings-group" style="padding:4px 0">
         ${g.books.map(it => {
           const m = it.media?.metadata || {}
@@ -120,7 +136,8 @@ export async function renderFavorites(root) {
       modal.querySelector('#fOk').onclick = async () => {
         modal.remove()
         try {
-          await abs.removeFromCollection(b.dataset.col, b.dataset.rm)
+          if (b.dataset.col === '__local__') await removeLocal(b.dataset.rm)
+          else await abs.removeFromCollection(b.dataset.col, b.dataset.rm)
           haptic.success()
           toast('已取消收藏')
           await go('favorites')
