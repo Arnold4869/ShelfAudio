@@ -1,6 +1,6 @@
 # 构建产物 / 依赖
 node_modules/
-dist/
+dist*/
 output/
 deliver/
 _out/

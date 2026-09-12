@@ -2,7 +2,8 @@
 import { abs } from '../lib/api.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { state, go, toast, esc, requireParentPin, stopCurrent, updateMini } from '../app.js'
-import { stopListening } from '../lib/voice.js'
+import { stopListening, voiceSupported } from '../lib/voice.js'
+import { checkVoicePermission, requestVoicePermission, openSystemSettings, onAppResume } from '../lib/permissions.js'
 
 export async function renderSettings(root, { firstRun = false } = {}) {
   const server = await store.get(CONFIG_KEYS.server, '')
@@ -38,6 +39,26 @@ export async function renderSettings(root, { firstRun = false } = {}) {
           <div class="setting-value">章节列表、倍速、睡眠定时、收藏、书籍信息</div>
         </div>
         <div class="setting-arrow">${state.mode === 'adult' ? '✓' : ''}</div>
+      </div>
+    </div>
+
+    <div class="section-h">语音与麦克风</div>
+    <div class="settings-group">
+      <div class="setting-row" id="rowMic">
+        <div class="setting-ic">🎤</div>
+        <div class="setting-main">
+          <div class="setting-label">麦克风 / 语音识别权限</div>
+          <div class="setting-value" id="micState">检查中…</div>
+        </div>
+        <div class="setting-arrow">›</div>
+      </div>
+      <div class="setting-row" id="rowMicSettings">
+        <div class="setting-ic">⚙️</div>
+        <div class="setting-main">
+          <div class="setting-label">打开系统设置</div>
+          <div class="setting-value">若系统不再弹窗，到这里手动开启</div>
+        </div>
+        <div class="setting-arrow">›</div>
       </div>
     </div>
 
@@ -94,6 +115,43 @@ export async function renderSettings(root, { firstRun = false } = {}) {
   $('#btnBack').onclick = async () => {
     if (firstRun) await go(state.mode === 'adult' ? 'shelf' : 'kidhome')
     else await go(state.mode === 'adult' ? 'shelf' : 'kidhome')
+  }
+
+  // ---- 语音权限：显示实时状态 + 重新申请 + 跳设置 ----
+  const micState = $('#micState')
+  const descMap = {
+    granted: '已开启 ✓',
+    denied: '已被拒绝 — 点这里重新申请，或去系统设置手动开启',
+    prompt: '还没申请过 — 点这里申请',
+    'prompt-with-rationale': '还没申请过 — 点这里申请',
+    web: '当前环境不支持（仅真机可用）',
+    error: '查询失败，点这里重试',
+  }
+  async function refreshMic() {
+    if (!voiceSupported()) { micState.textContent = '当前环境不支持（仅真机可用）'; return }
+    const p = await checkVoicePermission()
+    micState.textContent = descMap[p.state] || p.state
+  }
+  refreshMic()
+  // 从系统设置回来后自动刷新状态
+  onAppResume(() => { if (document.body.dataset.view === 'settings') refreshMic() })
+
+  $('#rowMic').onclick = async () => {
+    if (!voiceSupported()) { toast('仅真机可用'); return }
+    const cur = await checkVoicePermission()
+    if (cur.granted) { toast('权限已开启'); refreshMic(); return }
+    micState.textContent = '正在申请…'
+    const r = await requestVoicePermission()
+    if (r.granted) { toast('权限已开启 ✓') }
+    else if (r.needsSettings) { toast('系统不再弹窗，请用下面的「打开系统设置」手动开启') }
+    else { toast('申请失败，请用下面的「打开系统设置」') }
+    refreshMic()
+  }
+
+  $('#rowMicSettings').onclick = async () => {
+    const ok = await openSystemSettings()
+    if (!ok) toast('打不开系统设置，请手动到「设置 → 听书」开启麦克风')
+    else toast('请在设置里打开麦克风与语音识别')
   }
 
   $('#rowPin').onclick = () => openPinDialog()

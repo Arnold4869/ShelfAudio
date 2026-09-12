@@ -4,6 +4,7 @@
  * 识别结果既可用于搜索，也能识别播放指令。
  */
 import { SpeechRecognition } from '@capgo/capacitor-speech-recognition'
+import { checkVoicePermission, requestVoicePermission } from './permissions.js'
 
 // ---------------- 中文数字解析 ----------------
 const CN_DIGIT = { 零: 0, 〇: 0, 一: 1, 壹: 1, 二: 2, 两: 2, 俩: 2, 贰: 2, 三: 3, 叁: 3, 四: 4, 肆: 4, 五: 5, 伍: 5, 六: 6, 陆: 6, 七: 7, 柒: 7, 八: 8, 捌: 8, 九: 9, 玖: 9 }
@@ -70,18 +71,25 @@ export function voiceSupported() {
   } catch (_) { return false }
 }
 
+/**
+ * 确保有权限。
+ * ⚠️ 插件只返回 speechRecognition 字段，没有 microphone 字段
+ * （Android 该 alias 底层就是 RECORD_AUDIO；iOS 的 requestPermissions 会连着申请麦克风）。
+ * 旧代码判断 `perms.microphone !== 'granted'` → 恒真 → 永远报无权限，已修。
+ *
+ * 返回 { granted, needsSettings }：needsSettings=true 表示系统不再弹窗，必须去设置里开。
+ */
 export async function ensurePermission() {
-  try {
-    const perms = await SpeechRecognition.checkPermissions()
-    if (perms?.speechRecognition !== 'granted' || perms?.microphone !== 'granted') {
-      const req = await SpeechRecognition.requestPermissions()
-      if (req?.speechRecognition !== 'granted' || req?.microphone !== 'granted') return false
-    }
-    return true
-  } catch (e) {
-    console.warn('语音权限申请失败', e)
-    return false
+  const cur = await checkVoicePermission()
+  if (cur.granted) return { granted: true, needsSettings: false }
+  if (cur.canAsk) {
+    const req = await requestVoicePermission()
+    if (req.granted) return { granted: true, needsSettings: false }
+    return { granted: false, needsSettings: true }
   }
+  // prompt 之外但非 denied（如 error/web）也再试一次申请，失败就引导设置
+  const retry = await requestVoicePermission()
+  return { granted: retry.granted, needsSettings: !retry.granted }
 }
 
 /**
@@ -136,9 +144,13 @@ export function parseCommand(text) {
  * onPartial(text) / onResult(text) / onError(msg)
  */
 export async function listen({ onPartial, onResult, onError, language = 'zh-CN' } = {}) {
-  if (!voiceSupported()) { onError?.('设备不支持语音识别'); return }
-  const ok = await ensurePermission()
-  if (!ok) { onError?.('没有麦克风或语音识别权限'); return }
+  if (!voiceSupported()) { onError?.('设备不支持语音识别', { needsSettings: false }); return }
+  const perm = await ensurePermission()
+  if (!perm.granted) {
+    onError?.(perm.needsSettings ? '麦克风权限被拒绝，需要到系统设置里打开' : '没有麦克风或语音识别权限',
+             { needsSettings: perm.needsSettings })
+    return
+  }
 
   const listeners = []
 
