@@ -10,7 +10,7 @@ import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
 import { checkVoicePermission, requestVoicePermission, openSystemSettings, onAppResume } from '../lib/permissions.js'
 import { voiceSupported } from '../lib/voice.js'
-import { checkUpdate, currentVersion } from '../lib/updater.js'
+import { checkUpdate, currentVersion, updateSupported } from '../lib/updater.js'
 import { Browser } from '@capacitor/browser'
 
 export async function renderAbout(root) {
@@ -31,14 +31,14 @@ export async function renderAbout(root) {
           <div class="setting-value">听书 v${currentVersion()}</div>
         </div>
       </div>
-      <div class="setting-row" id="rowCheck">
+      ${updateSupported() ? `<div class="setting-row" id="rowCheck">
         <div class="setting-ic">${icon('download', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">检测更新</div>
           <div class="setting-value" id="updState"></div>
         </div>
         <div class="setting-arrow" id="updArrow" style="display:none">${icon('forward', 20)}</div>
-      </div>
+      </div>` : ''}
     </div>
 
     <div class="section-h">权限</div>
@@ -117,46 +117,50 @@ export async function renderAbout(root) {
 
   // ---- 检测更新：查本仓库最新 Release，有新版就给下载入口 ----
   // 老板要求「有更新放到指定位置就能检测到」→ 指定位置 = 本仓库 GitHub Release（CI 自动发布）
-  const updState = $('#updState')
-  let updInfo = null
-  async function doCheck(silent) {
-    if (!silent) updState.textContent = '检测中…'
-    const r = await checkUpdate()
-    updInfo = r
-    if (!r.ok) {
-      // 静默（进页自动查）失败不留红字 —— 老板要求不堆废话；手动点时再说原因
-      updState.textContent = silent ? '' : r.error
-      $('#updArrow').style.display = 'none'
+  // 检测更新只在 Android 出现（iOS 走 Sideloadly，App 内下载无意义）→
+  // 元素不存在时整段跳过，避免对 null 绑事件（那会中断后面所有初始化，踩过一次）
+  if (updateSupported()) {
+    const updState = $('#updState')
+    let updInfo = null
+    async function doCheck(silent) {
+      if (!silent) updState.textContent = '检测中…'
+      const r = await checkUpdate()
+      updInfo = r
+      if (!r.ok) {
+        // 静默（进页自动查）失败不留红字 —— 老板要求不堆废话；手动点时再说原因
+        updState.textContent = silent ? '' : r.error
+        $('#updArrow').style.display = 'none'
+        return r
+      }
+      if (r.hasUpdate) {
+        updState.textContent = `有新版本 ${r.latest}（当前 ${r.current}）· 点这里下载`
+        $('#updArrow').style.display = ''
+      } else {
+        updState.textContent = `已是最新（${r.current}）`
+        $('#updArrow').style.display = 'none'
+      }
       return r
     }
-    if (r.hasUpdate) {
-      updState.textContent = `有新版本 ${r.latest}（当前 ${r.current}）· 点这里下载`
-      $('#updArrow').style.display = ''
-    } else {
-      updState.textContent = `已是最新（${r.current}）`
-      $('#updArrow').style.display = 'none'
-    }
-    return r
-  }
-  // 进页自动查一次（静默，不显示"检测中"闪烁）；失败不打扰，保留空状态由用户手点
-  doCheck(true).catch(() => {})
+    // 进页自动查一次（静默，不显示"检测中"闪烁）；失败不打扰，保留空状态由用户手点
+    doCheck(true).catch(() => {})
 
-  $('#rowCheck').onclick = async () => {
-    haptic.tap()
-    if (updInfo?.ok && updInfo.hasUpdate) {
-      // 有新版：优先给 Android apk，iOS 给 ipa；打开系统浏览器下载
-      const link = updInfo.apk || updInfo.ipa || updInfo.url
-      if (!link) { toast('这条发布没有安装包'); return }
-      try { await Browser.open({ url: link }) }
-      catch (_) { window.open(link, '_blank') }
-      return
+    $('#rowCheck').onclick = async () => {
+      haptic.tap()
+      if (updInfo?.ok && updInfo.hasUpdate) {
+        // 有新版：优先给 Android apk，iOS 给 ipa；打开系统浏览器下载
+        const link = updInfo.apk || updInfo.ipa || updInfo.url
+        if (!link) { toast('这条发布没有安装包'); return }
+        try { await Browser.open({ url: link }) }
+        catch (_) { window.open(link, '_blank') }
+        return
+      }
+      const r = await doCheck(false)
+      if (r.ok && r.hasUpdate) {
+        const link = r.apk || r.ipa || r.url
+        try { await Browser.open({ url: link }) } catch (_) { window.open(link, '_blank') }
+      }
     }
-    const r = await doCheck(false)
-    if (r.ok && r.hasUpdate) {
-      const link = r.apk || r.ipa || r.url
-      try { await Browser.open({ url: link }) } catch (_) { window.open(link, '_blank') }
-    }
-  }
+  }  // end if (updateSupported())
 
   // 退出登录：需家长密码（防孩子误触），清本机登录信息回登录页
   $('#rowLogout').onclick = async () => {

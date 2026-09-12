@@ -9,6 +9,16 @@
  */
 import { CapacitorHttp } from '@capacitor/core'
 
+/**
+ * 只 Android 支持 App 内检测更新。
+ * iOS 装包必须走 Sideloadly 侧载（未签名 ipa 不能自装），在 App 里提示更新没意义 →
+ * 那一行在 iOS 上直接不显示（老板 2026-09-12：这个只针对安卓，iOS 不需要）。
+ * web 也不显示：那是开发预览环境，没有"安装包"概念。
+ */
+export function updateSupported() {
+  try { return (window.Capacitor?.getPlatform?.() || 'web') === 'android' } catch (_) { return false }
+}
+
 const REPO = 'Arnold4869/ShelfAudio'
 const API = `https://api.github.com/repos/${REPO}/releases/latest`
 
