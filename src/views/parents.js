@@ -71,8 +71,8 @@ export async function renderParent(root) {
       <div class="setting-row">
         <div class="setting-ic">${icon('server', 22)}</div>
         <div class="setting-main">
-          <div class="setting-label">${esc(server)}</div>
-          <div class="setting-value">登录账号：${esc(username)}</div>
+          <div class="setting-label">服务器与账号</div>
+          <div class="setting-value">${esc(server.replace(/^https?:\/\//, ''))} · ${esc(username)}</div>
         </div>
       </div>
       <div class="setting-row" id="rowReload">

@@ -212,7 +212,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 }
 .player-cover-wrap .cover-slot {
   width: min(72vw, 290px); aspect-ratio: 1 / 1;
-  border-radius: 26px; box-shadow: 0 18px 46px rgba(0,0,0,.5);
+  border-radius: 26px; /* 老板要求去阴影：整体平面风格，封面也不投影 */
 }
 .cover-ph-list { border-radius: 10px; }
 .cover-ph-player { border-radius: 26px; }
@@ -312,14 +312,13 @@ body[data-view="player"] #extra { margin-bottom: auto; }
 .player-cover {
   width: min(72vw, 290px); aspect-ratio: 1/1;
   border-radius: 26px; object-fit: cover;
-  box-shadow: 0 18px 46px rgba(0,0,0,.5);
 }
 .player-title { font-size: 20px; font-weight: 800; text-align: center; line-height: 1.35; }
 .player-chapter { font-size: 13px; color: var(--text-dim); text-align: center; margin-top: 6px; }
 
 .seek-wrap { margin: 20px 2px 6px; }
 .seek-bar {
-  height: 8px; border-radius: 4px; background: rgba(255,255,255,.15);
+  height: 8px; border-radius: 4px; background: rgba(255,255,255,.22);
   position: relative; cursor: pointer;
 }
 /* 进度条本身只有 8px 高，手指几乎点不准。
