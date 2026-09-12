@@ -3,6 +3,7 @@ import { abs } from '../lib/api.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { state, go, toast, esc, requireParentPin, stopCurrent, updateMini } from '../app.js'
 import { voiceSupported } from '../lib/voice.js'
+import { icon } from '../lib/icons.js'
 import { checkVoicePermission, requestVoicePermission, openSystemSettings, onAppResume } from '../lib/permissions.js'
 
 export async function renderSettings(root, { firstRun = false } = {}) {
@@ -11,13 +12,13 @@ export async function renderSettings(root, { firstRun = false } = {}) {
 
   root.innerHTML = `
     <div class="page-head">
-      <button class="icon-btn" id="btnBack" aria-label="返回">‹</button>
+      <button class="icon-btn" id="btnBack" aria-label="返回">${icon('back', 22)}</button>
       <div class="page-title">${firstRun ? '开始设置' : '设置'}</div>
     </div>
 
     ${firstRun ? `<div class="settings-group" style="padding:16px 18px">
       <div style="font-size:15px;line-height:1.7">
-        👋 连接成功！<br>
+        连接成功！<br>
         建议先设一个<b>家长密码</b>：以后从儿童模式切到成人模式、或进设置页，都需要输这个密码，孩子就点不出去了。
       </div>
     </div>` : ''}
@@ -25,74 +26,74 @@ export async function renderSettings(root, { firstRun = false } = {}) {
     <div class="section-h">使用模式</div>
     <div class="settings-group">
       <div class="setting-row" id="rowKid">
-        <div class="setting-ic">🧒</div>
+        <div class="setting-ic">${icon('child', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">儿童模式</div>
           <div class="setting-value">大卡片书架、大字播放页，仅基本功能</div>
         </div>
-        <div class="setting-arrow">${state.mode === 'kid' ? '✓' : ''}</div>
+        <div class="setting-arrow">${state.mode === 'kid' ? icon('check', 20) : ''}</div>
       </div>
       <div class="setting-row" id="rowAdult">
-        <div class="setting-ic">👤</div>
+        <div class="setting-ic">${icon('person', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">成人模式</div>
           <div class="setting-value">章节列表、倍速、睡眠定时、收藏、书籍信息</div>
         </div>
-        <div class="setting-arrow">${state.mode === 'adult' ? '✓' : ''}</div>
+        <div class="setting-arrow">${state.mode === 'adult' ? icon('check', 20) : ''}</div>
       </div>
     </div>
 
     <div class="section-h">语音与麦克风</div>
     <div class="settings-group">
       <div class="setting-row" id="rowMic">
-        <div class="setting-ic">🎤</div>
+        <div class="setting-ic">${icon('mic', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">麦克风 / 语音识别权限</div>
           <div class="setting-value" id="micState">检查中…</div>
         </div>
-        <div class="setting-arrow">›</div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
       <div class="setting-row" id="rowMicSettings">
-        <div class="setting-ic">⚙️</div>
+        <div class="setting-ic">${icon('cog', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">打开系统设置</div>
           <div class="setting-value">若系统不再弹窗，到这里手动开启</div>
         </div>
-        <div class="setting-arrow">›</div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
     </div>
 
     <div class="section-h">家长密码</div>
     <div class="settings-group">
       <div class="setting-row" id="rowPin">
-        <div class="setting-ic">🔒</div>
+        <div class="setting-ic">${icon('lock', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">${state.kidPin ? '修改密码' : '设置密码'}</div>
           <div class="setting-value">${state.kidPin ? '已设置，退出儿童模式需输入' : '未设置，孩子可直接切到成人模式'}</div>
         </div>
-        <div class="setting-arrow">›</div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
     </div>
 
     <div class="section-h">服务器</div>
     <div class="settings-group">
       <div class="setting-row">
-        <div class="setting-ic">🖥</div>
+        <div class="setting-ic">${icon('server', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">${esc(server)}</div>
           <div class="setting-value">登录账号：${esc(username)}</div>
         </div>
       </div>
       <div class="setting-row" id="rowReload">
-        <div class="setting-ic">🔄</div>
+        <div class="setting-ic">${icon('refresh', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">刷新书库</div>
           <div class="setting-value">重新从服务器拉取书籍列表</div>
         </div>
-        <div class="setting-arrow">›</div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
       <div class="setting-row" id="rowLogout">
-        <div class="setting-ic">🚪</div>
+        <div class="setting-ic">${icon('exit', 22)}</div>
         <div class="setting-main">
           <div class="setting-label" style="color:var(--danger)">退出登录</div>
           <div class="setting-value">清除本机保存的登录信息</div>
@@ -114,7 +115,7 @@ export async function renderSettings(root, { firstRun = false } = {}) {
   // ---- 语音权限：显示实时状态 + 重新申请 + 跳设置 ----
   const micState = $('#micState')
   const descMap = {
-    granted: '已开启 ✓',
+    granted: '已开启',
     denied: '已被拒绝 — 点这里重新申请，或去系统设置手动开启',
     prompt: '还没申请过 — 点这里申请',
     'prompt-with-rationale': '还没申请过 — 点这里申请',
@@ -136,7 +137,7 @@ export async function renderSettings(root, { firstRun = false } = {}) {
     if (cur.granted) { toast('权限已开启'); refreshMic(); return }
     micState.textContent = '正在申请…'
     const r = await requestVoicePermission()
-    if (r.granted) { toast('权限已开启 ✓') }
+    if (r.granted) { toast('权限已开启') }
     else if (r.needsSettings) { toast('系统不再弹窗，请用下面的「打开系统设置」手动开启') }
     else { toast('申请失败，请用下面的「打开系统设置」') }
     refreshMic()

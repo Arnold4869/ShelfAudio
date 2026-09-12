@@ -15,7 +15,7 @@
       <div class="boot-rings">
         <div class="ring outer"></div>
         <div class="ring inner"></div>
-        <div class="boot-glyph">🎧</div>
+        <div class="boot-glyph" id="bootGlyph"></div>
       </div>
       <div class="boot-title">听书</div>
       <div class="boot-dots"><i></i><i></i><i></i></div>
@@ -24,16 +24,21 @@
     <!-- 主视图容器（由 app.js 按路由渲染） -->
     <main id="view"></main>
 
+    <!-- 迷你条下方的安全区背板：防止滚动内容从迷你条下面的缝隙里透出来 -->
+    <div id="miniBackdrop"></div>
+
     <!-- 迷你播放条（非播放页时显示） -->
     <div id="mini" class="mini hidden" role="button" tabindex="0">
-      <img id="miniCover" class="mini-cover" alt="" />
+      <span class="mini-cover-slot" id="miniCoverSlot">
+        <img id="miniCover" class="mini-cover" alt="" />
+      </span>
       <div class="mini-info">
         <div id="miniTitle" class="mini-title">未在播放</div>
         <div id="miniSub" class="mini-sub"></div>
       </div>
-      <button id="miniPrev" class="mini-btn" aria-label="上一集">⏮</button>
-      <button id="miniToggle" class="mini-btn primary" aria-label="播放/暂停">▶</button>
-      <button id="miniNext" class="mini-btn" aria-label="下一集">⏭</button>
+      <button id="miniPrev" class="mini-btn" aria-label="上一集"></button>
+      <button id="miniToggle" class="mini-btn primary" aria-label="播放/暂停"></button>
+      <button id="miniNext" class="mini-btn" aria-label="下一集"></button>
     </div>
 
     <!-- 全局提示 -->

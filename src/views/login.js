@@ -2,6 +2,7 @@
 import { abs } from '../lib/api.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { go, toast, esc, state, initPlayer } from '../app.js'
+import { icon } from '../lib/icons.js'
 
 export async function renderLogin(root) {
   const savedServer = (await store.get(CONFIG_KEYS.server, '')) || ''
@@ -9,7 +10,7 @@ export async function renderLogin(root) {
 
   root.innerHTML = `
     <div class="login-wrap">
-      <div class="login-logo">🎧</div>
+      <div class="login-logo">${icon('headphones', 64)}</div>
       <h1 class="login-h">听书</h1>
       <div class="login-sub">连接你的有声书服务器</div>
       <div class="login-card">

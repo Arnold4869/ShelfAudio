@@ -7,6 +7,8 @@
  */
 import { abs } from './lib/api.js'
 import { store, CONFIG_KEYS } from './lib/store.js'
+import { icon } from './lib/icons.js'
+import { fallbackCover } from './lib/cover.js'
 import { BookPlayer } from './lib/player.js'
 import { renderShelf } from './views/shelf.js'
 import { renderPlayer } from './views/player.js'
@@ -128,7 +130,7 @@ export function initPlayer() {
     onTrackChange: (t) => {
       window.dispatchEvent(new CustomEvent('sa:track', { detail: t }))
     },
-    onEnd: () => { toast('这本听完啦 🎉'); updateMini() },
+    onEnd: () => { toast('这本听完啦'); updateMini() },
   })
   state.player = p
   window.__saPlayer = p   // voice.js 在语音结束后需要它恢复播放
@@ -232,13 +234,25 @@ function updateMini() {
 
   mini.classList.remove('hidden')
   document.body.dataset.mini = '1'
+  // 封面：无刮削的书 cover 为空，<img src=""> 会显示"破图"图标。
+  // 所以先铺一张占位封面，真封面加载成功再盖上去（和书架/搜索页同一套做法）。
+  const slot = $('#miniCoverSlot')
   const cov = $('#miniCover')
-  cov.src = c.cover || ''
+  if (slot) {
+    const old = slot.querySelector('.cover-ph')
+    if (old) old.remove()
+    slot.insertAdjacentHTML('afterbegin',
+      fallbackCover({ title: c.title, cls: 'cover-ph-mini' }))
+    cov.onload = () => { cov.style.opacity = '1' }
+    cov.onerror = () => { cov.removeAttribute('src'); cov.style.opacity = '0' }
+    cov.style.opacity = '0'
+    if (c.cover) cov.src = c.cover
+  }
   $('#miniTitle').textContent = c.title
   const t = c.tracks[p.trackIndex]
   const chapter = c.chapters[p.trackIndex]?.title || t?.title || ''
   $('#miniSub').textContent = p.playing ? '正在播放 · ' + chapter : '已暂停 · ' + chapter
-  $('#miniToggle').textContent = p.playing ? '❚❚' : '▶'
+  $('#miniToggle').innerHTML = icon(p.playing ? 'pause' : 'play', 17)
 }
 
 export { updateMini }
@@ -308,6 +322,13 @@ route('settings', async (root) => {
 
 // ---------------- 全局事件 ----------------
 window.addEventListener('DOMContentLoaded', () => {
+  // 静态图标：迷你条三个按钮 + 启动闪屏（index.html 里只留空容器，图标由这里注入）
+  $('#miniPrev').innerHTML = icon('prev', 19)
+  $('#miniNext').innerHTML = icon('next', 19)
+  $('#miniToggle').innerHTML = icon('play', 17)
+  const bg = $('#bootGlyph')
+  if (bg) bg.innerHTML = icon('headphones', 66)
+
   // 迷你条交互
   $('#miniToggle').addEventListener('click', e => { e.stopPropagation(); state.player?.toggle() })
   $('#miniPrev').addEventListener('click', e => { e.stopPropagation(); state.player?.prevTrack() })

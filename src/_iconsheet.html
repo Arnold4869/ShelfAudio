@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>icon sheet</title>
+<style>
+  body { margin:0; background:#0f0d20; color:#f2eefc;
+         font-family:-apple-system,"PingFang SC",sans-serif; padding:24px; }
+  .row { display:flex; flex-wrap:wrap; gap:22px; }
+  .cell { width:104px; text-align:center; }
+  .box { width:64px; height:64px; margin:0 auto 6px; border-radius:16px;
+         background:#201b45; display:grid; place-items:center; color:#f2eefc; }
+  .lab { font-size:11px; color:#a79fc9; }
+  /* 模拟实际场景：强调色按钮上的图标 */
+  .accent { background:#7c5cff; }
+  .small { width:38px; height:38px; border-radius:50%; }
+</style>
+</head>
+<body>
+<div class="row" id="row"></div>
+<script type="module">
+import { icon, ICON_NAMES } from './lib/icons.js'
+const row = document.getElementById('row')
+// 全部图标：常规 / 强调色 / 小尺寸
+row.innerHTML = ICON_NAMES.map(n => `
+  <div class="cell">
+    <div class="box">${icon(n, 30)}</div>
+    <div class="lab">${n}</div>
+  </div>`).join('') +
+  `<div class="cell"><div class="box accent small">${icon('play', 17)}</div><div class="lab">mini play</div></div>
+   <div class="cell"><div class="box accent small">${icon('pause', 17)}</div><div class="lab">mini pause</div></div>
+   <div class="cell"><div class="box small">${icon('prev', 19)}</div><div class="lab">mini prev</div></div>
+   <div class="cell"><div class="box">${icon('back15', 40)}</div><div class="lab">back15@40</div></div>`
+</script>
+</body>
+</html>

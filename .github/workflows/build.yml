@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: No emoji in UI (icons must be hand-drawn SVG)
+        run: python3 scripts/check-emoji.py
+
       - name: Verify imports resolve
         run: node scripts/check-imports.mjs
 
@@ -91,6 +94,9 @@ jobs:
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+
+      - name: No emoji in UI (icons must be hand-drawn SVG)
+        run: python3 scripts/check-emoji.py
 
       - name: Verify imports resolve
         run: node scripts/check-imports.mjs

@@ -3,6 +3,7 @@ import { abs } from '../lib/api.js'
 import { state, go, toast, esc, fmtTime, updateMini, requireParentPin } from '../app.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
+import { icon } from '../lib/icons.js'
 
 let sleepTimer = null
 let sleepAt = 0
@@ -18,7 +19,7 @@ export async function renderPlayer(root) {
   const c = state.current
   const p = state.player
   if (!c || !p) {
-    root.innerHTML = `<div class="empty"><div class="glyph">🎧</div>还没有在播放的书<div style="margin-top:18px"><button class="btn" id="toShelf">去书架</button></div></div>`
+    root.innerHTML = `<div class="empty"><div class="glyph">${icon('headphones', 48)}</div>还没有在播放的书<div style="margin-top:18px"><button class="btn" id="toShelf">去书架</button></div></div>`
     root.querySelector('#toShelf').onclick = () => go(state.mode === 'adult' ? 'shelf' : 'kidhome')
     return
   }
@@ -31,9 +32,9 @@ export async function renderPlayer(root) {
 
   const shell = () => `
     <div class="page-head">
-      <button class="icon-btn" id="btnBack" aria-label="返回">‹</button>
+      <button class="icon-btn" id="btnBack" aria-label="返回">${icon('back', 22)}</button>
       <div class="page-title" style="font-size:20px">${kid ? '正在听' : esc(c.title)}</div>
-      <button class="icon-btn" id="btnMore" aria-label="更多">⋯</button>
+      <button class="icon-btn" id="btnMore" aria-label="更多">${icon('more', 22)}</button>
     </div>
 
     <div class="player-page">
@@ -57,22 +58,22 @@ export async function renderPlayer(root) {
       </div>
 
       <div class="player-controls">
-        <button class="ctrl side" id="btnR15" aria-label="后退15秒">⟲<span style="font-size:11px;display:block">15</span></button>
-        <button class="ctrl mid" id="btnPrev" aria-label="上一集">⏮</button>
-        <button class="ctrl big" id="btnPlay" aria-label="播放/暂停">▶</button>
-        <button class="ctrl mid" id="btnNext" aria-label="下一集">⏭</button>
-        <button class="ctrl side" id="btnF15" aria-label="前进15秒">⟳<span style="font-size:11px;display:block">15</span></button>
+        <button class="ctrl side" id="btnR15" aria-label="后退15秒">${icon('back15', 30)}<span class="ctrl-num">15</span></button>
+        <button class="ctrl mid" id="btnPrev" aria-label="上一集">${icon('prev', 34)}</button>
+        <button class="ctrl big" id="btnPlay" aria-label="播放/暂停">${icon('play', 46)}</button>
+        <button class="ctrl mid" id="btnNext" aria-label="下一集">${icon('next', 34)}</button>
+        <button class="ctrl side" id="btnF15" aria-label="前进15秒">${icon('forward15', 30)}<span class="ctrl-num">15</span></button>
       </div>
 
       <div class="player-tools">
         ${kid
           ? `<button class="tool-chip" id="btnRate">1.0×</button>
-             <button class="tool-chip" id="btnSleep">⏰ 定时</button>
-             <button class="tool-chip" id="btnChapters">📑 选集</button>`
+             <button class="tool-chip" id="btnSleep">${icon('timer', 18)} 定时</button>
+             <button class="tool-chip" id="btnChapters">${icon('list', 18)} 选集</button>`
           : `<button class="tool-chip" id="btnRate">1.0×</button>
-             <button class="tool-chip" id="btnSleep">⏰ 定时</button>
-             <button class="tool-chip" id="btnFav">♡ 收藏</button>
-             <button class="tool-chip" id="btnInfo">ⓘ 信息</button>`}
+             <button class="tool-chip" id="btnSleep">${icon('timer', 18)} 定时</button>
+             <button class="tool-chip" id="btnFav">${icon('heart', 18)} 收藏</button>
+             <button class="tool-chip" id="btnInfo">${icon('info', 18)} 信息</button>`}
       </div>
 
       <div id="extra"></div>
@@ -93,7 +94,8 @@ export async function renderPlayer(root) {
     $('#pChapter').textContent = ch?.title || c.tracks[p.trackIndex]?.title || `第 ${p.trackIndex + 1} / ${c.tracks.length} 集`
   }
   function paintState() {
-    $('#btnPlay').textContent = p.playing ? '❚❚' : '▶'
+    // 必须用 innerHTML：textContent 会把上面注入的 SVG 抹掉，播放键会变空白
+    $('#btnPlay').innerHTML = icon(p.playing ? 'pause' : 'play', 46)
     $('#btnRate').textContent = (p.rate || 1).toFixed(1).replace(/\.0$/, '.0') + '×'
   }
 
@@ -195,7 +197,10 @@ export async function renderPlayer(root) {
     renderExtra()
   }
   if ($('#btnChapters')) {
-    const paintChapterBtn = () => { $('#btnChapters').textContent = chaptersOpen ? '📑 收起' : '📑 选集' }
+    // 同样必须用 innerHTML，否则图标被抹掉
+    const paintChapterBtn = () => {
+      $('#btnChapters').innerHTML = icon('list', 18) + (chaptersOpen ? ' 收起' : ' 选集')
+    }
     paintChapterBtn()
     $('#btnChapters').onclick = () => {
       chaptersOpen = !chaptersOpen

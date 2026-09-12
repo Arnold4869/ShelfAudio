@@ -3,11 +3,12 @@ import { abs } from '../lib/api.js'
 import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini } from '../app.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
+import { icon } from '../lib/icons.js'
 
 let cache = { items: [], at: 0, libraryId: null }
 
 export async function renderShelf(root, { kid }) {
-  root.innerHTML = `<div class="empty"><div class="glyph">⏳</div>正在加载书架…</div>`
+  root.innerHTML = `<div class="empty"><div class="glyph">${icon('loader', 40, 'spin')}</div>正在加载书架…</div>`
 
   if (!state.libraryId) {
     try {
@@ -17,7 +18,7 @@ export async function renderShelf(root, { kid }) {
     } catch (e) { }
   }
   if (!state.libraryId) {
-    root.innerHTML = `<div class="empty"><div class="glyph">📚</div>这个账号没有可用的书库</div>`
+    root.innerHTML = `<div class="empty"><div class="glyph">${icon('books', 44)}</div>这个账号没有可用的书库</div>`
     return
   }
 
@@ -33,13 +34,13 @@ export async function renderShelf(root, { kid }) {
       cache = { items, at: Date.now(), libraryId: state.libraryId }
     }
   } catch (e) {
-    root.innerHTML = `<div class="empty"><div class="glyph">⚠️</div>${esc(e.message)}</div>`
+    root.innerHTML = `<div class="empty"><div class="glyph">${icon('warning', 44)}</div>${esc(e.message)}</div>`
     return
   }
   state.items = items
 
   if (!items.length) {
-    root.innerHTML = `<div class="empty"><div class="glyph">📚</div>书架是空的</div>`
+    root.innerHTML = `<div class="empty"><div class="glyph">${icon('books', 44)}</div>书架是空的</div>`
     return
   }
 
@@ -87,13 +88,13 @@ export async function renderShelf(root, { kid }) {
   const head = kid
     ? `<div class="page-head">
          <div class="page-title">我的书架</div>
-         <button class="icon-btn" id="btnGear" aria-label="设置">⚙️</button>
+         <button class="icon-btn" id="btnGear" aria-label="设置">${icon('cog', 21)}</button>
        </div>`
     : `<div class="page-head">
-         <button class="icon-btn" id="btnBack" aria-label="返回">‹</button>
+         <button class="icon-btn" id="btnBack" aria-label="返回">${icon('back', 22)}</button>
          <div class="page-title">全部书籍</div>
-         <button class="icon-btn" id="btnSearch" aria-label="搜索">🔍</button>
-         <button class="icon-btn" id="btnGear" aria-label="设置">⚙️</button>
+         <button class="icon-btn" id="btnSearch" aria-label="搜索">${icon('search', 21)}</button>
+         <button class="icon-btn" id="btnGear" aria-label="设置">${icon('cog', 21)}</button>
        </div>`
 
   const continueHTML = inProgress.length ? `
@@ -129,7 +130,7 @@ export async function renderShelf(root, { kid }) {
     const done = prog?.isFinished
     const dur = fmtDur(it.media?.duration)
     const who = m.authorName || m.narratorName || ''
-    const tail = done ? '已听完' : (pct > 0 ? pct + '%' : '▶')
+    const tail = done ? '已听完' : (pct > 0 ? pct + '%' : icon('play', 15))
     return `
       <div class="list-item" data-id="${it.id}">
         <div class="cover-slot">
@@ -150,11 +151,11 @@ export async function renderShelf(root, { kid }) {
 
   if (kid) {
     root.insertAdjacentHTML('beforeend', `
-      <button class="voice-fab" data-voice="1" aria-label="语音搜索">🎤</button>
+      <button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>
       <div class="kid-tabs">
-        <button class="kid-tab active" data-nav="kidhome"><span class="ic">📚</span>书架</button>
-        <button class="kid-tab" data-nav="search"><span class="ic">🔍</span>找书</button>
-        <button class="kid-tab" data-nav="settings"><span class="ic">⚙️</span>设置</button>
+        <button class="kid-tab active" data-nav="kidhome"><span class="ic">${icon('books', 24)}</span>书架</button>
+        <button class="kid-tab" data-nav="search"><span class="ic">${icon('search', 24)}</span>找书</button>
+        <button class="kid-tab" data-nav="settings"><span class="ic">${icon('cog', 24)}</span>设置</button>
       </div>`)
     root.querySelector('[data-nav="search"]').onclick = () => go('search')
     root.querySelector('[data-nav="settings"]').onclick = async () => { if (await requireParentPin()) go('settings') }

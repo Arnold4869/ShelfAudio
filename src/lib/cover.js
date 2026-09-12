@@ -89,7 +89,6 @@ export function fallbackCover({ title = '', author = '', cls = '' } = {}) {
   return `<div class="cover-ph ${cls}" aria-hidden="true"
     style="--ph-a:${p.bg[0]};--ph-b:${p.bg[1]};--ph-ink:${p.ink};--ph-accent:${p.accent};--ph-fs:${fsCqi.toFixed(2)}cqi">
     <span class="cover-ph-spine"></span>
-    <span class="cover-ph-rule"></span>
     <span class="cover-ph-title">${escapeHTML(name)}</span>
     ${sub ? `<span class="cover-ph-sub">${escapeHTML(sub)}</span>` : ''}
   </div>`

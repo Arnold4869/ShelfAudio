@@ -4,6 +4,7 @@ import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini }
 import { voiceSupported } from '../lib/voice.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
+import { icon } from '../lib/icons.js'
 
 let lastQuery = ''
 
@@ -13,9 +14,9 @@ export async function renderSearch(root, params = {}) {
 
   root.innerHTML = `
     <div class="page-head">
-      <button class="icon-btn" id="btnBack" aria-label="返回">‹</button>
+      <button class="icon-btn" id="btnBack" aria-label="返回">${icon('back', 22)}</button>
       <div class="page-title">找书</div>
-      ${voiceSupported() ? `<button class="icon-btn" data-voice="1" aria-label="语音">🎤</button>` : ''}
+      ${voiceSupported() ? `<button class="icon-btn" data-voice="1" aria-label="语音">${icon('mic', 21)}</button>` : ''}
     </div>
     <div class="search-bar">
       <input id="q" type="search" placeholder="输入书名，或说“我要听示例故事甲”" value="${esc(lastQuery)}"
@@ -26,7 +27,7 @@ export async function renderSearch(root, params = {}) {
       ${voiceSupported() ? '点右下角话筒，直接说书名或“暂停”“下一集”' : '这台设备不支持语音识别，可以用文字搜索'}
     </div>
     <div id="results"></div>
-    ${kid ? '<button class="voice-fab" data-voice="1" aria-label="语音搜索">🎤</button>' : ''}
+    ${kid ? `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>` : ''}
   `
 
   const $ = s => root.querySelector(s)
@@ -35,9 +36,9 @@ export async function renderSearch(root, params = {}) {
   if (kid) {
     root.insertAdjacentHTML('beforeend', `
       <div class="kid-tabs">
-        <button class="kid-tab" data-nav="kidhome"><span class="ic">📚</span>书架</button>
-        <button class="kid-tab active" data-nav="search"><span class="ic">🔍</span>找书</button>
-        <button class="kid-tab" data-nav="settings"><span class="ic">⚙️</span>设置</button>
+        <button class="kid-tab" data-nav="kidhome"><span class="ic">${icon('books', 24)}</span>书架</button>
+        <button class="kid-tab active" data-nav="search"><span class="ic">${icon('search', 24)}</span>找书</button>
+        <button class="kid-tab" data-nav="settings"><span class="ic">${icon('cog', 24)}</span>设置</button>
       </div>`)
     root.querySelector('[data-nav="kidhome"]').onclick = () => go('kidhome')
     root.querySelector('[data-nav="settings"]').onclick = async () => { if (await requireParentPin()) go('settings') }
@@ -46,7 +47,7 @@ export async function renderSearch(root, params = {}) {
 
   const renderList = (items, q) => {
     if (!items.length) {
-      results.innerHTML = `<div class="empty"><div class="glyph">🔍</div>没找到${q ? '「' + esc(q) + '」' : ''}相关的书</div>`
+      results.innerHTML = `<div class="empty"><div class="glyph">${icon('search', 44)}</div>没找到${q ? '「' + esc(q) + '」' : ''}相关的书</div>`
       return
     }
     results.innerHTML = items.map(it => {
@@ -60,7 +61,7 @@ export async function renderSearch(root, params = {}) {
           <div class="list-title">${esc(m.title || '未命名')}</div>
           <div class="list-sub">${esc(m.authorName || m.narratorName || '')} · ${fmtDur(it.media?.duration)}</div>
         </div>
-        <div class="list-pct">▶</div>
+        <div class="list-pct">${icon('play', 15)}</div>
       </div>`
     }).join('')
     wireCoverFallback(results)
@@ -77,7 +78,7 @@ export async function renderSearch(root, params = {}) {
     q = (q || '').trim()
     if (!q) return
     lastQuery = q
-    results.innerHTML = `<div class="empty"><div class="glyph">⏳</div>搜索中…</div>`
+    results.innerHTML = `<div class="empty"><div class="glyph">${icon('loader', 40, 'spin')}</div>搜索中…</div>`
     try {
       if (!state.libraries.length) state.libraries = await abs.libraries()
       let items = await abs.searchAll(state.libraries, q)
@@ -88,7 +89,7 @@ export async function renderSearch(root, params = {}) {
       }
       renderList(items, q)
     } catch (e) {
-      results.innerHTML = `<div class="empty"><div class="glyph">⚠️</div>${esc(e.message)}</div>`
+      results.innerHTML = `<div class="empty"><div class="glyph">${icon('warning', 44)}</div>${esc(e.message)}</div>`
     }
   }
 

@@ -1,4 +1,5 @@
 /** 语音浮层 UI —— 书架页和搜索页共用 */
+import { icon } from './icons.js'
 import { listen, finishListening, currentText, forceStopCurrent, parseCommand, voiceSupported } from './voice.js'
 import { checkVoicePermission, requestVoicePermission, openSystemSettings } from './permissions.js'
 import { state, toast } from '../app.js'
@@ -10,7 +11,7 @@ export function openVoiceOverlay({ onSearch } = {}) {
   const ov = document.createElement('div')
   ov.className = 'voice-overlay'
   ov.innerHTML = `
-    <div class="voice-mic" id="vMic">🎤</div>
+    <div class="voice-mic" id="vMic"></div>
     <div class="voice-status" id="vStat">正在准备麦克风…</div>
     <div class="voice-heard" id="vHeard"></div>
     <div class="voice-hints" id="vHints"></div>
@@ -19,6 +20,7 @@ export function openVoiceOverlay({ onSearch } = {}) {
   document.body.appendChild(ov)
 
   const mic = ov.querySelector('#vMic')
+  mic.innerHTML = icon('mic', 56)
   const stat = ov.querySelector('#vStat')
   const heard = ov.querySelector('#vHeard')
   const hints = ov.querySelector('#vHints')

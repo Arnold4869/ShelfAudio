@@ -6,11 +6,6 @@ UI 回归检查（真实渲染）——把审计中发现的 UI 问题固化成�
 import json, pathlib, re, sys
 from playwright.sync_api import sync_playwright
 
-# 用法：
-#   1) python3 -m http.server 8899 -d dist  （另开一个终端）
-#   2) 需要 /tmp/abs-fixtures.json（真实 ABS 响应快照）与 /tmp/tok.txt（token）
-# 说明：这是一套「真浏览器渲染」检查。UI 问题（字号不缩放、底栏被遮挡、元素重叠）
-# 靠读 CSS 推断极易出错，必须在 Chromium 里量真实几何。
 BASE = 'http://127.0.0.1:8899/index.html'
 FX = json.loads(pathlib.Path('/tmp/abs-fixtures.json').read_text())
 TOKEN = pathlib.Path('/tmp/tok.txt').read_text().strip()
