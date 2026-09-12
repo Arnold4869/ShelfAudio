@@ -11,7 +11,7 @@
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
         <item name="colorAccent">@color/colorAccent</item>
         <item name="android:windowBackground">@color/appBackground</item>
-        <!-- 状态栏/导航栏透明，内容延伸到边缘；--safe-* 由 CSS env() 处理 -->
+        <!-- 状态栏/导航栏透明，内容延伸到边缘；安全区由 CSS env() 处理 -->
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>

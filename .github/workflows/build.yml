@@ -35,6 +35,9 @@ jobs:
       - name: No emoji in UI (icons must be hand-drawn SVG)
         run: python3 scripts/check-emoji.py
 
+      - name: Android XML checks
+        run: python3 scripts/check-xml.py
+
       - name: Verify imports resolve
         run: node scripts/check-imports.mjs
 
@@ -97,6 +100,9 @@ jobs:
 
       - name: No emoji in UI (icons must be hand-drawn SVG)
         run: python3 scripts/check-emoji.py
+
+      - name: Android XML checks
+        run: python3 scripts/check-xml.py
 
       - name: Verify imports resolve
         run: node scripts/check-imports.mjs
