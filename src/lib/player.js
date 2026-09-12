@@ -159,7 +159,6 @@ export class BookPlayer {
       // 换轨（或浏览器版直接换 src）
       this.trackIndex = idx
       if (this.isNativeEngine) {
-        await this._unloadAsset(this.trackIndex === idx ? null : null) // no-op 占位，保持结构
         await this._nativeLoadTrack(idx, fileTime)
       } else {
         await this._webLoadTrack(idx, fileTime)

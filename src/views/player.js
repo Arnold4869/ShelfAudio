@@ -104,6 +104,8 @@ export async function renderPlayer(root) {
     window.removeEventListener('sa:time', onTime)
     window.removeEventListener('sa:state', onState)
     window.removeEventListener('sa:track', onTrack)
+    window.removeEventListener('mousemove', moveDrag)
+    window.removeEventListener('mouseup', endDrag)
   }
 
   $('#btnBack').onclick = () => go(kid ? 'kidhome' : 'shelf')
@@ -175,8 +177,12 @@ export async function renderPlayer(root) {
   }
 
   // ---- 选集 / 成人附加页 ----
-  $('#btnMore').onclick = () => {
-    if (kid) { go('settings'); return }
+  $('#btnMore').onclick = async () => {
+    // 儿童模式下这个按钮通往设置，必须过家长锁，否则孩子能直接点出去
+    if (kid) {
+      if (await requireParentPin()) go('settings')
+      return
+    }
     adultTab = adultTab === 'chapters' ? 'info' : 'chapters'
     renderExtra()
   }

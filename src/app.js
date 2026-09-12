@@ -59,12 +59,29 @@ export function toast(msg, ms = 2200) {
 const routes = {}
 export function route(name, fn) { routes[name] = fn }
 
+let currentCleanup = null
+
 export async function go(name, params = {}) {
   const fn = routes[name]
   if (!fn) { console.warn('no route', name); return }
+
+  // 卸载上一个视图的监听，否则每次进播放页都会累加 window 事件监听
+  if (typeof currentCleanup === 'function') {
+    try { currentCleanup() } catch (_) {}
+    currentCleanup = null
+  }
+  // 离开页面时关掉语音浮层，避免它挂着麦克风
+  document.querySelectorAll('.voice-overlay').forEach(e => e.remove())
+  try {
+    const { forceStopCurrent } = await import('./lib/voice.js')
+    await forceStopCurrent()
+  } catch (_) {}
+
   document.querySelectorAll('.kid-tabs').forEach(e => e.remove())
-  $('#view').innerHTML = ''
-  await fn($('#view'), params)
+  const root = $('#view')
+  root.innerHTML = ''
+  await fn(root, params)
+  currentCleanup = typeof root._cleanup === 'function' ? root._cleanup : null
   updateMini()
 }
 
@@ -120,6 +137,11 @@ export async function playItem(item, { startTime } = {}) {
   const meta = item.media?.metadata || {}
   toast('正在加载…')
 
+  // 换书前把上一本收尾：关掉旧会话并落盘进度，否则 server 端会话泄漏
+  if (state.current && state.current.item?.id !== item.id) {
+    try { await player.finish() } catch (_) {}
+  }
+
   // 进度：优先用传入的，其次 ABS 的上次进度
   let start = startTime
   if (start === undefined) {
@@ -139,7 +161,22 @@ export async function playItem(item, { startTime } = {}) {
     headers: abs.authHeaders(),
   }))
 
-  const chapters = item.media?.chapters || []
+  // 章节：列表接口不返回 chapters，只有单本详情有。这里先取详情补上，
+  // 拿不到就用音轨自身信息合成（ABS 里一个音轨通常就是一集，startOffset 即章节起点）
+  let chapters = item.media?.chapters || []
+  if (!chapters.length) {
+    try {
+      const detail = await abs.getItem(item.id)
+      chapters = detail?.media?.chapters || []
+    } catch (_) {}
+  }
+  if (!chapters.length) {
+    chapters = withUrls.map(t => ({
+      title: t.title || `第 ${t.index} 集`,
+      start: t.startOffset || 0,
+      end: (t.startOffset || 0) + (t.duration || 0),
+    }))
+  }
   const title = meta.title || '未命名'
 
   state.current = {

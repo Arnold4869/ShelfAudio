@@ -89,6 +89,7 @@ export async function renderShelf(root, { kid }) {
          <button class="icon-btn" id="btnBack" aria-label="返回">‹</button>
          <div class="page-title">全部书籍</div>
          <button class="icon-btn" id="btnSearch" aria-label="搜索">🔍</button>
+         <button class="icon-btn" id="btnGear" aria-label="设置">⚙️</button>
        </div>`
 
   const continueHTML = inProgress.length ? `
@@ -128,7 +129,12 @@ export async function renderShelf(root, { kid }) {
     root.querySelector('#btnSearch').onclick = () => go('search')
     root.querySelector('#btnBack').onclick = () => go('kidhome')
   }
-  if (kid) root.querySelector('#btnGear').onclick = async () => { if (await requireParentPin()) go('settings') }
+  if (kid) {
+    root.querySelector('#btnGear').onclick = async () => { if (await requireParentPin()) go('settings') }
+  } else {
+    // 成人模式直接进设置（自己人用，不用家长锁）
+    root.querySelector('#btnGear').onclick = () => go('settings')
+  }
 
   // 语音
   root.querySelectorAll('[data-voice]').forEach(btn => {
@@ -144,10 +150,11 @@ export async function renderShelf(root, { kid }) {
       const id = el.dataset.id
       const it = state.items.find(x => x.id === id) || inProgress.find(x => x.id === id)
       if (!it) return
-      // 继续听：沿用 ABS 进度；新书：从 0 开始
-      const isContinue = el.dataset.continue === '1'
+      // 有进度就接着听（卡片上有"听 N%"徽标，从头播会丢进度）；没进度才从 0 开始
+      const prog = progressMap[it.id]
+      const resumeAt = (prog && !prog.isFinished && prog.currentTime > 5) ? undefined : 0
       try {
-        await playItem(it, isContinue ? {} : { startTime: 0 })
+        await playItem(it, { startTime: resumeAt })
       } catch (e) { toast(e.message || '打不开这本书') }
     })
   })

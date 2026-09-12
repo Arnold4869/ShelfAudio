@@ -1,5 +1,5 @@
 /** 语音浮层 UI —— 书架页和搜索页共用 */
-import { listen, stopListening, parseCommand, voiceSupported } from './voice.js'
+import { listen, finishListening, currentText, forceStopCurrent, parseCommand, voiceSupported } from './voice.js'
 import { checkVoicePermission, requestVoicePermission, openSystemSettings } from './permissions.js'
 import { state, toast } from '../app.js'
 
@@ -10,70 +10,103 @@ export function openVoiceOverlay({ onSearch } = {}) {
   const ov = document.createElement('div')
   ov.className = 'voice-overlay'
   ov.innerHTML = `
-    <div class="voice-mic">🎤</div>
-    <div class="voice-status" id="vStat">想听什么书？</div>
+    <div class="voice-mic" id="vMic">🎤</div>
+    <div class="voice-status" id="vStat">正在准备麦克风…</div>
     <div class="voice-heard" id="vHeard"></div>
-    <div class="voice-hints" id="vHints">
+    <div class="voice-hints" id="vHints"></div>
+    <div class="voice-actions" id="vActions"></div>
+  `
+  document.body.appendChild(ov)
+
+  const mic = ov.querySelector('#vMic')
+  const stat = ov.querySelector('#vStat')
+  const heard = ov.querySelector('#vHeard')
+  const hints = ov.querySelector('#vHints')
+  const actions = ov.querySelector('#vActions')
+
+  let done = false        // 已给出结果，防止重复处理
+  let listening = false   // 正在收音
+  let gotText = false     // 是否已经听到内容
+  const close = () => { ov.remove() }
+
+  // ---------- 常态操作区 ----------
+  function normalActions() {
+    actions.innerHTML = `<button class="btn ghost" id="vClose">取消</button>`
+    actions.querySelector('#vClose').onclick = async () => {
+      done = true
+      await forceStopCurrent()
+      close()
+    }
+  }
+
+  // ---------- 收音中：给「说完了」按钮 + 常见指令 ----------
+  function listeningUI() {
+    mic.classList.add('listening')
+    stat.textContent = '请说书名，或说指令'
+    hints.innerHTML = `
       <button class="voice-hint" data-say="暂停">暂停</button>
       <button class="voice-hint" data-say="下一集">下一集</button>
       <button class="voice-hint" data-say="上一集">上一集</button>
       <button class="voice-hint" data-say="继续播放">继续播放</button>
-    </div>
-    <button class="btn ghost voice-close" id="vClose">取消</button>
-  `
-  document.body.appendChild(ov)
+    `
+    hints.querySelectorAll('[data-say]').forEach(b => {
+      b.onclick = async () => { done = true; await forceStopCurrent(); await handle(b.dataset.say) }
+    })
+    actions.innerHTML = `
+      <button class="btn" id="vDone" style="flex:1">说完了</button>
+      <button class="btn ghost" id="vClose" style="flex:0 0 auto">取消</button>
+    `
+    actions.querySelector('#vDone').onclick = async () => {
+      const t = currentText()
+      if (t) { await finishListening(); return }
+      toast('还没听到内容，再说一次')
+    }
+    actions.querySelector('#vClose').onclick = async () => { done = true; await forceStopCurrent(); close() }
+  }
 
-  const stat = ov.querySelector('#vStat'), heard = ov.querySelector('#vHeard')
-  const hints = ov.querySelector('#vHints')
-  let done = false
-  const close = () => ov.remove()
-
-  // 权限出问题时的兜底 UI：重新申请 + 跳系统设置
+  // ---------- 权限兜底 UI ----------
   async function showPermissionHelp(msg, needsSettings) {
+    mic.classList.remove('listening')
     stat.textContent = msg
     heard.textContent = ''
-    hints.innerHTML = `
-      <button class="voice-hint" id="vRetry" style="background:rgba(124,92,255,.35)">重新申请权限</button>
-      ${needsSettings ? '<button class="voice-hint" id="vSettings" style="background:rgba(255,181,77,.25)">去系统设置开启</button>' : ''}
-    `
-    ov.querySelector('#vRetry').onclick = async () => {
+    hints.innerHTML = ''
+    actions.innerHTML = `
+      <button class="btn" id="vRetry" style="flex:1">重新申请权限</button>
+      ${needsSettings ? '<button class="btn ghost" id="vSettings" style="flex:1">系统设置</button>' : ''}
+      <button class="btn ghost" id="vClose" style="flex:0 0 auto">关闭</button>`
+    actions.querySelector('#vRetry').onclick = async () => {
       const r = await requestVoicePermission()
       if (r.granted) { toast('权限已开启'); close(); openVoiceOverlay({ onSearch }) }
-      else if (r.needsSettings) { showPermissionHelp('系统已不再弹窗，请到设置里手动开启麦克风权限', true) }
-      else { stat.textContent = '还是没能拿到权限，再试一次或去系统设置' }
+      else showPermissionHelp('系统已不再弹窗，请到设置里手动开启麦克风权限', true)
     }
-    const setBtn = ov.querySelector('#vSettings')
-    if (setBtn) setBtn.onclick = async () => {
+    const sb = actions.querySelector('#vSettings')
+    if (sb) sb.onclick = async () => {
       const ok = await openSystemSettings()
       if (!ok) toast('打不开系统设置，请手动到「设置 → 听书」里开启麦克风')
       else stat.textContent = '请在设置里打开「麦克风」和「语音识别」，然后回来重试'
-      done = false   // 允许回来后再试
     }
+    actions.querySelector('#vClose').onclick = () => close()
   }
 
+  // ---------- 处理识别结果 ----------
   async function handle(text) {
     if (done) return
     done = true
+    mic.classList.remove('listening')
     heard.textContent = text
     const cmd = parseCommand(text)
     const p = state.player
 
     switch (cmd.intent) {
-      case 'pause':
-        await p?.pause(); toast('已暂停'); close(); return
+      case 'pause': await p?.pause(); toast('已暂停'); close(); return
       case 'play':
         if (state.current) { await p?.play(); toast('继续播放') } else toast('还没有在播放的书')
         close(); return
-      case 'next':
-        await p?.nextTrack(); toast('下一集'); close(); return
-      case 'prev':
-        await p?.prevTrack(); toast('上一集'); close(); return
-      case 'louder':
-        await p?.nudgeVolume(+0.2); toast('音量大一点'); close(); return
-      case 'quieter':
-        await p?.nudgeVolume(-0.2); toast('音量小一点'); close(); return
-      case 'rate':
-        await p?.setRate(cmd.rate); toast(`速度 ${cmd.rate}×`); close(); return
+      case 'next': await p?.nextTrack(); toast('下一集'); close(); return
+      case 'prev': await p?.prevTrack(); toast('上一集'); close(); return
+      case 'louder': await p?.nudgeVolume(+0.2); toast('音量大一点'); close(); return
+      case 'quieter': await p?.nudgeVolume(-0.2); toast('音量小一点'); close(); return
+      case 'rate': await p?.setRate(cmd.rate); toast(`速度 ${cmd.rate}×`); close(); return
       case 'sleep': {
         const { setSleepTimer } = await import('../views/player.js')
         setSleepTimer(cmd.minutes); close(); return
@@ -86,35 +119,44 @@ export function openVoiceOverlay({ onSearch } = {}) {
     }
   }
 
-  ov.querySelector('#vClose').onclick = async () => { done = true; await stopListening(); close() }
-  hints.querySelectorAll('[data-say]').forEach(b => {
-    b.onclick = async () => { done = true; await stopListening(); await handle(b.dataset.say) }
-  })
-
-  // 先查权限，避免"没权限"时直接弹一个失败的识别会话
+  // ---------- 启动 ----------
   ;(async () => {
     const perm = await checkVoicePermission()
-    if (perm.granted) { startListening(); return }
-
-    if (perm.canAsk) {
-      const r = await requestVoicePermission()
-      if (r.granted) { startListening(); return }
-      showPermissionHelp('麦克风权限被拒绝', r.needsSettings)
-      return
+    if (!perm.granted) {
+      if (perm.canAsk) {
+        const r = await requestVoicePermission()
+        if (!r.granted) { showPermissionHelp('麦克风权限被拒绝', r.needsSettings); return }
+      } else {
+        showPermissionHelp('拿不到麦克风权限，App 无法使用语音', true)
+        return
+      }
     }
-    // denied 或异常：给用户明确出口，而不是静默失败
-    showPermissionHelp('拿不到麦克风权限，App 无法使用语音', true)
+    start()
   })()
 
-  function startListening() {
+  function start() {
+    normalActions()
     listen({
-      onPartial: t => { heard.textContent = t },
+      onStart: () => { listening = true; listeningUI() },
+      onPartial: t => {
+        gotText = true
+        heard.textContent = t
+        if (!listening) { listening = true; listeningUI() }
+        stat.textContent = '正在听…说完会自动结束'
+      },
       onResult: t => handle(t),
       onError: (msg, meta) => {
         if (meta?.needsSettings) { showPermissionHelp(msg, true); return }
+        // 没听到内容：给重试入口，不要一闪而过
+        mic.classList.remove('listening')
         stat.textContent = msg
         heard.textContent = ''
-        setTimeout(() => { if (ov.parentNode) close() }, 1700)
+        hints.innerHTML = ''
+        actions.innerHTML = `
+          <button class="btn" id="vRetry" style="flex:1">再试一次</button>
+          <button class="btn ghost" id="vClose" style="flex:0 0 auto">关闭</button>`
+        actions.querySelector('#vRetry').onclick = () => { close(); openVoiceOverlay({ onSearch }) }
+        actions.querySelector('#vClose').onclick = () => close()
       },
     })
   }

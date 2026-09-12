@@ -25,7 +25,7 @@ export async function renderSearch(root, params = {}) {
       ${voiceSupported() ? '点右下角话筒，直接说书名或“暂停”“下一集”' : '这台设备不支持语音识别，可以用文字搜索'}
     </div>
     <div id="results"></div>
-    <button class="voice-fab" data-voice="1" aria-label="语音搜索">🎤</button>
+    ${kid ? '<button class="voice-fab" data-voice="1" aria-label="语音搜索">🎤</button>' : ''}
   `
 
   const $ = s => root.querySelector(s)
@@ -63,7 +63,8 @@ export async function renderSearch(root, params = {}) {
     results.querySelectorAll('[data-id]').forEach(el => {
       el.onclick = async () => {
         const it = items.find(x => x.id === el.dataset.id)
-        try { await playItem(it, { startTime: 0 }) } catch (e) { toast(e.message || '打开失败') }
+        // 不传 startTime → playItem 会查服务器上的进度，听过就接着听
+        try { await playItem(it) } catch (e) { toast(e.message || '打开失败') }
       }
     })
   }
