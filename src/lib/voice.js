@@ -162,6 +162,12 @@ export async function listen({ onStart, onPartial, onResult, onError, durationMs
 
   await forceStopCurrent()
 
+  // 记下语音开始前是否在播放：系统抢占音频会把播放状态打成 paused，
+  // 结束后要凭这个"快照"决定是否恢复播放。
+  const wasPlayingBefore = (() => {
+    try { return !!window.__saPlayer?.playing } catch (_) { return false }
+  })()
+
   const listeners = []
   let lastPartial = ''
   let settled = false
@@ -176,6 +182,17 @@ export async function listen({ onStart, onPartial, onResult, onError, durationMs
     listeners.length = 0
     try { await SpeechRecognition.stop() } catch (_) {}
     activeSession = null
+    // 恢复音频会话：语音识别在 iOS 上会把 AVAudioSession 改成
+    // .playAndRecord + .defaultToSpeaker（强制扬声器），不抢回来
+    // 之后的有声书播放会一直走外放、蓝牙耳机失效。
+    // 动态 import 避免与 player.js 形成静态循环依赖。
+    try {
+      const { BookPlayer } = await import('./player.js')
+      await BookPlayer.reassertSession()
+      // 会话被语音打断后需要重新激活，否则"恢复播放"没声音。
+      // 传快照：系统打断已把 playing 打成 false，不看快照会漏恢复。
+      await window.__saPlayer?.resumeAfterVoice?.(wasPlayingBefore)
+    } catch (_) {}
   }
 
   const finish = async (text, isError, extra) => {

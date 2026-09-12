@@ -69,26 +69,48 @@ export class BookPlayer {
     this._nativeTicker = null   // 原生兜底心跳（保证进度写回 ABS）
   }
 
+  /** 我们的音频会话参数（配置/re配置都用这一份，避免两处不一致） */
+  static sessionOptions() {
+    return {
+      // ⚠️ background 必须为 false！
+      // 插件（8.4.25）在 Android 上收到 background=true 会执行
+      //   audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION)
+      // MODE_IN_COMMUNICATION 会让系统把输出当成"通话音频"，从而绕开
+      // A2DP 蓝牙耳机、强制走听筒/外放 —— 这正是"连了蓝牙却外放"的 Android 根因。
+      // 后台播放不依赖它：Android 侧由我们自己的 PlaybackService 前台服务保证，
+      // iOS 侧由 Info.plist 的 UIBackgroundModes=audio 保证。
+      background: false,
+      // backgroundPlayback 必须保持 true：Android 上它是「切后台不自动暂停」的开关
+      // （NativeAudio.handleOnPause 里靠它 return）。它不会改音频模式，安全。
+      backgroundPlayback: true,
+      showNotification: true,     // 锁屏/通知栏控制
+      focus: true,
+      ignoreSilent: true,         // iOS 静音键下也出声（儿童场景必要）
+    }
+  }
+
+  /**
+   * 重新声明音频会话类别。
+   *
+   * 为什么必须做：语音识别插件（@capgo/capacitor-speech-recognition）在 iOS 上
+   * 用完后会把 AVAudioSession 留成
+   *     .playAndRecord + .defaultToSpeaker + mode .measurement
+   * 而 native-audio 的 play() 内部只调 setActive(true)，**不会重设 category**
+   * → 播放沿用 .playAndRecord(+defaultToSpeaker)，把声音强制送到扬声器，
+   *   蓝牙 A2DP 通道被绕过。表现就是"明明连着蓝牙耳机却走外放"。
+   *
+   * 所以在每次语音会话结束后、以及每次开始播放前，重新 configure 一次。
+   */
+  static async reassertSession() {
+    if (!isNative()) return
+    try { await NativeAudio.configure(BookPlayer.sessionOptions()) } catch (_) {}
+  }
+
   // ---------- 初始化 ----------
   async init() {
     if (isNative()) {
       try {
-        await NativeAudio.configure({
-          // ⚠️ background 必须为 false！
-          // 插件（8.4.25）在 Android 上收到 background=true 会执行
-          //   audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION)
-          // MODE_IN_COMMUNICATION 会让系统把输出当成"通话音频"，从而绕开
-          // A2DP 蓝牙耳机、强制走听筒/外放 —— 这正是"连了蓝牙却外放"的根因。
-          // 后台播放不依赖它：Android 侧由我们自己的 PlaybackService 前台服务保证，
-          // iOS 侧由 Info.plist 的 UIBackgroundModes=audio 保证。
-          background: false,
-          // backgroundPlayback 必须保持 true：Android 上它是「切后台不自动暂停」的开关
-          // （NativeAudio.handleOnPause 里靠它 return）。它不会改音频模式，安全。
-          backgroundPlayback: true,
-          showNotification: true,     // 锁屏/通知栏控制
-          focus: true,
-          ignoreSilent: true,         // iOS 静音键下也出声（儿童场景必要）
-        })
+        await NativeAudio.configure(BookPlayer.sessionOptions())
       } catch (e) { console.warn('NativeAudio.configure 失败', e) }
 
       if (NativeAudio.addListener) {
@@ -137,6 +159,9 @@ export class BookPlayer {
   /** 开始播放（首次由用户手势触发，iOS 才允许出声） */
   async play() {
     if (this.isNativeEngine) {
+      // iOS：语音识别插件会残留 .playAndRecord + .defaultToSpeaker 会话，
+      // 播放前必须把类别抢回 .playback，否则声音被强制送扬声器（蓝牙耳机失效）。
+      await BookPlayer.reassertSession()
       // Android：先占住前台服务，否则切后台会被系统掐音频
       await fgStart(this.notification?.title, this.notification?.artist)
       // ⚠️ 必须显式传 time！
@@ -291,6 +316,29 @@ export class BookPlayer {
 
   position() {
     return { currentTime: this.currentBookTime, duration: this.duration, trackIndex: this.trackIndex }
+  }
+
+  /**
+   * 语音识别打断后恢复播放。
+   * 语音插件在 iOS 上 setActive(false) 会把整个音频会话关掉，
+   * 播放器内部状态可能还是"在播"、但系统层面已经静音 —— 必须重新激活会话。
+   *
+   * @param {boolean} force 语音开始前确实在播时传 true。
+   *   因为系统打断会触发 playbackState 事件把 this.playing 置为 false，
+   *   只看 this.playing 会误判成"本来就没播"从而不恢复。
+   */
+  async resumeAfterVoice(force = false) {
+    if (!this.isNativeEngine) return
+    if (!force && !this.playing) return
+    try {
+      // 顺序重要：先 configure 把类别抢回 .playback（蓝牙路由），
+      // 再 resume —— 插件 resume() 内部会 activateSession()。
+      await BookPlayer.reassertSession()
+      await NativeAudio.resume({ assetId: this._assetId(this.trackIndex) })
+      this.playing = true
+      this.onState({ state: 'playing', isPlaying: true, reason: 'resumeAfterVoice' })
+      this._startNativeTicker()
+    } catch (_) {}
   }
 
   // ---------- 内部：原生实现 ----------

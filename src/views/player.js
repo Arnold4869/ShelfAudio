@@ -7,6 +7,7 @@ import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 let sleepTimer = null
 let sleepAt = 0
 let adultTab = 'chapters'
+let chaptersOpen = false   // 章节面板是否展开（儿童模式默认收起，点「选集」才展开）
 
 export function getSleepRemaining() {
   if (!sleepAt) return 0
@@ -25,6 +26,8 @@ export async function renderPlayer(root) {
   const kid = state.mode !== 'adult'
   const meta = c.item.media?.metadata || {}
   const chapters = c.chapters || []
+  // 成人模式沿用「进来就能看到章节列表」；儿童模式收起，点 📑 选集 才展开
+  chaptersOpen = !kid
 
   const shell = () => `
     <div class="page-head">
@@ -188,10 +191,21 @@ export async function renderPlayer(root) {
       return
     }
     adultTab = adultTab === 'chapters' ? 'info' : 'chapters'
+    chaptersOpen = true
     renderExtra()
   }
-  if ($('#btnChapters')) $('#btnChapters').onclick = () => { adultTab = 'chapters'; renderExtra() }
-  if ($('#btnInfo')) $('#btnInfo').onclick = () => { adultTab = 'info'; renderExtra() }
+  if ($('#btnChapters')) {
+    const paintChapterBtn = () => { $('#btnChapters').textContent = chaptersOpen ? '📑 收起' : '📑 选集' }
+    paintChapterBtn()
+    $('#btnChapters').onclick = () => {
+      chaptersOpen = !chaptersOpen
+      adultTab = 'chapters'
+      renderExtra()
+      paintChapterBtn()
+      if (chaptersOpen) $('#extra')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
+  if ($('#btnInfo')) $('#btnInfo').onclick = () => { adultTab = 'info'; chaptersOpen = true; renderExtra() }
   if ($('#btnFav')) $('#btnFav').onclick = async () => {
     try {
       const cols = await abs.collections()
@@ -204,17 +218,21 @@ export async function renderPlayer(root) {
 
   function renderExtra() {
     const box = $('#extra')
-    if (kid) { box.innerHTML = ''; return }
+    // 收起时清空。注意：儿童模式也要能渲染章节，
+    // 之前这里 `if (kid) return` 导致儿童模式点「选集」永远没反应。
+    if (!chaptersOpen) { box.innerHTML = ''; return }
 
-    if (adultTab === 'chapters') {
+    if (adultTab === 'chapters' || kid) {
       box.innerHTML = `
         <div class="section-h" style="margin-top:22px">章节 <small>共 ${chapters.length} 集</small></div>
+        <div class="${kid ? 'chapters kid-chapters' : 'chapters'}">
         ${chapters.map((ch, i) => `
           <div class="chapter-item ${i === p.trackIndex ? 'active' : ''}" data-ch="${i}">
             <div class="chapter-idx">${i + 1}</div>
             <div class="chapter-title">${esc(ch.title || '第 ' + (i + 1) + ' 集')}</div>
             <div class="chapter-dur">${fmtTime((ch.end || 0) - (ch.start || 0))}</div>
-          </div>`).join('')}`
+          </div>`).join('')}
+        </div>`
       box.querySelectorAll('[data-ch]').forEach(el => {
         el.onclick = () => {
           const i = parseInt(el.dataset.ch, 10)

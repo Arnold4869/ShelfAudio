@@ -127,6 +127,7 @@ export function initPlayer() {
     onEnd: () => { toast('这本听完啦 🎉'); updateMini() },
   })
   state.player = p
+  window.__saPlayer = p   // voice.js 在语音结束后需要它恢复播放
   p.init()
   return p
 }
@@ -286,9 +287,11 @@ route('player', async (root) => {
   await renderPlayer(root)
 })
 
-route('search', async (root) => {
+route('search', async (root, params) => {
   document.body.dataset.view = 'search'
-  await renderSearch(root)
+  // ⚠️ 必须把 params 传下去！原来写成 renderSearch(root)，
+  // 导致语音说完书名跳过来时 params.q 丢失 → 第一次不搜索、要说第二次才出结果。
+  await renderSearch(root, params)
 })
 
 route('settings', async (root) => {
