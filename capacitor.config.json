@@ -1,0 +1,24 @@
+{
+  "appId": "com.arnold.shelfaudio",
+  "appName": "听书",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true,
+    "allowNavigation": [
+      "*"
+    ]
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "ios": {
+    "contentInset": "always",
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "plugins": {
+    "NativeAudio": {
+      "hls": false
+    }
+  }
+}

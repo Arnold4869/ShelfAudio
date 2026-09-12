@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#12102a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>听书</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 启动闪屏 -->
+    <div id="boot">
+      <div class="boot-rings">
+        <div class="ring outer"></div>
+        <div class="ring inner"></div>
+        <div class="boot-glyph">🎧</div>
+      </div>
+      <div class="boot-title">听书</div>
+      <div class="boot-dots"><i></i><i></i><i></i></div>
+    </div>
+
+    <!-- 主视图容器（由 app.js 按路由渲染） -->
+    <main id="view"></main>
+
+    <!-- 迷你播放条（非播放页时显示） -->
+    <div id="mini" class="mini hidden" role="button" tabindex="0">
+      <img id="miniCover" class="mini-cover" alt="" />
+      <div class="mini-info">
+        <div id="miniTitle" class="mini-title">未在播放</div>
+        <div id="miniSub" class="mini-sub"></div>
+      </div>
+      <button id="miniPrev" class="mini-btn" aria-label="上一集">⏮</button>
+      <button id="miniToggle" class="mini-btn primary" aria-label="播放/暂停">▶</button>
+      <button id="miniNext" class="mini-btn" aria-label="下一集">⏭</button>
+    </div>
+
+    <!-- 全局提示 -->
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- 家长锁遮罩 -->
+    <div id="lock" class="lock hidden">
+      <div class="lock-card">
+        <div class="lock-title">家长确认</div>
+        <div class="lock-sub">请输入家长密码</div>
+        <input id="lockPin" class="lock-input" type="number" inputmode="numeric" placeholder="••••" />
+        <div id="lockErr" class="lock-err"></div>
+        <div class="lock-actions">
+          <button id="lockCancel" class="btn ghost">取消</button>
+          <button id="lockOk" class="btn">确定</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

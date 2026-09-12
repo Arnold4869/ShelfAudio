@@ -1,0 +1,12 @@
+# 构建产物 / 依赖
+node_modules/
+dist/
+output/
+*.ipa
+*.apk
+*.keystore
+.DS_Store
+.vite/
+
+# android/ 与 ios/ 各自的 .gitignore 由 Capacitor 生成，已正确排除
+# build 输出与 cap sync 复制进来的 web 资源；源码（含自定义 Java）必须入库。
