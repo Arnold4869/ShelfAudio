@@ -32,8 +32,7 @@ export async function renderLogin(root) {
         <button class="btn block" id="doLogin">连 接</button>
       </div>
       <div class="hint" style="margin-top:18px">
-        在 NAS 所在 WiFi 下填内网地址即可；外网访问需要你自己配好反向代理。<br>
-        登录信息只保存在本机，不会上传到任何第三方。
+        局域网填内网地址；外网填反代地址。
       </div>
     </div>
   `

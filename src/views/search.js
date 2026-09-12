@@ -28,9 +28,6 @@ export async function renderSearch(root, params = {}) {
       </div>
       <button class="btn" id="btnGo" style="padding:13px 18px">搜索</button>
     </div>
-    <div class="hint" id="hint" style="margin-bottom:14px">
-      ${voiceSupported() ? '点搜索框里的话筒，直接说书名或“暂停”“下一集”' : '这台设备不支持语音识别，可以用文字搜索'}
-    </div>
     <div id="results"></div>
     ${kid ? `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>` : ''}
   `

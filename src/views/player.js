@@ -368,7 +368,7 @@ export async function renderPlayer(root) {
       favState.on = true
       favState.local = true
       haptic.success()
-      toast('已收藏（存在本机 · 服务器账号没有修改权限）')
+      toast('已收藏')
       paintFav()
     } catch (e) { haptic.error(); toast('收藏失败：' + e.message) }
   }
@@ -452,7 +452,7 @@ export async function renderPlayer(root) {
       cachedNow = res.fail === 0
       modal.remove()
       if (res.fail) { haptic.warn(); toast(`缓存完成：${res.ok} 集成功，${res.fail} 集失败`) }
-      else { haptic.success(); toast('已缓存 ' + res.ok + ' 集，之后断网也能听') }
+      else { haptic.success(); toast('已缓存 ' + res.ok + ' 集') }
     } catch (e) {
       modal.remove()
       haptic.error()

@@ -43,7 +43,7 @@ export async function renderSettings(root, { firstRun = false } = {}) {
         <div class="setting-ic">${icon('heart', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">收藏的书</div>
-          <div class="setting-value">播放页点心形收藏的书都在这里</div>
+
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
@@ -55,7 +55,7 @@ export async function renderSettings(root, { firstRun = false } = {}) {
         <div class="setting-ic">${icon('download', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">缓存管理</div>
-          <div class="setting-value">${cacheCount ? `已缓存 ${cacheCount} 本 · ${fmtBytes(cacheUsed)}` : '把书下到手机里，没网也能听'}</div>
+          <div class="setting-value">${cacheCount ? `已缓存 ${cacheCount} 本 · ${fmtBytes(cacheUsed)}` : ''}</div>
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
@@ -75,7 +75,7 @@ export async function renderSettings(root, { firstRun = false } = {}) {
         <div class="setting-ic">${icon('cog', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">打开系统设置</div>
-          <div class="setting-value">若系统不再弹窗，到这里手动开启</div>
+          <div class="setting-value">手动开启麦克风</div>
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
@@ -87,7 +87,7 @@ export async function renderSettings(root, { firstRun = false } = {}) {
         <div class="setting-ic">${icon('lock', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">家长设置</div>
-          <div class="setting-value">${state.kidPin ? '进度条、触感、收听统计、服务器（需密码）' : '需要密码 · 建议先设一个家长密码'}</div>
+          <div class="setting-value">${state.kidPin ? '需输入密码' : '未设置密码'}</div>
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
@@ -131,16 +131,16 @@ export async function renderSettings(root, { firstRun = false } = {}) {
     micState.textContent = '正在申请…'
     const r = await requestVoicePermission()
     if (r.granted) { toast('权限已开启') }
-    else if (r.needsSettings) { toast('系统不再弹窗，请用下面的「打开系统设置」手动开启') }
-    else { toast('申请失败，请用下面的「打开系统设置」') }
+    else if (r.needsSettings) { toast('请在系统设置里开启') }
+    else { toast('申请失败') }
     refreshMic()
   }
 
   $('#rowMicSettings').onclick = async () => {
     haptic.tap()
     const ok = await openSystemSettings()
-    if (!ok) toast('打不开系统设置，请手动到「设置 → 听书」开启麦克风')
-    else toast('请在设置里打开麦克风与语音识别')
+    if (!ok) toast('打不开系统设置')
+    else toast('请在系统设置里开启麦克风')
   }
 
   $('#rowFav').onclick = () => { haptic.tap(); go('favorites') }
@@ -152,7 +152,7 @@ export async function renderSettings(root, { firstRun = false } = {}) {
     if (state.kidPin) {
       if (!(await requireParentPin())) return
     } else {
-      toast('还没设家长密码，建议进去后先设一个')
+      toast('还没设家长密码')
     }
     await go('parents')
   }

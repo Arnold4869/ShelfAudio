@@ -90,10 +90,6 @@ export async function renderCache(root) {
         </div>`
       }).join('') : `<div class="hint">书库没拉到，检查网络后重进本页</div>`}
     </div>
-
-    <div class="hint" style="margin-top:16px">
-      下载会把音频存到手机里，占空间但断网也能听。播放时会自动优先用缓存。
-    </div>
   `
 
   const $ = s => root.querySelector(s)

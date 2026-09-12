@@ -91,10 +91,6 @@ export async function renderFavorites(root) {
         还没有收藏的书<br>
         <span style="font-size:13px">在播放页点心形按钮就能收藏</span>
       </div>`}
-
-    <div class="hint" style="margin-top:16px">
-      收藏存在你的 Audiobookshelf 服务器上，换设备也在。
-    </div>
   `
 
   const $ = s => root.querySelector(s)

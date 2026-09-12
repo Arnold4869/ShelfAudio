@@ -105,7 +105,7 @@ export async function renderShelf(root) {
        </div>`
 
   const continueHTML = inProgress.length ? `
-    <div class="section-h">继续听 <small>长按可移除</small></div>
+    <div class="section-h">继续听 <small>长按移除</small></div>
     <div class="continue-row">
       ${inProgress.map(it => {
         const m = it.media?.metadata || {}

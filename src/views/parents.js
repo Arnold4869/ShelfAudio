@@ -40,7 +40,7 @@ export async function renderParent(root) {
         <div class="setting-ic">${icon('sparkle', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">触感反馈</div>
-          <div class="setting-value" id="hapVal">${hapticsEnabled() ? '已开启：按按钮时轻微震动' : '已关闭'}</div>
+          <div class="setting-value" id="hapVal">${hapticsEnabled() ? '已开启' : '已关闭'}</div>
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
@@ -52,7 +52,7 @@ export async function renderParent(root) {
         <div class="setting-ic">${icon('chart', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">收听统计</div>
-          <div class="setting-value">今天听了哪些作品、各听多久、上午下午分布</div>
+          <div class="setting-value">收听记录</div>
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
@@ -60,7 +60,7 @@ export async function renderParent(root) {
         <div class="setting-ic">${icon('lock', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">${state.kidPin ? '修改家长密码' : '设置家长密码'}</div>
-          <div class="setting-value">${state.kidPin ? '已设置，进本页需要输入' : '未设置，任何人都能进本页'}</div>
+          <div class="setting-value">${state.kidPin ? '已设置' : '未设置'}</div>
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
@@ -79,7 +79,7 @@ export async function renderParent(root) {
         <div class="setting-ic">${icon('refresh', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">刷新书库</div>
-          <div class="setting-value">重新从服务器拉取书籍列表</div>
+
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
@@ -87,13 +87,9 @@ export async function renderParent(root) {
         <div class="setting-ic">${icon('exit', 22)}</div>
         <div class="setting-main">
           <div class="setting-label" style="color:var(--danger)">退出登录</div>
-          <div class="setting-value">清除本机保存的登录信息</div>
+
         </div>
       </div>
-    </div>
-
-    <div class="hint" style="margin-top:12px">
-      这一页的设置会影响 App 行为，进入需要家长密码。
     </div>
   `
 
@@ -106,7 +102,7 @@ export async function renderParent(root) {
     const next = cur === 'book' ? 'track' : 'book'
     await store.set(CONFIG_KEYS.progressScope, next)
     $('#scopeVal').textContent = next === 'book' ? '整部作品的进度' : '当前这一集的进度（默认）'
-    toast(next === 'book' ? '进度条将显示整部作品的进度' : '进度条将显示当前这一集的进度')
+
   }
 
   $('#rowHaptics').onclick = async () => {
@@ -114,7 +110,7 @@ export async function renderParent(root) {
     await setHaptics(next)
     $('#hapVal').textContent = next ? '已开启：按按钮时轻微震动' : '已关闭'
     if (next) haptic.tap()
-    toast(next ? '触感已开启' : '触感已关闭')
+
   }
 
   $('#rowStats').onclick = () => { haptic.tap(); go('stats') }

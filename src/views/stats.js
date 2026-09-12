@@ -84,10 +84,6 @@ export async function renderStats(root, params = {}) {
         ${isToday ? '今天还没有收听记录' : '这天没有收听记录'}
       </div>`}
 
-    <div class="hint" style="margin-top:16px">
-      记录只存在这台手机上，只记作品名和时长，不记单集，也不上传服务器。
-    </div>
-
     ${days.length ? `<div style="margin-top:10px">
       <button class="btn block ghost" id="btnClear" style="color:var(--danger)">清空全部统计</button>
     </div>` : ''}
