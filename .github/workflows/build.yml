@@ -32,6 +32,12 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Verify imports resolve
+        run: node scripts/check-imports.mjs
+
+      - name: Player track-mutex regression
+        run: node scripts/test-player-mutex.mjs
+
       - name: Build web assets
         run: npm run build
 
@@ -85,6 +91,12 @@ jobs:
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+
+      - name: Verify imports resolve
+        run: node scripts/check-imports.mjs
+
+      - name: Player track-mutex regression
+        run: node scripts/test-player-mutex.mjs
 
       - name: Build web assets
         run: npm run build

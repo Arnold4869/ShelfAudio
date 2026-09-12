@@ -67,6 +67,8 @@ export class BookPlayer {
     this.notification = null    // { title, artist, album, artworkUrl }
     this._volume = 1
     this._nativeTicker = null   // 原生兜底心跳（保证进度写回 ABS）
+    this._playingAssetIdx = null // 原生层当前真正在播的 asset 下标（换轨时据此清理旧音轨）
+    this._loadedIdx = new Set()  // 原生层当前已 preload 的音轨下标（保证同一时刻只留一条）
   }
 
   /** 我们的音频会话参数（配置/re配置都用这一份，避免两处不一致） */
@@ -117,7 +119,7 @@ export class BookPlayer {
         try {
           const l1 = await NativeAudio.addListener('currentTime', (ev) => this._onNativeTime(ev))
           const l2 = await NativeAudio.addListener('playbackState', (ev) => this._onNativeState(ev))
-          const l3 = await NativeAudio.addListener('complete', () => this._onTrackEnd())
+          const l3 = await NativeAudio.addListener('complete', (ev) => this._onTrackEnd(ev))
           this._listeners = [l1, l2, l3].filter(Boolean)
         } catch (e) { console.warn('NativeAudio 监听注册失败', e) }
       }
@@ -171,6 +173,7 @@ export class BookPlayer {
       // 「选集点了没用」「历史记录没更新」的共同根因。
       const fileTime = this._fileTimeFor(this.trackIndex)
       await NativeAudio.play({ assetId: this._assetId(this.trackIndex), time: fileTime })
+      this._playingAssetIdx = this.trackIndex
     } else if (this._audio) {
       await this._audio.play().catch(e => console.warn('play 失败', e))
     }
@@ -289,10 +292,15 @@ export class BookPlayer {
     await fgStop()
     if (this.isNativeEngine) {
       try { await NativeAudio.stop({ assetId: this._assetId(this.trackIndex) }) } catch (_) {}
-      // 卸载本书记住的所有 asset，避免原生层堆积
-      for (const t of this.tracks) {
-        try { await NativeAudio.unload({ assetId: this._assetId(t.index) }) } catch (_) {}
+      // 卸载所有已装载的 asset，避免原生层堆积。
+      // ⚠️ 必须用「数组下标 i」，不能用 t.index —— ABS 的 t.index 是 1-based，
+      // 用它算 assetId 会整体错一位，导致真正在播的那条没被卸载 → 换集后旧集仍在响。
+      for (let i = 0; i < this.tracks.length; i++) {
+        try { await NativeAudio.unload({ assetId: this._assetId(i) }) } catch (_) {}
       }
+      // 连带清掉"可能残留"的相邻 asset（防御：早期版本可能装载过错位的 id）
+      try { await NativeAudio.unload({ assetId: this._assetId(this.trackIndex + 1) }) } catch (_) {}
+      this._playingAssetIdx = null
     } else if (this._audio) {
       this._audio.pause()
       this._audio.removeAttribute('src')
@@ -350,12 +358,47 @@ export class BookPlayer {
     return Math.max(0, this.currentBookTime - off)
   }
 
+  /**
+   * 彻底停掉一条音轨（stop + unload）。
+   *
+   * ⚠️ 插件里**每个 assetId 就是一个独立的原生播放器实例**。
+   * 切集时如果只 preload 新的、不停旧的，旧的那条会继续出声 ——
+   * 表现为"选完新集，旧集还在响，两个声音叠在一起"。
+   * 所以每次换轨前必须先 stop + unload 旧 assetId。
+   */
+  async _killAsset(idx) {
+    if (idx == null || idx < 0) return
+    const assetId = this._assetId(idx)
+    try { await NativeAudio.stop({ assetId }) } catch (_) {}
+    try { await NativeAudio.unload({ assetId }) } catch (_) {}
+    this._loadedIdx.delete(idx)
+    if (this._playingAssetIdx === idx) this._playingAssetIdx = null
+  }
+
+  /**
+   * 只保留 wantIdx 这一条音轨，把其它已装载的全部杀掉。
+   * 这是"两个声音同时响"的结构性保证：插件里每个 assetId 是独立播放器，
+   * 只要保证同时只有一条存活，就不可能叠音。
+   */
+  async _keepOnly(wantIdx) {
+    const others = [...this._loadedIdx].filter(i => i !== wantIdx)
+    for (const i of others) await this._killAsset(i)
+    if (this._playingAssetIdx != null && this._playingAssetIdx !== wantIdx) {
+      await this._killAsset(this._playingAssetIdx)
+    }
+  }
+
   async _nativeLoadTrack(idx, fileTime) {
     const t = this.tracks[idx]
     if (!t) return
     const url = t.url         // 已在 api 层拼好 token
     const assetId = this._assetId(idx)
-    try { await NativeAudio.unload({ assetId }) } catch (_) {}
+
+    // 关键：先保证原生层只剩目标这一条，否则旧音轨会继续出声（叠音）
+    await this._keepOnly(idx)
+    // 同一条音轨重新载入（seek/重播）也要先彻底停，避免重影
+    await this._killAsset(idx)
+
     await NativeAudio.preload({
       assetId,
       assetPath: url,
@@ -368,6 +411,7 @@ export class BookPlayer {
         artworkUrl: this.notification.artworkUrl,
       } : undefined,
     })
+    this._loadedIdx.add(idx)
     if (fileTime > 0.5) {
       try { await NativeAudio.setCurrentTime({ assetId, time: fileTime }) } catch (_) {}
     }
@@ -398,10 +442,18 @@ export class BookPlayer {
     this.onState({ state: ev?.state || (playing ? 'playing' : 'paused'), isPlaying: playing, reason: ev?.reason })
   }
 
-  _onTrackEnd() {
+  /** 返回 Promise，便于调用方（含测试）等待换集真正完成 */
+  async _onTrackEnd(ev) {
+    // ⚠️ 必须校验 assetId：换集时被停掉的旧音轨可能延迟抛出 complete，
+    // 不校验就会把刚选的新集又推进一集（表现为"选集后自己跳走"）。
+    if (ev && ev.assetId) {
+      const idx = this._indexFromAssetId(ev.assetId)
+      if (idx !== null && idx !== this.trackIndex) return
+    }
     // 单条音轨播完 → 自动下一集；最后一集 → 结束
     if (this.trackIndex < this.tracks.length - 1) {
-      this._gotoTrack(this.trackIndex + 1)
+      // 必须 await：否则换集过程中的异常会变成静默的未处理拒绝
+      await this._gotoTrack(this.trackIndex + 1)
     } else {
       if (this._endedFired) return
       this._endedFired = true

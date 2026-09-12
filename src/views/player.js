@@ -203,6 +203,7 @@ export async function renderPlayer(root) {
       renderExtra()
       paintChapterBtn()
       if (chaptersOpen) $('#extra')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      else scrollPlayerIntoView()
     }
   }
   if ($('#btnInfo')) $('#btnInfo').onclick = () => { adultTab = 'info'; chaptersOpen = true; renderExtra() }
@@ -214,6 +215,16 @@ export async function renderPlayer(root) {
       await abs.addToCollection(col.id, c.item.id)
       toast('已加入「' + col.name + '」')
     } catch (e) { toast('收藏失败：' + e.message) }
+  }
+
+  /** 把播放区滚回视野中央：选完章节后用户应看到封面+播放按钮，而不是页面底部的列表 */
+  function scrollPlayerIntoView() {
+    const target = root.querySelector('.player-cover-wrap') || root.querySelector('.player-controls')
+    if (!target) return
+    // 等 DOM 更新完再滚，否则刚被清空的列表会让高度突变
+    requestAnimationFrame(() => {
+      try { target.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch (_) {}
+    })
   }
 
   function renderExtra() {
@@ -234,10 +245,19 @@ export async function renderPlayer(root) {
           </div>`).join('')}
         </div>`
       box.querySelectorAll('[data-ch]').forEach(el => {
-        el.onclick = () => {
+        el.onclick = async () => {
           const i = parseInt(el.dataset.ch, 10)
-          p.seek(chapters[i].start || 0)
-          renderExtra()
+          // 正在播时换集：播放器内部会停掉旧音轨再播新的（见 _keepOnly）
+          await p.seek(chapters[i].start || 0)
+          // 选完就收尾：收起章节列表并滚回播放控件，
+          // 否则画面停在页面底部的章节区，看起来像"点了没返回"。
+          if (kid) {
+            chaptersOpen = false
+            renderExtra()
+          } else {
+            renderExtra()
+          }
+          scrollPlayerIntoView()
         }
       })
     } else {
