@@ -18,8 +18,11 @@
   --danger: #ff5c72;
   --radius: 22px;
   --radius-sm: 14px;
-  --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* iOS：env() 由系统提供；Android（Capacitor 8 SystemBars）：native 把 insets 置 0（WebView 全屏），
+     真实值注入 CSS 变量 --safe-area-inset-*。env() 在 Android WebView 上恒 0，
+     所以取 max(env, var) 两边都覆盖 —— 不然 Android 上底栏吃不到手势条高度，内容与系统导航条错位。 */
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
   /* 迷你条高度（.mini 的 height 必须与它一致） */
   --mini-h: 58px;
   /* dock（迷你条 + 底栏）统一底色。

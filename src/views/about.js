@@ -4,7 +4,7 @@
  * 老板 2026-09-12：语音麦克风设置收进"关于系统信息"这类菜单；
  * 关于里放系统版本、语音权限有没有开启等。
  */
-import { state, go, toast, esc } from '../app.js'
+import { state, go, toast, esc, requireParentPin, stopCurrent } from '../app.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
@@ -39,13 +39,7 @@ export async function renderAbout(root) {
           <div class="setting-label">麦克风 / 语音识别</div>
           <div class="setting-value" id="micState">检查中…</div>
         </div>
-      </div>
-      <div class="setting-row" id="rowMicSettings">
-        <div class="setting-ic">${icon('cog', 22)}</div>
-        <div class="setting-main">
-          <div class="setting-label">打开系统设置</div>
-        </div>
-        <div class="setting-arrow">${icon('forward', 20)}</div>
+        <div class="setting-arrow" id="micArrow" style="display:none">${icon('forward', 20)}</div>
       </div>
     </div>
 
@@ -57,6 +51,13 @@ export async function renderAbout(root) {
           <div class="setting-label">服务器与账号</div>
           <div class="setting-value">${esc(server.replace(/^https?:\/\//, ''))} · ${esc(username)}</div>
         </div>
+      </div>
+      <div class="setting-row" id="rowLogout">
+        <div class="setting-ic">${icon('exit', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label" style="color:var(--danger)">退出登录</div>
+        </div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
     </div>
   `
@@ -73,31 +74,46 @@ export async function renderAbout(root) {
     web: '当前环境不支持',
     error: '查询失败',
   }
+  // 只有一行：已开启→点了没反应；未申请→点=申请；被拒→跳系统设置（唯一需要去系统设置的情形）
+  let curState = null
   async function refreshMic() {
-    if (!voiceSupported()) { micState.textContent = '当前环境不支持'; return }
+    if (!voiceSupported()) { micState.textContent = '当前环境不支持'; $('#micArrow').style.display = 'none'; return }
     try {
       const p = await checkVoicePermission()
+      curState = p.state
       micState.textContent = descMap[p.state] || p.state
+      // 被拒时才显示箭头（去系统设置的入口藏在被拒状态里）
+      $('#micArrow').style.display = (p.state === 'denied') ? '' : 'none'
     } catch (_) { micState.textContent = '查询失败' }
   }
-  refreshMic()
-  onAppResume(() => { if (document.body.dataset.view === 'about') refreshMic() })
-
   $('#rowMic').onclick = async () => {
     haptic.tap()
     if (!voiceSupported()) { toast('仅真机可用'); return }
-    const cur = await checkVoicePermission()
-    if (cur.granted) { refreshMic(); return }
+    if (curState === 'granted') return
+    if (curState === 'denied') {
+      // 系统不让再弹窗，只能去系统设置
+      const ok = await openSystemSettings()
+      if (!ok) toast('打不开系统设置')
+      return
+    }
     micState.textContent = '正在申请…'
     const r = await requestVoicePermission()
     if (!r.granted && r.needsSettings) toast('请在系统设置里开启')
     refreshMic()
   }
 
-  $('#rowMicSettings').onclick = async () => {
-    haptic.tap()
-    const ok = await openSystemSettings()
-    if (!ok) toast('打不开系统设置')
-  }
+  refreshMic()
+  onAppResume(() => { if (document.body.dataset.view === 'about') refreshMic() })
 
+  // 退出登录：需家长密码（防孩子误触），清本机登录信息回登录页
+  $('#rowLogout').onclick = async () => {
+    haptic.tap()
+    if (state.kidPin) { if (!(await requireParentPin())) return }
+    await stopCurrent()
+    await store.remove(CONFIG_KEYS.token)
+    await store.remove(CONFIG_KEYS.server)
+    await store.remove(CONFIG_KEYS.username)
+    toast('已退出登录')
+    await go('login')
+  }
 }
