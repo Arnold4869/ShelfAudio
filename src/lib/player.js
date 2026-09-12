@@ -66,6 +66,7 @@ export class BookPlayer {
     this._endedFired = false
     this.notification = null    // { title, artist, album, artworkUrl }
     this._volume = 1
+    this._nativeTicker = null   // 原生兜底心跳（保证进度写回 ABS）
   }
 
   // ---------- 初始化 ----------
@@ -73,9 +74,18 @@ export class BookPlayer {
     if (isNative()) {
       try {
         await NativeAudio.configure({
-          background: true,
-          backgroundPlayback: true,   // Android 8.2+ ：不做自动暂停
-          showNotification: true,     // 锁屏/通知栏控制（iOS 会打断其他 App 音频，播放器应用应如此）
+          // ⚠️ background 必须为 false！
+          // 插件（8.4.25）在 Android 上收到 background=true 会执行
+          //   audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION)
+          // MODE_IN_COMMUNICATION 会让系统把输出当成"通话音频"，从而绕开
+          // A2DP 蓝牙耳机、强制走听筒/外放 —— 这正是"连了蓝牙却外放"的根因。
+          // 后台播放不依赖它：Android 侧由我们自己的 PlaybackService 前台服务保证，
+          // iOS 侧由 Info.plist 的 UIBackgroundModes=audio 保证。
+          background: false,
+          // backgroundPlayback 必须保持 true：Android 上它是「切后台不自动暂停」的开关
+          // （NativeAudio.handleOnPause 里靠它 return）。它不会改音频模式，安全。
+          backgroundPlayback: true,
+          showNotification: true,     // 锁屏/通知栏控制
           focus: true,
           ignoreSilent: true,         // iOS 静音键下也出声（儿童场景必要）
         })
@@ -129,13 +139,20 @@ export class BookPlayer {
     if (this.isNativeEngine) {
       // Android：先占住前台服务，否则切后台会被系统掐音频
       await fgStart(this.notification?.title, this.notification?.artist)
-      await NativeAudio.play({ assetId: this._assetId(this.trackIndex) })
+      // ⚠️ 必须显式传 time！
+      // 插件 play() 的 time 默认是 0（iOS: `call.getDouble(Constant.Time) ?? 0`，
+      // Android: `call.getDouble(TIME, 0.0)`），不传就会把播放位置重置到 0。
+      // 选章节/拖进度条/从暂停恢复都会因此被"弹回开头"——这就是
+      // 「选集点了没用」「历史记录没更新」的共同根因。
+      const fileTime = this._fileTimeFor(this.trackIndex)
+      await NativeAudio.play({ assetId: this._assetId(this.trackIndex), time: fileTime })
     } else if (this._audio) {
       await this._audio.play().catch(e => console.warn('play 失败', e))
     }
     this.playing = true
     this.onState({ state: 'playing', isPlaying: true })
     this._startWebTickerIfNeeded()
+    this._startNativeTicker()
   }
 
   async pause() {
@@ -152,22 +169,30 @@ export class BookPlayer {
   async seek(bookTime) {
     const t = Math.max(0, Math.min(bookTime, this.duration || 0))
     const idx = this._trackIndexForBookTime(t)
-    const fileTime = Math.max(0, t - (this.tracks[idx]?.startOffset || 0))
     const wasPlaying = this.playing
 
     if (idx !== this.trackIndex || !this.isNativeEngine) {
       // 换轨（或浏览器版直接换 src）
       this.trackIndex = idx
+      this.currentBookTime = t
+      const fileTime = Math.max(0, t - (this.tracks[idx]?.startOffset || 0))
       if (this.isNativeEngine) {
+        // 先载入，再由 play({time}) 一次定位（避免 setCurrentTime 与 play 竞态）
         await this._nativeLoadTrack(idx, fileTime)
       } else {
         await this._webLoadTrack(idx, fileTime)
       }
     } else if (this.isNativeEngine) {
-      await NativeAudio.setCurrentTime({ assetId: this._assetId(idx), time: fileTime })
+      // 同一音轨内：setCurrentTime 是异步派发到音频队列的，
+      // 若紧接着调用 play()（其 time 默认 0）会把它覆盖回开头。
+      // 所以先等定位完成，再恢复播放。
+      await NativeAudio.setCurrentTime({ assetId: this._assetId(idx), time: t - (this.tracks[idx]?.startOffset || 0) })
+      this.currentBookTime = t
     } else if (this._audio) {
-      this._audio.currentTime = fileTime
+      this._audio.currentTime = t - (this.tracks[idx]?.startOffset || 0)
+      this.currentBookTime = t
     }
+
     this.currentBookTime = t
     this._emitTime()
     if (wasPlaying) await this.play()
@@ -194,11 +219,17 @@ export class BookPlayer {
     const wasPlaying = this.playing
     this.trackIndex = i
     const start = this.tracks[i].startOffset || 0
+    this.currentBookTime = start
+    // 载入时不预置位置（真正位置由下面的 play({time}) 决定），避免两次定位打架
     if (this.isNativeEngine) await this._nativeLoadTrack(i, 0)
     else await this._webLoadTrack(i, 0)
-    this.currentBookTime = start
     this._emitTime()
+    // 关键：一次到位 —— play() 里会带上正确的 time，避免"预置位置被 play 重置成 0"
     if (wasPlaying) await this.play()
+    else if (this.isNativeEngine) {
+      // 暂停态换集：也要把位置放对，否则之后点播放会从 0 开始
+      try { await NativeAudio.setCurrentTime({ assetId: this._assetId(i), time: 0 }) } catch (_) {}
+    }
     this._syncProgress(true)
     this.onTrackChange({ index: i, total: this.tracks.length, track: this.tracks[i] })
   }
@@ -229,6 +260,7 @@ export class BookPlayer {
   }
 
   async stop({ silent = false } = {}) {
+    this._stopNativeTicker()
     await fgStop()
     if (this.isNativeEngine) {
       try { await NativeAudio.stop({ assetId: this._assetId(this.trackIndex) }) } catch (_) {}
@@ -263,6 +295,12 @@ export class BookPlayer {
 
   // ---------- 内部：原生实现 ----------
   _assetId(trackIdx) { return `${this.assetPrefix}${trackIdx}` }
+
+  /** 当前音轨内的偏移（秒）：全书时间 - 该轨 startOffset */
+  _fileTimeFor(idx) {
+    const off = this.tracks[idx]?.startOffset || 0
+    return Math.max(0, this.currentBookTime - off)
+  }
 
   async _nativeLoadTrack(idx, fileTime) {
     const t = this.tracks[idx]
@@ -378,6 +416,38 @@ export class BookPlayer {
 
   _startWebTickerIfNeeded() { /* 浏览器版靠 timeupdate，无需 ticker */ }
   _stopWebTicker() { /* 同上 */ }
+
+  /**
+   * 原生兜底心跳（每 3 秒）
+   * 为什么需要：进度回写本来只依赖插件的 currentTime 事件，
+   * 但该事件在各种情况下可能不发（事件未注册成功、切后台被挂起、
+   * 播放结束瞬间等），导致 ABS 的「继续听 / 历史记录」长期不更新。
+   * 这里主动向原生层查一次当前播放位置，作为可靠来源。
+   */
+  _startNativeTicker() {
+    if (!this.isNativeEngine || this._nativeTicker) return
+    this._nativeTicker = setInterval(async () => {
+      if (!this.playing || !this.sessionId) return
+      try {
+        const r = await NativeAudio.getCurrentTime({ assetId: this._assetId(this.trackIndex) })
+        const t = r?.currentTime
+        if (typeof t === 'number' && isFinite(t) && t >= 0) {
+          const off = this.tracks[this.trackIndex]?.startOffset || 0
+          // 只在原生层给的位置更靠前时纠正，避免把 seek 后的值往回拉
+          if (this.currentBookTime < off + t) {
+            this.currentBookTime = off + t
+            this._emitTime()
+          }
+          this._timeListened += 3
+        }
+      } catch (_) {}
+      this._syncProgress()
+    }, 3000)
+  }
+
+  _stopNativeTicker() {
+    if (this._nativeTicker) { clearInterval(this._nativeTicker); this._nativeTicker = null }
+  }
 
   // ---------- 内部：通用 ----------
   _trackIndexForBookTime(bookTime) {

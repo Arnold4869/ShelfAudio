@@ -2,6 +2,7 @@
 import { abs } from '../lib/api.js'
 import { state, go, toast, esc, fmtTime, updateMini, requireParentPin } from '../app.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
+import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 
 let sleepTimer = null
 let sleepAt = 0
@@ -34,7 +35,10 @@ export async function renderPlayer(root) {
 
     <div class="player-page">
       <div class="player-cover-wrap">
-        <img class="player-cover" id="pCover" src="${c.cover}" alt="">
+        <div class="cover-slot">
+          ${fallbackCover({ title: c.title, author: c.author, cls: 'cover-ph-player' })}
+          <img class="player-cover" id="pCover" data-cover src="${c.cover}" alt="">
+        </div>
       </div>
       <div class="player-title" id="pTitle">${esc(c.title)}</div>
       <div class="player-chapter" id="pChapter"></div>
@@ -235,6 +239,9 @@ export async function renderPlayer(root) {
     }
   }
   renderExtra()
+
+  // 无封面的书用占位封面兜底
+  wireCoverFallback(root)
 
   // 播放速度恢复
   const savedRate = parseFloat(await store.get(CONFIG_KEYS.playbackRate, '1')) || 1

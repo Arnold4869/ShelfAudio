@@ -145,13 +145,71 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .book-cover {
   width: 100%; aspect-ratio: 1 / 1;
   object-fit: cover; display: block;
-  background: linear-gradient(135deg, var(--card-2), var(--bg-2));
+  background: transparent;
+  position: relative; z-index: 1;
 }
-.book-cover-fallback {
-  width: 100%; aspect-ratio: 1 / 1;
-  display: grid; place-items: center;
-  font-size: 42px;
-  background: linear-gradient(135deg, #372a76, #5a3f9e);
+
+/* ---------- 无封面书的占位封面（lib/cover.js 生成）----------
+   做法：真封面 img 盖在占位图上面；图挂了就把它藏起来露出占位图，
+   所以占位图必须在底层且默认可见（不再闪一下破图）。 */
+.cover-slot { position: relative; display: block; overflow: hidden; }
+.cover-ph {
+  position: absolute; inset: 0; z-index: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: .38em;
+  padding: 12% 12% 12% 16%;
+  background: linear-gradient(150deg, var(--ph-a), var(--ph-b));
+  color: var(--ph-ink);
+  text-align: center;
+  overflow: hidden;
+}
+/* 左侧书脊：一条窄竖条，像实体书的装订边 */
+.cover-ph-spine {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 7%;
+  background: linear-gradient(90deg, rgba(0,0,0,.42), rgba(0,0,0,.16));
+}
+/* 书名上方的小金线：书封常见装饰，克制的一条 */
+.cover-ph-rule {
+  width: 26%; height: 2px; border-radius: 2px;
+  background: var(--ph-accent);
+  opacity: .85; flex: 0 0 auto;
+}
+.cover-ph-title {
+  font-size: var(--ph-size, 1.6em);
+  font-weight: 700; line-height: 1.25;
+  letter-spacing: .02em;
+  max-height: 4.2em; overflow: hidden;
+  word-break: break-word;
+}
+.cover-ph-sub {
+  font-size: .72em; opacity: .72; letter-spacing: .04em;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 各处的尺寸适配：容器负责尺寸，里面的真封面/占位图都铺满它 */
+.cover-slot > img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+  background: transparent;   /* 加载中让底层占位封面透出来，避免闪色块 */
+}
+.book-card .cover-slot { width: 100%; aspect-ratio: 1 / 1; }
+.continue-card .cover-slot { width: 100%; height: 120px; }
+.list-item .cover-slot {
+  flex: 0 0 58px; width: 58px; height: 58px; border-radius: 10px;
+}
+.player-cover-wrap .cover-slot {
+  width: min(72vw, 290px); aspect-ratio: 1 / 1;
+  border-radius: 26px; box-shadow: 0 18px 46px rgba(0,0,0,.5);
+}
+.cover-ph-list { border-radius: 10px; }
+.cover-ph-player { border-radius: 26px; }
+/* 小尺寸（列表 / 继续听小卡）把装饰收掉，避免糊 */
+.cover-ph-list .cover-ph-rule,
+.cover-ph-list .cover-ph-sub { display: none; }
+.cover-ph-list { padding: 6% 4% 6% 12%; gap: .2em; }
+.cover-ph-list .cover-ph-title {
+  font-size: 1.05em; line-height: 1.2;
+  max-height: 2.5em; letter-spacing: 0;
 }
 .book-meta { padding: 11px 12px 13px; }
 .book-title {

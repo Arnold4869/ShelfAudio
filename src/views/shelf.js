@@ -2,6 +2,7 @@
 import { abs } from '../lib/api.js'
 import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini } from '../app.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
+import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 
 let cache = { items: [], at: 0, libraryId: null }
 
@@ -22,7 +23,9 @@ export async function renderShelf(root, { kid }) {
 
   let items = []
   try {
-    if (cache.libraryId === state.libraryId && Date.now() - cache.at < 60000 && cache.items.length) {
+    // 缓存只用于「同一会话内快速返回」，且很短（3 秒）：
+    // 原来 60 秒会导致刚听完的书回到书架仍显示旧进度
+    if (cache.libraryId === state.libraryId && Date.now() - cache.at < 3000 && cache.items.length) {
       items = cache.items
     } else {
       const d = await abs.getLibraryItems(state.libraryId, { limit: 200, sort: 'media.metadata.title' })
@@ -68,9 +71,10 @@ export async function renderShelf(root, { kid }) {
     const done = prog?.isFinished
     return `
       <div class="book-card" data-id="${it.id}">
-        <img class="book-cover" src="${cover}" alt="" loading="lazy"
-             onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
-        <div class="book-cover-fallback" style="display:none">📖</div>
+        <div class="cover-slot">
+          ${fallbackCover({ title, author: m.authorName || m.narratorName, cls: 'cover-ph-card' })}
+          <img class="book-cover" data-cover src="${cover}" alt="" loading="lazy">
+        </div>
         ${prog && (prog.currentTime > 30) ? `<div class="book-badge">${done ? '已听完' : '听 ' + pct + '%'}</div>` : ''}
         <div class="book-meta">
           <div class="book-title">${esc(title)}</div>
@@ -101,7 +105,10 @@ export async function renderShelf(root, { kid }) {
         const prog = progressMap[libItemId]
         const pct = prog && prog.duration ? Math.round((prog.currentTime || 0) / prog.duration * 100) : 0
         return `<div class="continue-card" data-id="${libItemId}" data-continue="1">
-          <img class="continue-cover" src="${abs.coverUrl(libItemId, { width: 300 })}" alt="">
+          <div class="cover-slot">
+            ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-continue' })}
+            <img class="continue-cover" data-cover src="${abs.coverUrl(libItemId, { width: 300 })}" alt="">
+          </div>
           <div class="continue-meta">
             <div class="continue-title">${esc(m.title || '')}</div>
             <div class="continue-bar"><i style="width:${Math.max(pct, 2)}%"></i></div>
@@ -135,6 +142,9 @@ export async function renderShelf(root, { kid }) {
     // 成人模式直接进设置（自己人用，不用家长锁）
     root.querySelector('#btnGear').onclick = () => go('settings')
   }
+
+  // 无封面的书用占位封面兜底
+  wireCoverFallback(root)
 
   // 语音
   root.querySelectorAll('[data-voice]').forEach(btn => {

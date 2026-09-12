@@ -3,6 +3,7 @@ import { abs } from '../lib/api.js'
 import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini } from '../app.js'
 import { listen, parseCommand, voiceSupported } from '../lib/voice.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
+import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 
 let lastQuery = ''
 
@@ -51,8 +52,10 @@ export async function renderSearch(root, params = {}) {
     results.innerHTML = items.map(it => {
       const m = it.media?.metadata || {}
       return `<div class="list-item" data-id="${it.id}">
-        <img class="list-cover" src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy"
-             onerror="this.style.visibility='hidden'">
+        <div class="cover-slot">
+          ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
+          <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">
+        </div>
         <div class="list-main">
           <div class="list-title">${esc(m.title || '未命名')}</div>
           <div class="list-sub">${esc(m.authorName || m.narratorName || '')} · ${fmtDur(it.media?.duration)}</div>
@@ -60,6 +63,7 @@ export async function renderSearch(root, params = {}) {
         <div class="list-pct">▶</div>
       </div>`
     }).join('')
+    wireCoverFallback(results)
     results.querySelectorAll('[data-id]').forEach(el => {
       el.onclick = async () => {
         const it = items.find(x => x.id === el.dataset.id)
