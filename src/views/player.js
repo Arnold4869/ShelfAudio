@@ -53,25 +53,22 @@ export async function renderPlayer(root) {
   // 章节列表默认收起，点「选集」或右上角三个点再展开
   chaptersOpen = false
 
-  // 这本书是否已收藏（决定心形是实心还是空心）。
-  // 服务器收藏夹 + 本机收藏（服务器没权限写时的兜底）都算。
+  // 收藏/缓存状态：**不在渲染前 await**！
+  // 之前这里串行等 collections()（网络请求）+ hasLocal + isCached 才画页面，
+  // 外网反代下一个来回几百毫秒到几秒，播放页就"卡一下才出来"。
+  // 现在页面先渲染，这三个状态查完再补（paintFav / 菜单文案是动态的，不依赖时序）。
   let favState = { on: false, local: false, collections: [], itemId: c.item.id }
-  try {
-    const cols = await abs.collections()
-    favState.collections = cols || []
-    if ((cols || []).some(col => (col.books || []).some(b => b.id === c.item.id))) {
-      favState.on = true
-    }
-  } catch (_) { }
-  if (!favState.on) {
-    try {
-      if (await hasLocal(c.item.id)) { favState.on = true; favState.local = true }
-    } catch (_) { }
-  }
-
-  // 这本书是否已缓存到本机（决定三个点菜单里那项显示"缓存"还是"已缓存"）
   let cachedNow = false
-  try { cachedNow = await isCached(c.item.id, c.tracks?.length) } catch (_) { }
+  Promise.all([
+    abs.collections().then(cols => {
+      favState.collections = cols || []
+      if ((cols || []).some(col => (col.books || []).some(b => b.id === c.item.id))) favState.on = true
+    }).catch(() => {}),
+    hasLocal(c.item.id).then(yes => {
+      if (yes && !favState.on) { favState.on = true; favState.local = true }
+    }).catch(() => {}),
+    isCached(c.item.id, c.tracks?.length).then(yes => { cachedNow = !!yes }).catch(() => {}),
+  ]).then(() => { try { paintFav() } catch (_) { } })
 
   const shell = () => `
     <div class="page-head">

@@ -331,8 +331,19 @@ export class AbsApi {
    * 它只是把 hideFromContinueListening 置 true，进度本身保留 —— 比直接 DELETE 进度温和，
    * 也跟其它 ABS 客户端行为一致（用户在别处还能看到"听了一半"）。
    */
-  removeFromContinue(itemId) {
-    return this.get(`/api/me/progress/${itemId}/remove-from-continue-listening`)
+  /**
+   * 从「继续听」移除。
+   * ⚠️ URL 里要的是 **mediaProgress 的 id**（`/api/me` 里 mediaProgress[].id），
+   * 不是 libraryItemId —— 两者不同（实测 libraryItemId 会 404）。
+   * 所以这里做一次映射，调用方继续传 libraryItemId（顺手）。
+   */
+  async removeFromContinue(libraryItemId) {
+    const me = await this.me()
+    const mp = (me?.mediaProgress || []).find(x =>
+      x.libraryItemId === libraryItemId || x.mediaItemId === libraryItemId || x.id === libraryItemId)
+    const pid = mp?.id
+    if (!pid) throw new Error('这本书没有收听进度记录，无需移除')
+    return this.get(`/api/me/progress/${pid}/remove-from-continue-listening`)
   }
 
   /** 书签（ABS 原生，服务端存储，与其它客户端同步） */
