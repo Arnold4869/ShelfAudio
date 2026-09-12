@@ -15,6 +15,9 @@ import { renderPlayer } from './views/player.js'
 import { renderSearch } from './views/search.js'
 import { renderSettings } from './views/settings.js'
 import { openVoiceOverlay } from './lib/voice-ui.js'
+import { startListening, stopListening } from './lib/stats.js'
+import { localTrackMap } from './lib/offline.js'
+import { initHaptics } from './lib/haptics.js'
 
 window.__abs = abs   // player.js 需要
 
@@ -154,6 +157,14 @@ export function initPlayer() {
     onState: (s) => {
       window.dispatchEvent(new CustomEvent('sa:state', { detail: s }))
       updateMini()
+      // 收听时长统计：只在"真的在播"时计时，暂停立刻结算
+      // （统计的是听了多久，不是开着 App 多久）
+      if (s?.isPlaying) {
+        const c = state.current
+        if (c) startListening(c.item?.id, c.title).catch(() => {})
+      } else {
+        stopListening().catch(() => {})
+      }
     },
     onTrackChange: (t) => {
       window.dispatchEvent(new CustomEvent('sa:track', { detail: t }))
@@ -226,12 +237,17 @@ export async function playItem(item, { startTime } = {}) {
     startAt: start,
   }
 
+  // 有离线缓存的集优先用本地文件（无网也能听；没缓存的集自动回落在线上）
+  let localMap = {}
+  try { localMap = await localTrackMap(item.id) } catch (_) {}
+
   await player.load({
     itemId: item.id,
     tracks: withUrls,
     sessionId,
     duration,
     startBookTime: start,
+    localMap,
     notification: {
       title,
       artist: meta.authorName || meta.author || '听书',
@@ -245,6 +261,7 @@ export async function playItem(item, { startTime } = {}) {
 
 /** 播放完成后 / 切书时的收尾 */
 export async function stopCurrent() {
+  await stopListening().catch(() => {})
   if (!state.player) return
   await state.player.stop({ silent: true })
   await state.player.finish()
@@ -353,8 +370,30 @@ route('settings', async (root) => {
   await renderSettings(root)
 })
 
+// 收听统计（家长用，入口在设置页）
+route('stats', async (root, params) => {
+  document.body.dataset.view = 'stats'
+  const { renderStats } = await import('./views/stats.js')
+  await renderStats(root, params)
+})
+
+// 我的收藏（心形按钮加的收藏在这里看）
+route('favorites', async (root) => {
+  document.body.dataset.view = 'favorites'
+  const { renderFavorites } = await import('./views/favorites.js')
+  await renderFavorites(root)
+})
+
+// 离线缓存管理
+route('cache', async (root) => {
+  document.body.dataset.view = 'cache'
+  const { renderCache } = await import('./views/cache.js')
+  await renderCache(root)
+})
+
 // ---------------- 全局事件 ----------------
 window.addEventListener('DOMContentLoaded', () => {
+  initHaptics().catch(() => {})
   // dock 高度自动同步（内容留白与 FAB 都依赖 --dock-h）
   watchDock()
   window.addEventListener('resize', syncDockHeight)

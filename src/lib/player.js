@@ -133,10 +133,15 @@ export class BookPlayer {
    * @param {object} opts
    *   itemId, tracks[], sessionId, duration, startBookTime, notification{title,artist,album,artworkUrl}
    */
-  async load({ itemId, tracks, sessionId, duration, startBookTime = 0, notification }) {
+  async load({ itemId, tracks, sessionId, duration, startBookTime = 0, notification, localMap = null }) {
     await this.stop({ silent: true })
     this.itemId = itemId
     this.tracks = tracks || []
+    // 本地缓存映射 { idx: file:// URI }。有缓存的集优先离线播放（不联网也能听），
+    // 没缓存的集自动回落到在线流 —— 混着用也没问题。
+    // ⚠️ 必须直接赋值，不能 `|| this.localMap`：换书时若新书没传 localMap，
+    // 会继承上一本的映射，把 A 书的本地文件当成 B 书的音轨加载。
+    this.localMap = localMap || {}
     this.sessionId = sessionId || null
     this.duration = duration || this.tracks.reduce((a, t) => a + (t.duration || 0), 0)
     this.notification = notification || null
@@ -399,11 +404,15 @@ export class BookPlayer {
     // 同一条音轨重新载入（seek/重播）也要先彻底停，避免重影
     await this._killAsset(idx)
 
+    // 有本地缓存就用本地文件：不耗流量、无网也能听
+    const local = this.localMap?.[idx]
+    const useLocal = !!local
     await NativeAudio.preload({
       assetId,
-      assetPath: url,
+      assetPath: useLocal ? local : url,
       isUrl: true,
-      headers: t.headers || undefined,     // 用 Bearer header 鉴权更稳（支持 7.10+）
+      // 本地文件不要带鉴权头（file:// 传 header 在个别实现上会失败）
+      headers: useLocal ? undefined : (t.headers || undefined),
       notificationMetadata: this.notification ? {
         title: this.notification.title,
         artist: this.notification.artist,

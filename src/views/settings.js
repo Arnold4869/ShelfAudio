@@ -6,10 +6,18 @@ import { voiceSupported } from '../lib/voice.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 import { checkVoicePermission, requestVoicePermission, openSystemSettings, onAppResume } from '../lib/permissions.js'
+import { haptic, setHaptics, hapticsEnabled } from '../lib/haptics.js'
+import { cacheSize, cachedBooks, fmtBytes } from '../lib/offline.js'
 
 export async function renderSettings(root, { firstRun = false } = {}) {
   const server = await store.get(CONFIG_KEYS.server, '')
   const username = await store.get(CONFIG_KEYS.username, '')
+  const scope = (await store.get(CONFIG_KEYS.progressScope, 'track')) === 'book' ? 'book' : 'track'
+  let cacheUsed = 0, cacheCount = 0
+  try {
+    cacheUsed = await cacheSize()
+    cacheCount = (await cachedBooks()).length
+  } catch (_) { }
 
   root.innerHTML = `
     <div class="page-head">
@@ -41,6 +49,62 @@ export async function renderSettings(root, { firstRun = false } = {}) {
           <div class="setting-value">章节列表、倍速、睡眠定时、收藏、书籍信息</div>
         </div>
         <div class="setting-arrow">${state.mode === 'adult' ? icon('check', 20) : ''}</div>
+      </div>
+    </div>
+
+    <div class="section-h">播放</div>
+    <div class="settings-group">
+      <div class="setting-row" id="rowScope">
+        <div class="setting-ic">${icon('chart', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">进度条显示</div>
+          <div class="setting-value" id="scopeVal">${scope === 'book' ? '整部作品的进度' : '当前这一集的进度（默认）'}</div>
+        </div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
+      </div>
+      <div class="setting-row" id="rowHaptics">
+        <div class="setting-ic">${icon('sparkle', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">触感反馈</div>
+          <div class="setting-value" id="hapVal">${hapticsEnabled() ? '已开启：按按钮时轻微震动' : '已关闭'}</div>
+        </div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
+      </div>
+    </div>
+
+    <div class="section-h">我的收藏</div>
+    <div class="settings-group">
+      <div class="setting-row" id="rowFav">
+        <div class="setting-ic">${icon('heart', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">收藏的书</div>
+          <div class="setting-value">播放页点心形收藏的书都在这里</div>
+        </div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
+      </div>
+    </div>
+
+    <div class="section-h">离线缓存</div>
+    <div class="settings-group">
+      <div class="setting-row" id="rowCache">
+        <div class="setting-ic">${icon('download', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">缓存管理</div>
+          <div class="setting-value">${cacheCount ? `已缓存 ${cacheCount} 本 · ${fmtBytes(cacheUsed)}` : '把书下到手机里，没网也能听'}</div>
+        </div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
+      </div>
+    </div>
+
+    <div class="section-h">家长</div>
+    <div class="settings-group">
+      <div class="setting-row" id="rowStats">
+        <div class="setting-ic">${icon('chart', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">收听统计</div>
+          <div class="setting-value">今天听了哪些作品、各听多久、上午下午分布</div>
+        </div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
     </div>
 
@@ -154,7 +218,37 @@ export async function renderSettings(root, { firstRun = false } = {}) {
     else toast('请在设置里打开麦克风与语音识别')
   }
 
-  $('#rowPin').onclick = () => openPinDialog()
+  $('#rowPin').onclick = () => { haptic.tap(); openPinDialog() }
+
+  // 进度条口径切换（单集 ↔ 整部作品）
+  $('#rowScope').onclick = async () => {
+    haptic.select()
+    const cur = (await store.get(CONFIG_KEYS.progressScope, 'track'))
+    const next = cur === 'book' ? 'track' : 'book'
+    await store.set(CONFIG_KEYS.progressScope, next)
+    $('#scopeVal').textContent = next === 'book' ? '整部作品的进度' : '当前这一集的进度（默认）'
+    toast(next === 'book' ? '进度条将显示整部作品的进度' : '进度条将显示当前这一集的进度')
+  }
+
+  // 触感开关
+  $('#rowHaptics').onclick = async () => {
+    const next = !hapticsEnabled()
+    await setHaptics(next)
+    $('#hapVal').textContent = next ? '已开启：按按钮时轻微震动' : '已关闭'
+    if (next) haptic.tap()
+    toast(next ? '触感已开启' : '触感已关闭')
+  }
+
+  $('#rowFav').onclick = () => { haptic.tap(); go('favorites') }
+  $('#rowCache').onclick = () => { haptic.tap(); go('cache') }
+  // 统计页是家长看的，儿童模式下要密码（跟进设置本身同一道门槛，这里再加一道更稳）
+  $('#rowStats').onclick = async () => {
+    haptic.tap()
+    if (state.mode !== 'adult' && state.kidPin) {
+      if (!(await requireParentPin())) return
+    }
+    go('stats')
+  }
 
   $('#rowKid').onclick = async () => {
     if (state.mode === 'kid') { await goHome(); return }

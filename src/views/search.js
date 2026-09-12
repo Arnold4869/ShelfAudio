@@ -6,6 +6,7 @@ import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
+import { haptic } from '../lib/haptics.js'
 
 let lastQuery = ''
 
@@ -17,15 +18,18 @@ export async function renderSearch(root, params = {}) {
     <div class="page-head">
       <button class="icon-btn" id="btnBack" aria-label="返回">${icon('back', 22)}</button>
       <div class="page-title">找书</div>
-      ${voiceSupported() ? `<button class="icon-btn" data-voice="1" aria-label="语音">${icon('mic', 21)}</button>` : ''}
     </div>
+    <!-- 语音按钮放进输入框内部（右上角那个位置太远，用户反馈"放搜索框里更合适"） -->
     <div class="search-bar">
-      <input id="q" type="search" placeholder="输入书名，或说“我要听示例故事甲”" value="${esc(lastQuery)}"
-             autocapitalize="off" autocorrect="off" enterkeyhint="search" />
+      <div class="search-field">
+        <input id="q" type="search" placeholder="输入书名，或说“我要听示例故事甲”" value="${esc(lastQuery)}"
+               autocapitalize="off" autocorrect="off" enterkeyhint="search" />
+        ${voiceSupported() ? `<button class="search-mic" data-voice="1" aria-label="语音搜索">${icon('mic', 20)}</button>` : ''}
+      </div>
       <button class="btn" id="btnGo" style="padding:13px 18px">搜索</button>
     </div>
     <div class="hint" id="hint" style="margin-bottom:14px">
-      ${voiceSupported() ? '点右下角话筒，直接说书名或“暂停”“下一集”' : '这台设备不支持语音识别，可以用文字搜索'}
+      ${voiceSupported() ? '点搜索框里的话筒，直接说书名或“暂停”“下一集”' : '这台设备不支持语音识别，可以用文字搜索'}
     </div>
     <div id="results"></div>
     ${kid ? `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>` : ''}
@@ -93,6 +97,7 @@ export async function renderSearch(root, params = {}) {
       wireCoverFallback(results)
       results.querySelectorAll('[data-id]').forEach(el => {
         el.onclick = async () => {
+          haptic.tap()
           const it = all.find(x => x.id === el.dataset.id)
           try { await playItem(it) } catch (e) { toast(e.message || '打开失败') }
         }
@@ -119,13 +124,14 @@ export async function renderSearch(root, params = {}) {
     }
   }
 
-  $('#btnGo').onclick = () => doSearch(input.value)
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') { input.blur(); doSearch(input.value) } })
+  $('#btnGo').onclick = () => { haptic.tap(); doSearch(input.value) }
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { input.blur(); haptic.tap(); doSearch(input.value) } })
 
   // 语音搜索浮层
   document.querySelectorAll('[data-voice]').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation()
+      haptic.select()
       if (!voiceSupported()) { toast('这台设备不支持语音识别'); return }
       openVoiceOverlay({ onSearch: doSearch })
     })

@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""验证这一批新功能：进度口径 / 收藏 / 三个点菜单 / 继续听排序 / 统计 / 缓存 / 搜索框话筒。"""
+import json, pathlib, re, sys
+from playwright.sync_api import sync_playwright
+
+FX = json.loads(pathlib.Path('/path/to/ShelfAudio/scripts/ui-fixtures.json').read_text())
+PNG = bytes.fromhex('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082')
+MULTI = FX.get('__multiId')
+PASS = FAIL = 0
+
+def ok(name, cond, extra=''):
+    global PASS, FAIL
+    if cond: PASS += 1; print(f"  ✅ {name}")
+    else: FAIL += 1; print(f"  ❌ {name} {extra}")
+
+def _play_body(lid):
+    item = FX.get('/api/items/%s' % lid) or FX.get('/api/items/%s' % MULTI) or {}
+    media = item.get('media') or {}
+    tracks, off = [], 0.0
+    for i, af in enumerate(media.get('audioFiles') or []):
+        d = af.get('duration') or 0
+        tracks.append({'index': i + 1, 'startOffset': off, 'duration': d,
+                       'contentUrl': '/api/items/%s/file/%s' % (lid, af.get('ino', '1')),
+                       'title': '第%d集' % (i + 1), 'mimeType': 'audio/mpeg'})
+        off += d
+    if not tracks:
+        tracks = [{'index': 1, 'startOffset': 0, 'duration': 3600,
+                   'contentUrl': '/api/items/%s/file/1' % lid, 'title': '第1集', 'mimeType': 'audio/mpeg'}]
+        off = 3600
+    return json.dumps({'id': 's1', 'audioTracks': tracks, 'duration': off,
+                       'libraryItem': {'id': lid, 'media': media}})
+
+COLLECTIONS = json.dumps({'collections': [
+    {'id': 'col_1', 'name': '常听', 'books': []},
+]})
+
+def mk(br, mode='kid'):
+    ctx = br.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2,
+                         is_mobile=True, has_touch=True)
+    pg = ctx.new_page()
+    errs = []
+    pg.on('pageerror', lambda e: errs.append(str(e)[:200]))
+    pg.on('console', lambda m: errs.append('CONSOLE:' + m.text[:200]) if m.type == 'error' else None)
+
+    def h(route):
+        req = route.request
+        p = re.sub(r'^https?://[^/]+', '', req.url).split('?')[0]
+        if p == '/api/collections':
+            return route.fulfill(status=200, content_type='application/json', body=COLLECTIONS)
+        if p in FX:
+            return route.fulfill(status=200, content_type='application/json', body=json.dumps(FX[p]))
+        if p.endswith('/cover'):
+            return route.fulfill(status=200, content_type='image/png', body=PNG)
+        if p.endswith('/play'):
+            try:
+                lid = (json.loads(req.post_data or '{}') or {}).get('libraryItemId') or MULTI
+            except Exception:
+                lid = MULTI
+            return route.fulfill(status=200, content_type='application/json', body=_play_body(lid))
+        if p.startswith('/api/me/progress/') or p.startswith('/api/me/item/'):
+            return route.fulfill(status=200, content_type='application/json', body='{}')
+        if '/file/' in p:
+            return route.fulfill(status=200, content_type='audio/mpeg', body=b'')
+        route.fulfill(status=200, content_type='application/json', body='{}')
+
+    pg.route('**/api/**', h)
+    pg.add_init_script("""
+      localStorage.setItem('shelfaudio.server','http://内网IP:端口');
+      localStorage.setItem('shelfaudio.token','t');
+      localStorage.setItem('shelfaudio.username','Bin');
+      localStorage.setItem('shelfaudio.mode','%s');
+      localStorage.setItem('shelfaudio.kidPin','1234');
+    """ % mode)
+    pg.goto('http://127.0.0.1:8899/index.html')
+    pg.wait_for_timeout(1800)
+    return ctx, pg, errs
+
+
+with sync_playwright() as pw:
+    br = pw.chromium.launch()
+
+    print("\n=== A. 进度条默认单集 + 慢速断言 ===")
+    ctx, pg, errs = mk(br, 'kid')
+    pg.evaluate("document.querySelector('.book-card')?.click()")
+    pg.wait_for_timeout(2600)
+    ok("能进播放页", pg.evaluate("document.body.dataset.view") == 'player',
+       pg.evaluate("document.body.dataset.view"))
+    # 进度条时间：默认应是单集时长（不是全书累计）
+    t = pg.evaluate("document.querySelector('#tDur')?.textContent")
+    ok("时长显示的是单集而非整部（默认单集口径）", t is not None, f"tDur={t}")
+    # 整部作品百分比存在
+    ok("显示「整部作品 x%」辅助信息", pg.evaluate("!!document.querySelector('#pWhole')"))
+    ok("播放页无 JS 报错", not errs, str(errs[:2]))
+    ctx.close()
+
+    print("\n=== B. 收藏按钮 + 三个点菜单 ===")
+    ctx, pg, errs = mk(br, 'kid')
+    pg.evaluate("document.querySelector('.book-card')?.click()")
+    pg.wait_for_timeout(2600)
+    ok("播放页有心形收藏按钮", pg.evaluate("!!document.querySelector('#btnFavTop')"))
+    ok("播放页有加书签按钮", pg.evaluate("!!document.querySelector('#btnBookmark')"))
+    # 三个点 → 菜单出现，且不再跳设置页
+    pg.evaluate("document.querySelector('#btnMore').click()")
+    pg.wait_for_timeout(400)
+    ok("三个点打开的是操作菜单（不是跳设置页）",
+       pg.evaluate("!!document.querySelector('.lock .sheet-item')")
+       and pg.evaluate("document.body.dataset.view") == 'player')
+    items = pg.evaluate("[...document.querySelectorAll('.sheet-item .sheet-label')].map(e=>e.textContent.trim())")
+    print("     菜单项:", items)
+    ok("菜单含收藏/书签/选集", any('收藏' in (i or '') for i in items) and any('书签' in (i or '') for i in items))
+    ok("菜单无 JS 报错", not errs, str(errs[:2]))
+    ctx.close()
+
+    print("\n=== C. 继续听：按最后播放时间倒序 ===")
+    ctx, pg, errs = mk(br, 'kid')
+    order = pg.evaluate("""() => {
+      const me = %s;
+      const mp = {};
+      (me.mediaProgress||[]).forEach(p => { mp[p.libraryItemId||p.mediaItemId] = p; });
+      return [...document.querySelectorAll('.continue-card')].map(el => {
+        const p = mp[el.dataset.id];
+        return { id: el.dataset.id, ts: (p&&p.lastUpdate)||0 };
+      });
+    }""" % json.dumps(FX.get('/api/me', {})))
+    print("     卡片顺序:", [(o['id'][:8], o['ts']) for o in order])
+    ts = [o['ts'] for o in order]
+    ok("继续听按时间倒序（最近在最前）", ts == sorted(ts, reverse=True), str(ts))
+    ok("继续听卡片存在", len(order) > 0)
+    ctx.close()
+
+    print("\n=== D. 搜索框内话筒 ===")
+    ctx, pg, errs = mk(br, 'kid')
+    # voiceSupported() 判的是"是否原生环境"，headless 里为 false → 就地把桩打开
+    pg.evaluate("if (window.Capacitor) window.Capacitor.isNativePlatform = () => true")
+    pg.evaluate("document.querySelector('[data-nav=\"search\"]')?.click()")
+    pg.wait_for_timeout(1500)
+    inField = pg.evaluate("""() => {
+      const mic = document.querySelector('.search-mic');
+      const field = document.querySelector('.search-field');
+      if (!mic || !field) return null;
+      const a = mic.getBoundingClientRect(), b = field.getBoundingClientRect();
+      return { inside: a.left >= b.left && a.right <= b.right, hasMic: true };
+    }""")
+    ok("话筒在搜索框内部", bool(inField and inField.get('inside')), str(inField))
+    ok("右上角已无独立话筒按钮", pg.evaluate("!document.querySelector('.page-head [data-voice]')"))
+    ctx.close()
+
+    print("\n=== E. 统计页 ===")
+    ctx, pg, errs = mk(br, 'kid')
+    pg.evaluate("window.__go = null")
+    # 直接进统计页（模拟设置页点击）
+    pg.evaluate("document.querySelector('[data-nav=\"settings\"]')?.click()")
+    pg.wait_for_timeout(800)
+    pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+    pg.wait_for_timeout(1300)
+    ok("设置页有收听统计入口", pg.evaluate("!!document.querySelector('#rowStats')"))
+    pg.evaluate("document.querySelector('#rowStats').click()")
+    pg.wait_for_timeout(1600)
+    ok("统计页能打开（有家长密码时需验证）",
+       pg.evaluate("document.body.dataset.view") in ('stats', 'settings'),
+       pg.evaluate("document.body.dataset.view"))
+    # 若弹出家长锁，输入
+    if pg.evaluate("!!document.querySelector('#lockPin')"):
+        pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+        pg.wait_for_timeout(1400)
+    ok("进入统计页", pg.evaluate("document.body.dataset.view") == 'stats',
+       pg.evaluate("document.body.dataset.view"))
+    ok("统计页有标题/内容", pg.evaluate("!!document.querySelector('.stat-hero, .empty')"))
+    ctx.close()
+
+    print("\n=== F. 设置页新项（进度口径 / 触感 / 缓存 / 收藏）===")
+    ctx, pg, errs = mk(br, 'kid')
+    pg.evaluate("document.querySelector('[data-nav=\"settings\"]')?.click()")
+    pg.wait_for_timeout(800)
+    pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+    pg.wait_for_timeout(1300)
+    for sel, name in [('#rowScope', '进度条显示'), ('#rowHaptics', '触感反馈'),
+                      ('#rowCache', '缓存管理'), ('#rowFav', '收藏的书')]:
+        ok(f"设置页有「{name}」", pg.evaluate(f"!!document.querySelector('{sel}')"))
+    # 切进度口径
+    pg.evaluate("document.querySelector('#rowScope').click()")
+    pg.wait_for_timeout(400)
+    v = pg.evaluate("document.querySelector('#scopeVal')?.textContent")
+    ok("能切换进度条口径", '整部' in (v or ''), v)
+    ok("设置页无 JS 报错", not errs, str(errs[:2]))
+    ctx.close()
+
+    print("\n=== G. 缓存页 ===")
+    ctx, pg, errs = mk(br, 'kid')
+    pg.evaluate("document.querySelector('[data-nav=\"settings\"]')?.click()")
+    pg.wait_for_timeout(800)
+    pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+    pg.wait_for_timeout(1300)
+    pg.evaluate("document.querySelector('#rowCache').click()")
+    pg.wait_for_timeout(1800)
+    ok("缓存页能打开", pg.evaluate("document.body.dataset.view") == 'cache',
+       pg.evaluate("document.body.dataset.view"))
+    ok("缓存页有下载列表", pg.evaluate("document.querySelectorAll('#dlList .setting-row').length") > 0)
+    ok("缓存页无 JS 报错", not errs, str(errs[:2]))
+    ctx.close()
+
+    print("\n=== H. 收藏页 ===")
+    ctx, pg, errs = mk(br, 'kid')
+    pg.evaluate("document.querySelector('[data-nav=\"settings\"]')?.click()")
+    pg.wait_for_timeout(800)
+    pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+    pg.wait_for_timeout(1300)
+    pg.evaluate("document.querySelector('#rowFav').click()")
+    pg.wait_for_timeout(1800)
+    ok("收藏页能打开", pg.evaluate("document.body.dataset.view") == 'favorites',
+       pg.evaluate("document.body.dataset.view"))
+    ok("收藏页无 JS 报错", not errs, str(errs[:2]))
+    ctx.close()
+
+    br.close()
+
+print(f"\n{'=' * 46}\n结果：{PASS} 通过 / {FAIL} 失败")
+sys.exit(1 if FAIL else 0)

@@ -57,6 +57,10 @@
     <!-- 语音识别 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- 触感反馈（@capacitor/haptics）：
+         没有这条权限，Android 上所有按钮都不会震，而且不报错（静默失效）。 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <queries>
         <intent>
             <action android:name="android.speech.RecognitionService" />

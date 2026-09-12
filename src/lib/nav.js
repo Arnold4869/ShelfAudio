@@ -6,6 +6,7 @@
  * （用户反馈：搜索页有底栏、设置页只有左上角返回）。
  */
 import { icon } from './icons.js'
+import { haptic } from './haptics.js'
 
 const TABS = [
   { nav: 'kidhome', ic: 'books', label: '书架' },
@@ -35,6 +36,7 @@ export function wireKidTabs(root, { go, requireParentPin }) {
   el.querySelectorAll('[data-nav]').forEach(b => {
     const nav = b.dataset.nav
     b.onclick = async () => {
+      haptic.tap()
       if (nav === 'settings' && typeof requireParentPin === 'function') {
         if (!(await requireParentPin())) return
       }

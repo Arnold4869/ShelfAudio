@@ -41,6 +41,9 @@ jobs:
       - name: Verify imports resolve
         run: node scripts/check-imports.mjs
 
+      - name: Listening-stats logic
+        run: node scripts/test-stats.mjs
+
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs
 
@@ -106,6 +109,9 @@ jobs:
 
       - name: Verify imports resolve
         run: node scripts/check-imports.mjs
+
+      - name: Listening-stats logic
+        run: node scripts/test-stats.mjs
 
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs

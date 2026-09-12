@@ -5,6 +5,7 @@ import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
+import { haptic } from '../lib/haptics.js'
 
 let cache = { items: [], at: 0, libraryId: null }
 
@@ -45,24 +46,32 @@ export async function renderShelf(root, { kid }) {
     return
   }
 
-  // 继续听
+  // 继续听：按「最后播放时间」倒序（最近听的在最前）。
+  // ABS 的 /api/me/items-in-progress 不保证顺序（实测同一个库返回顺序稳定但与时间无关），
+  // 所以本地按 progressLastUpdate 再排一次；该字段缺失时退回 mediaProgress.lastUpdate。
   let inProgress = []
-  try {
-    const raw = await abs.itemsInProgress()
-    inProgress = (raw || []).map(it => {
-      const p = (state.player?.itemId && it.id === state.player.itemId) ? null : null
-      return it
-    }).slice(0, 8)
-  } catch (_) { }
-
-  const progressMap = {}
+  let progressMapEarly = {}
   try {
     const me = await abs.me()
     for (const mp of (me?.mediaProgress || [])) {
       const id = mp.libraryItemId || mp.mediaItemId
-      if (id) progressMap[id] = mp
+      if (id) progressMapEarly[id] = mp
     }
   } catch (_) { }
+  try {
+    const raw = await abs.itemsInProgress()
+    inProgress = (raw || [])
+      .map(it => {
+        const mp = progressMapEarly[it.id]
+        const ts = it.progressLastUpdate || mp?.lastUpdate || mp?.finishedAt || 0
+        return { it, ts: Number(ts) || 0 }
+      })
+      .sort((a, b) => b.ts - a.ts)      // 最近听的排最前
+      .map(x => x.it)
+      .slice(0, 8)
+  } catch (_) { }
+
+  const progressMap = progressMapEarly
 
   const cardHTML = (it, big) => {
     const m = it.media?.metadata || {}
@@ -99,7 +108,7 @@ export async function renderShelf(root, { kid }) {
        </div>`
 
   const continueHTML = inProgress.length ? `
-    <div class="section-h">继续听 <small>${inProgress.length} 本</small></div>
+    <div class="section-h">继续听 <small>长按可移除</small></div>
     <div class="continue-row">
       ${inProgress.map(it => {
         const m = it.media?.metadata || {}
@@ -182,7 +191,13 @@ export async function renderShelf(root, { kid }) {
 
   // 点击书籍
   root.querySelectorAll('[data-id]').forEach(el => {
+    // 长按 = 从「继续听」里删掉这条记录（只在继续听卡片上生效）
+    if (el.dataset.continue === '1') {
+      wireLongPress(el, () => confirmRemoveFromContinue(el.dataset.id))
+    }
     el.addEventListener('click', async () => {
+      if (el._longPressed) { el._longPressed = false; return }   // 长按已处理，别再当点击
+      haptic.tap()
       const id = el.dataset.id
       const it = state.items.find(x => x.id === id) || inProgress.find(x => x.id === id)
       if (!it) return
@@ -196,4 +211,58 @@ export async function renderShelf(root, { kid }) {
   })
 
   updateMini()
+}
+
+/**
+ * 长按（600ms）触发。触摸/鼠标都支持。
+ * 设 el._longPressed，让随后的 click 不要再触发一次普通点击 —— 否则长按删除后
+ * 手指抬起会顺带把这本书打开。
+ */
+function wireLongPress(el, fn) {
+  let timer = null
+  const start = () => {
+    clearTimeout(timer)
+    el.classList.add('longpress')
+    timer = setTimeout(() => {
+      timer = null
+      el._longPressed = true
+      el.classList.remove('longpress')
+      haptic.heavy()
+      fn()
+    }, 600)
+  }
+  const cancel = () => { clearTimeout(timer); timer = null; el.classList.remove('longpress') }
+  el.addEventListener('touchstart', start, { passive: true })
+  el.addEventListener('touchend', cancel)
+  el.addEventListener('touchcancel', cancel)
+  el.addEventListener('touchmove', cancel, { passive: true })
+  el.addEventListener('mousedown', start)
+  el.addEventListener('mouseup', cancel)
+  el.addEventListener('mouseleave', cancel)
+}
+
+/** 二次确认后把这本书从「继续听」移除（ABS 端一起改，不只是本机隐藏） */
+async function confirmRemoveFromContinue(itemId) {
+  const modal = document.createElement('div')
+  modal.className = 'lock'
+  modal.innerHTML = `<div class="lock-card">
+    <div class="lock-title">从「继续听」移除？</div>
+    <div class="lock-sub">这本书的收听进度会被清空，书架里还在。服务器上也会一起改。</div>
+    <div class="lock-actions">
+      <button class="btn ghost" id="rmCancel">取消</button>
+      <button class="btn danger" id="rmOk">移除</button>
+    </div>
+  </div>`
+  document.body.appendChild(modal)
+  modal.querySelector('#rmCancel').onclick = () => modal.remove()
+  modal.querySelector('#rmOk').onclick = async () => {
+    modal.remove()
+    try {
+      await abs.removeFromContinue(itemId)
+      haptic.success()
+      toast('已从继续听移除')
+      cache.at = 0   // 让书架重新拉取
+      await go(state.mode === 'adult' ? 'shelf' : 'kidhome')
+    } catch (e) { haptic.error(); toast('移除失败：' + e.message) }
+  }
 }

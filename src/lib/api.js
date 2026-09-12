@@ -221,6 +221,10 @@ export class AbsApi {
     return out
   }
 
+  getCollection(id) {
+    return this.get(`/api/collections/${id}`)
+  }
+
   async collections() {
     const d = await this.get('/api/collections')
     return d?.collections || []
@@ -312,6 +316,24 @@ export class AbsApi {
 
   getProgress(itemId) {
     return this.get(`/api/me/progress/${itemId}`).catch(() => null)
+  }
+
+  /**
+   * 把一本书从「继续听」移除。
+   * 用 ABS 原生端点（GET /api/me/progress/<id>/remove-from-continue-listening），
+   * 它只是把 hideFromContinueListening 置 true，进度本身保留 —— 比直接 DELETE 进度温和，
+   * 也跟其它 ABS 客户端行为一致（用户在别处还能看到"听了一半"）。
+   */
+  removeFromContinue(itemId) {
+    return this.get(`/api/me/progress/${itemId}/remove-from-continue-listening`)
+  }
+
+  /** 书签（ABS 原生，服务端存储，与其它客户端同步） */
+  bookmarks(itemId) {
+    return this.get(`/api/me/item/${itemId}/bookmark`).catch(() => null)
+  }
+  addBookmark(itemId, time, title) {
+    return this.post(`/api/me/item/${itemId}/bookmark`, { time, title })
   }
 }
 

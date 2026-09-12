@@ -2,6 +2,7 @@
 import { abs } from '../lib/api.js'
 import { state, go, toast, esc, fmtTime, updateMini, requireParentPin } from '../app.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
+import { haptic } from '../lib/haptics.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { icon } from '../lib/icons.js'
 
@@ -9,6 +10,22 @@ let sleepTimer = null
 let sleepAt = 0
 let adultTab = 'chapters'
 let chaptersOpen = false   // 章节面板是否展开（儿童模式默认收起，点「选集」才展开）
+// 进度条口径：'track' = 当前这一集（默认）；'book' = 整部作品。
+// 之前写死了整本（ABS 的 currentTime 是全书累计秒），用户看着"进度条是整个作品的"很别扭。
+let progressScope = 'track'
+
+/** 当前进度条的取值区间：[起点(全书秒), 终点(全书秒), 显示用当前秒, 显示用总秒] */
+function scopeRange() {
+  const c = state.current, p = state.player
+  const t = c.tracks[p.trackIndex]
+  const off = t?.startOffset || 0
+  const trackDur = t?.duration || 0
+  if (progressScope === 'book' || !trackDur) {
+    return { from: 0, to: p.duration || 0, cur: p.position().currentTime, dur: p.duration || 0 }
+  }
+  const cur = Math.max(0, Math.min(p.position().currentTime - off, trackDur))
+  return { from: off, to: off + trackDur, cur, dur: trackDur }
+}
 
 export function getSleepRemaining() {
   if (!sleepAt) return 0
@@ -25,10 +42,20 @@ export async function renderPlayer(root) {
   }
 
   const kid = state.mode !== 'adult'
+  // 进度条口径（默认单集）
+  progressScope = (await store.get(CONFIG_KEYS.progressScope, 'track')) === 'book' ? 'book' : 'track'
   const meta = c.item.media?.metadata || {}
   const chapters = c.chapters || []
   // 成人模式沿用「进来就能看到章节列表」；儿童模式收起，点 📑 选集 才展开
   chaptersOpen = !kid
+
+  // 这本书是否已在某个收藏夹里（决定心形是实心还是空心）
+  let favState = { on: false, collections: [], itemId: c.item.id }
+  try {
+    const cols = await abs.collections()
+    favState.collections = cols || []
+    favState.on = (cols || []).some(col => (col.books || []).some(b => b.id === c.item.id))
+  } catch (_) { }
 
   const shell = () => `
     <div class="page-head">
@@ -53,8 +80,16 @@ export async function renderPlayer(root) {
         </div>
         <div class="seek-times">
           <span id="tCur">0:00</span>
+          <span id="pWhole" class="seek-whole" style="display:none"></span>
           <span id="tDur">0:00</span>
         </div>
+      </div>
+
+      <div class="player-tools fav-row">
+        <button class="tool-chip ${favState.on ? 'on' : ''}" id="btnFavTop">
+          ${icon('heart', 18)} <span id="favLabel">${favState.on ? '已收藏' : '收藏'}</span>
+        </button>
+        <button class="tool-chip" id="btnBookmark">${icon('bookmark', 18)} 加书签</button>
       </div>
 
       <div class="player-controls">
@@ -72,8 +107,7 @@ export async function renderPlayer(root) {
              <button class="tool-chip" id="btnChapters">${icon('list', 18)} 选集</button>`
           : `<button class="tool-chip" id="btnRate">1.0×</button>
              <button class="tool-chip" id="btnSleep">${icon('timer', 18)} 定时</button>
-             <button class="tool-chip" id="btnFav">${icon('heart', 18)} 收藏</button>
-             <button class="tool-chip" id="btnInfo">${icon('info', 18)} 信息</button>`}
+             <button class="tool-chip" id="btnChaptersA">${icon('list', 18)} 章节</button>`}
       </div>
 
       <div id="extra"></div>
@@ -85,11 +119,20 @@ export async function renderPlayer(root) {
   const seekFill = $('#seekFill'), seekBar = $('#seekBar')
 
   function paintProgress() {
-    const { currentTime, duration } = p.position()
-    const pct = duration ? Math.min(100, (currentTime / duration) * 100) : 0
+    // 按所选口径取区间（默认单集，见 scopeRange）
+    const R = scopeRange()
+    const pct = R.dur ? Math.min(100, (R.cur / R.dur) * 100) : 0
     seekFill.style.width = pct + '%'
-    $('#tCur').textContent = fmtTime(currentTime)
-    $('#tDur').textContent = fmtTime(duration)
+    $('#tCur').textContent = fmtTime(R.cur)
+    $('#tDur').textContent = fmtTime(R.dur)
+    // 单集口径下补一行「整部作品 x%」，不然用户不知道整本还剩多少
+    const whole = $('#pWhole')
+    if (whole) {
+      if (progressScope === 'track' && p.duration) {
+        whole.textContent = '整部作品 ' + Math.round((p.position().currentTime / p.duration) * 100) + '%'
+        whole.style.display = ''
+      } else whole.style.display = 'none'
+    }
     const ch = chapters[p.trackIndex]
     $('#pChapter').textContent = ch?.title || c.tracks[p.trackIndex]?.title || `第 ${p.trackIndex + 1} / ${c.tracks.length} 集`
   }
@@ -117,30 +160,34 @@ export async function renderPlayer(root) {
     window.removeEventListener('mouseup', endDrag)
   }
 
-  $('#btnBack').onclick = () => go(kid ? 'kidhome' : 'shelf')
-  $('#btnPlay').onclick = () => p.toggle()
-  $('#btnPrev').onclick = () => p.prevTrack()
-  $('#btnNext').onclick = () => p.nextTrack()
-  $('#btnR15').onclick = () => p.seek(Math.max(0, p.position().currentTime - 15))
-  $('#btnF15').onclick = () => p.seek(p.position().currentTime + 15)
+  $('#btnBack').onclick = () => { haptic.tap(); go(kid ? 'kidhome' : 'shelf') }
+  $('#btnPlay').onclick = () => { haptic.tap(); p.toggle() }
+  $('#btnPrev').onclick = () => { haptic.tap(); p.prevTrack() }
+  $('#btnNext').onclick = () => { haptic.tap(); p.nextTrack() }
+  $('#btnR15').onclick = () => { haptic.tap(); p.seek(Math.max(0, p.position().currentTime - 15)) }
+  $('#btnF15').onclick = () => { haptic.tap(); p.seek(p.position().currentTime + 15) }
+  $('#btnFavTop').onclick = () => { haptic.tap(); toggleFav() }
+  $('#btnBookmark').onclick = () => { haptic.tap(); addBookmark() }
 
   // 拖动进度条
   let dragging = false
+  let R2 = scopeRange()   // 拖动期间冻结区间，避免中途重算导致跳变
   const seekFromEvent = e => {
     const rect = seekBar.getBoundingClientRect()
     const x = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left
     const ratio = Math.max(0, Math.min(1, x / rect.width))
     seekFill.style.width = (ratio * 100) + '%'
-    $('#tCur').textContent = fmtTime(ratio * (p.duration || 0))
+    $('#tCur').textContent = fmtTime(ratio * R2.dur)
     return ratio
   }
-  const startDrag = e => { dragging = true; seekFromEvent(e) }
+  const startDrag = e => { dragging = true; R2 = scopeRange(); seekFromEvent(e) }
   const moveDrag = e => { if (dragging) { seekFromEvent(e); e.preventDefault?.() } }
   const endDrag = e => {
     if (!dragging) return
     dragging = false
     const ratio = seekFromEvent(e.changedTouches ? { clientX: e.changedTouches[0].clientX } : e)
-    p.seek(ratio * (p.duration || 0))
+    // 按区间映射回全书时间：单集口径下只在本集范围内跳
+    p.seek(R2.from + ratio * R2.dur)
   }
   seekBar.addEventListener('touchstart', startDrag, { passive: true })
   seekBar.addEventListener('touchmove', moveDrag, { passive: false })
@@ -152,6 +199,7 @@ export async function renderPlayer(root) {
   // ---- 倍速 ----
   const rates = [0.75, 1, 1.25, 1.5, 2]
   $('#btnRate').onclick = async () => {
+    haptic.select()
     const cur = p.rate || 1
     const i = rates.indexOf(cur)
     const next = rates[(i + 1) % rates.length]
@@ -164,6 +212,7 @@ export async function renderPlayer(root) {
 
   // ---- 睡眠定时 ----
   $('#btnSleep').onclick = () => {
+    haptic.tap()
     const opts = [15, 30, 45, 60, 0]
     const labels = ['15 分钟', '30 分钟', '45 分钟', '60 分钟', '关闭定时']
     const modal = document.createElement('div')
@@ -186,15 +235,107 @@ export async function renderPlayer(root) {
   }
 
   // ---- 选集 / 成人附加页 ----
-  $('#btnMore').onclick = async () => {
-    // 儿童模式下这个按钮通往设置，必须过家长锁，否则孩子能直接点出去
-    if (kid) {
-      if (await requireParentPin()) go('settings')
-      return
-    }
-    adultTab = adultTab === 'chapters' ? 'info' : 'chapters'
-    chaptersOpen = true
-    renderExtra()
+  // 右上角三个点：打开「当前这一集」的操作菜单。
+  // 之前儿童模式下它直接跳设置页（还得输家长密码），语义完全不对 ——
+  // 三个点在所有播放器里都是"针对当前内容的操作"。
+  $('#btnMore').onclick = () => { haptic.tap(); openEpisodeMenu() }
+
+  /** 当前集的操作菜单（收藏 / 书签 / 选集 / 倍速 / 定时 / 书籍信息） */
+  function openEpisodeMenu() {
+    const ch = chapters[p.trackIndex]
+    const t = c.tracks[p.trackIndex]
+    const curCh = ch?.title || t?.title || `第 ${p.trackIndex + 1} 集`
+    const modal = document.createElement('div')
+    modal.className = 'lock'
+    modal.innerHTML = `<div class="lock-card">
+      <div class="lock-title">${esc(curCh)}</div>
+      <div class="lock-sub">第 ${p.trackIndex + 1} / ${c.tracks.length} 集${t?.duration ? ' · ' + fmtTime(t.duration) : ''}</div>
+      <button class="sheet-item" data-act="fav">
+        <span class="sheet-ic">${icon('heart', 20)}</span>
+        <span class="sheet-label">${favState.on ? '取消收藏' : '收藏这本书'}</span>
+      </button>
+      <button class="sheet-item" data-act="bookmark">
+        <span class="sheet-ic">${icon('bookmark', 20)}</span>
+        <span class="sheet-label">在当前位置加书签</span>
+      </button>
+      <button class="sheet-item" data-act="chapters">
+        <span class="sheet-ic">${icon('list', 20)}</span>
+        <span class="sheet-label">选集</span>
+      </button>
+      <button class="sheet-item" data-act="rate">
+        <span class="sheet-ic">${icon('play', 20)}</span>
+        <span class="sheet-label">播放速度（当前 ${(p.rate || 1)}×）</span>
+      </button>
+      <button class="sheet-item" data-act="sleep">
+        <span class="sheet-ic">${icon('timer', 20)}</span>
+        <span class="sheet-label">睡眠定时</span>
+      </button>
+      <button class="sheet-item" data-act="info">
+        <span class="sheet-ic">${icon('info', 20)}</span>
+        <span class="sheet-label">书籍信息</span>
+      </button>
+    </div>`
+    document.body.appendChild(modal)
+    modal.addEventListener('click', async e => {
+      const b = e.target.closest('[data-act]')
+      if (!b) { if (e.target === modal) modal.remove(); return }
+      const act = b.dataset.act
+      haptic.select()
+      modal.remove()
+      if (act === 'fav') await toggleFav()
+      else if (act === 'bookmark') await addBookmark()
+      else if (act === 'chapters') { chaptersOpen = true; adultTab = 'chapters'; renderExtra(); $('#extra')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
+      else if (act === 'rate') $('#btnRate').click()
+      else if (act === 'sleep') $('#btnSleep').click()
+      else if (act === 'info') { adultTab = 'info'; chaptersOpen = true; renderExtra(); $('#extra')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
+    })
+  }
+
+  /** 收藏 / 取消收藏（切换状态，心形跟着变） */
+  async function toggleFav() {
+    try {
+      let cols = favState.collections
+      if (!cols.length) {
+        cols = await abs.collections()
+        favState.collections = cols
+      }
+      let col = cols.find(x => (x.books || []).some(b => b.id === c.item.id))
+      if (!col) col = cols[0]
+      if (!col) { toast('ABS 里还没有收藏夹，先去服务器建一个'); return }
+      if (favState.on) {
+        await abs.removeFromCollection(col.id, c.item.id)
+        favState.on = false
+        haptic.success()
+        toast('已取消收藏')
+      } else {
+        await abs.addToCollection(col.id, c.item.id)
+        favState.on = true
+        haptic.success()
+        toast('已收藏到「' + col.name + '」')
+      }
+      paintFav()
+    } catch (e) { haptic.error(); toast('收藏失败：' + e.message) }
+  }
+
+  function paintFav() {
+    const b = $('#btnFavTop')
+    if (!b) return
+    b.classList.toggle('on', favState.on)
+    $('#favLabel').textContent = favState.on ? '已收藏' : '收藏'
+  }
+
+  /** 在当前位置加书签（ABS 原生书签，跟 App 内其它客户端同步） */
+  async function addBookmark() {
+    try {
+      const at = Math.floor(p.position().currentTime)
+      const ch = chapters[p.trackIndex]
+      await abs.post(`/api/me/item/${c.item.id}/bookmark`, {
+        time: at,
+        title: (ch?.title ? ch.title + ' ' : '') + fmtTime(at),
+      })
+      haptic.success()
+      toast('已加书签 ' + fmtTime(at))
+    } catch (e) { haptic.error(); toast('加书签失败：' + e.message) }
   }
   if ($('#btnChapters')) {
     // 同样必须用 innerHTML，否则图标被抹掉
@@ -211,15 +352,9 @@ export async function renderPlayer(root) {
       else scrollPlayerIntoView()
     }
   }
-  if ($('#btnInfo')) $('#btnInfo').onclick = () => { adultTab = 'info'; chaptersOpen = true; renderExtra() }
-  if ($('#btnFav')) $('#btnFav').onclick = async () => {
-    try {
-      const cols = await abs.collections()
-      const col = cols[0]
-      if (!col) { toast('ABS 里还没有收藏夹'); return }
-      await abs.addToCollection(col.id, c.item.id)
-      toast('已加入「' + col.name + '」')
-    } catch (e) { toast('收藏失败：' + e.message) }
+  // 成人模式的「章节」按钮（原来这里是 btnInfo / btnFav，已合并进收藏行与三个点菜单）
+  if ($('#btnChaptersA')) {
+    $('#btnChaptersA').onclick = () => { haptic.tap(); adultTab = 'chapters'; chaptersOpen = true; renderExtra(); $('#extra')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
   }
 
   /** 把播放区滚回视野中央：选完章节后用户应看到封面+播放按钮，而不是页面底部的列表 */
@@ -251,6 +386,7 @@ export async function renderPlayer(root) {
         </div>`
       box.querySelectorAll('[data-ch]').forEach(el => {
         el.onclick = async () => {
+          haptic.select()
           const i = parseInt(el.dataset.ch, 10)
           // 正在播时换集：播放器内部会停掉旧音轨再播新的（见 _keepOnly）
           await p.seek(chapters[i].start || 0)

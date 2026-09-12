@@ -146,7 +146,9 @@ input, textarea { user-select: text; -webkit-user-select: text; }
   border-radius: var(--radius);
   overflow: hidden;
   cursor: pointer;
-  transition: transform .14s ease, box-shadow .2s ease;
+  /* 不用 box-shadow / 描边：老板要"不要阴影，跟周围融洽"，
+     靠圆角和间距跟背景区分就够了 */
+  transition: transform .14s ease;
   position: relative;
 }
 .book-card:active { transform: scale(.965); }
@@ -171,18 +173,16 @@ input, textarea { user-select: text; -webkit-user-select: text; }
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
   gap: 0;
-  padding: 8% 8% 8% 12%;
+  padding: 8%;   /* 原来左侧留 12% 是给书脊竖条的，书脊去掉后左右对称 */
   background: linear-gradient(150deg, var(--ph-a), var(--ph-b));
   color: var(--ph-ink);
   text-align: center;
   overflow: hidden;
 }
-/* 左侧书脊：一条窄竖条，像实体书的装订边 */
-.cover-ph-spine {
-  position: absolute; left: 0; top: 0; bottom: 0;
-  width: 7%;
-  background: linear-gradient(90deg, rgba(0,0,0,.42), rgba(0,0,0,.16));
-}
+/* 书脊竖条：老板 2026-09-12 明确要求去掉 ——
+   它在卡片左侧形成一条深色渐变，看着像"书脊阴影"，与周围平面风格不搭。
+   保留元素（cover.js 还在生成）但不渲染，免得逐个调用点去改。 */
+.cover-ph-spine { display: none; }
 /* 字号由 cover.js 按容器尺寸与字数算好，以 cqi 注入（--ph-fs）。
    cqi = 容器宽度的 1%，所以同一套公式在 58px 缩略图和 290px 大图上都成立。 */
 .cover-ph-title {
@@ -218,7 +218,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .cover-ph-player { border-radius: 26px; }
 /* 小尺寸（58px 列表缩略图）把装饰收掉，避免糊；字号已由 cqi 自适应 */
 .cover-ph-list .cover-ph-sub { display: none; }
-.cover-ph-list { padding: 7% 5% 7% 13%; gap: 0; }
+.cover-ph-list { padding: 8%; gap: 0; }
 .cover-ph-list .cover-ph-title { letter-spacing: 0; line-height: 1.15; }
 .book-meta { padding: 11px 12px 13px; }
 .book-title {
@@ -254,7 +254,10 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .continue-card {
   flex: 0 0 200px; background: var(--card);
   border-radius: var(--radius); overflow: hidden; cursor: pointer;
+  position: relative;
 }
+/* 长按删除：按住时轻微下沉，给个明确反馈 */
+.continue-card.longpress { transform: scale(.96); }
 .continue-card:active { transform: scale(.97); }
 .continue-cover { width: 100%; height: 120px; object-fit: cover; }
 .continue-meta { padding: 10px 12px 12px; }
@@ -515,12 +518,84 @@ body[data-tabs="0"] .mini {
 .list-pct { font-size: 12px; color: var(--accent); font-weight: 700; }
 
 .search-bar { display: flex; gap: 9px; margin-bottom: 16px; }
+/* 输入框 + 内嵌话筒：话筒绝对定位在框内右侧，输入框右padding让出位置 */
+.search-field { position: relative; flex: 1; display: flex; }
 .search-bar input {
-  flex: 1; padding: 13px 16px; border: 1.5px solid transparent;
+  flex: 1; padding: 13px 46px 13px 16px; border: 1.5px solid transparent;
   border-radius: var(--radius-sm); background: var(--card); color: var(--text);
-  font-size: 16px; outline: none;
+  font-size: 16px; outline: none; width: 100%;
 }
 .search-bar input:focus { border-color: var(--accent); }
+.search-mic {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 40px; height: 40px; border-radius: 50%;
+  border: none; background: none; color: var(--accent);
+  display: grid; place-items: center; cursor: pointer;
+}
+.search-mic:active { background: rgba(124,92,255,.18); }
+
+/* ---------- 底部弹出的操作菜单（三个月点的 sheet） ---------- */
+.sheet-item {
+  display: flex; align-items: center; gap: 13px; width: 100%;
+  padding: 15px 6px; border: none; background: none;
+  color: var(--text); font-size: 16px; text-align: left; cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+.sheet-item:last-of-type { border-bottom: none; }
+.sheet-item:active { background: rgba(255,255,255,.06); }
+.sheet-ic { display: grid; place-items: center; color: var(--text-dim); flex: 0 0 22px; }
+.sheet-label { flex: 1; }
+
+/* ---------- 统计页 ---------- */
+.day-switch { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 14px; scrollbar-width: none; }
+.day-switch::-webkit-scrollbar { display: none; }
+.day-chip {
+  flex: 0 0 auto; padding: 7px 14px; border-radius: 999px; border: none;
+  background: var(--card); color: var(--text-dim); font-size: 13px; cursor: pointer;
+}
+.day-chip.active { background: var(--accent); color: #fff; font-weight: 700; }
+
+.stat-hero { text-align: center; padding: 22px 0 24px; }
+.stat-total { font-size: 40px; font-weight: 800; letter-spacing: -.5px; }
+.stat-total-label { font-size: 13px; color: var(--text-dim); margin-top: 6px; }
+
+.stat-row { display: flex; align-items: center; gap: 12px; padding: 13px 16px; }
+.stat-row + .stat-row { border-top: 1px solid rgba(255,255,255,.06); }
+.stat-row-label { flex: 0 0 38px; font-size: 14px; }
+.stat-row-bar { flex: 1; height: 8px; border-radius: 4px; background: rgba(255,255,255,.1); overflow: hidden; }
+.stat-row-bar > i { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+.stat-row-val { flex: 0 0 auto; font-size: 13px; color: var(--text-dim); min-width: 76px; text-align: right; }
+
+.stat-book { padding: 14px 16px; }
+.stat-book + .stat-book { border-top: 1px solid rgba(255,255,255,.06); }
+.stat-book-head { display: flex; align-items: baseline; gap: 10px; }
+.stat-book-title { flex: 1; font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat-book-total { font-size: 14px; font-weight: 700; color: var(--accent); flex: 0 0 auto; }
+.stat-session { display: flex; gap: 10px; font-size: 12.5px; color: var(--text-dim); margin-top: 7px; }
+.stat-session-time { flex: 0 0 46px; }
+.stat-session-period { flex: 0 0 34px; }
+.stat-session-dur { flex: 1; }
+
+/* ---------- 缓存页 ---------- */
+.cache-hero { text-align: center; padding: 18px 0 22px; }
+.cache-used { font-size: 34px; font-weight: 800; }
+.cache-used-label { font-size: 13px; color: var(--text-dim); margin-top: 6px; }
+.row-del {
+  border: none; background: none; color: var(--danger);
+  width: 40px; height: 40px; display: grid; place-items: center; cursor: pointer; border-radius: 50%;
+}
+.row-del:active { background: rgba(255,90,120,.15); }
+.row-act { flex: 0 0 auto; display: flex; align-items: center; }
+.row-done { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text-dim); }
+.btn.small { padding: 8px 14px; font-size: 13px; }
+.dl-bar { height: 8px; border-radius: 4px; background: rgba(255,255,255,.12); margin: 16px 0 8px; overflow: hidden; }
+.dl-bar > i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .2s; }
+.dl-pct { font-size: 12.5px; color: var(--text-dim); text-align: center; }
+
+/* 收藏行：心形 + 书签，放在播放控件上方 */
+.fav-row { margin-bottom: 6px; }
+.tool-chip.on { background: rgba(255,122,198,.2); color: var(--accent); border-color: transparent; }
+.seek-whole { color: var(--text-dim); font-size: 11px; }
 
 /* 章节表 */
 .chapter-item {

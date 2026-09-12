@@ -62,6 +62,12 @@ const BODY = {
   sparkle: '<path d="M12 3.4 13.9 9l5.6 1.9-5.6 1.9L12 18.4 10.1 12.8 4.5 10.9 10.1 9z" fill="currentColor"/>',
   loader: '<circle cx="12" cy="12" r="8.4" fill="none" stroke-width="2.4" stroke-dasharray="44 8.8"/>',
   empty: '<path d="M3.8 9.3 5.7 4.9h12.6l1.9 4.4" fill="none"/><path d="M3.8 9.3h4.5l1.2 2.5h5l1.2-2.5h4.5" fill="none"/><path d="M4.9 9.3v8.3a1.8 1.8 0 0 0 1.8 1.8h10.6a1.8 1.8 0 0 0 1.8-1.8V9.3" fill="none"/>',
+
+  // ---- 收藏 / 管理 / 统计 / 缓存 ----
+  bookmark: '<path d="M6.6 3.8h10.8a1 1 0 0 1 1 1v15.4l-6.4-4-6.4 4V4.8a1 1 0 0 1 1-1z" fill="none"/>',
+  trash: '<path d="M4.6 7.2h14.8" fill="none"/><path d="M9.4 7.2V5.4a1.2 1.2 0 0 1 1.2-1.2h2.8a1.2 1.2 0 0 1 1.2 1.2v1.8" fill="none"/><path d="M6.6 7.2l.9 12a1.6 1.6 0 0 0 1.6 1.5h5.8a1.6 1.6 0 0 0 1.6-1.5l.9-12" fill="none"/><path d="M10.4 10.8v6.2M13.6 10.8v6.2" fill="none"/>',
+  chart: '<path d="M4 20.2h16" fill="none"/><rect x="5.6" y="12" width="3.4" height="6.6" rx="1.2" fill="none"/><rect x="10.3" y="7.2" width="3.4" height="11.4" rx="1.2" fill="none"/><rect x="15" y="10" width="3.4" height="8.6" rx="1.2" fill="none"/>',
+  download: '<path d="M12 3.8v11.4" fill="none"/><path d="m7.6 11 4.4 4.4 4.4-4.4" fill="none"/><path d="M4.6 18.6a1.6 1.6 0 0 0 1.6 1.6h11.6a1.6 1.6 0 0 0 1.6-1.6" fill="none"/>',
 }
 
 // 线描类（fill:none + stroke）；其余为实心填充类
@@ -69,6 +75,7 @@ const STROKE = new Set([
   'back15', 'forward15', 'books', 'search', 'back', 'forward', 'mic', 'headphones',
   'timer', 'list', 'heart', 'info', 'check', 'lock', 'person', 'child', 'server',
   'refresh', 'exit', 'warning', 'loader', 'empty',
+  'bookmark', 'trash', 'chart', 'download',
 ])
 
 /**
