@@ -20,10 +20,15 @@
   --radius-sm: 14px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
-  /* 迷你条实际高度（.mini 的 height 必须与它一致，否则底栏抬高量算错、会压住迷你条） */
+  /* 迷你条高度（.mini 的 height 必须与它一致） */
   --mini-h: 58px;
-  /* 迷你条顶边到屏幕底部的距离：安全区 + 下边距 + 自身高度 */
-  --mini-rest: calc(var(--safe-bottom) + 10px + var(--mini-h));
+  /* dock（迷你条 + 底栏）统一底色。
+     用纯色不透明：两块若各带 backdrop-filter，会因背后内容不同而色调略有差异，
+     看着仍像两层。纯色能保证两段像素完全一致。 */
+  --dock-bg: #171436;
+  /* 底部 dock 实测高度（由 app.js 的 syncDockHeight() 写入）。
+     不再手写高度数学 —— 之前因为常量与实际差 1px 反复露缝。 */
+  --dock-h: 0px;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -261,28 +266,23 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .continue-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
 .continue-pct { font-size: 11px; color: var(--text-dim); margin-top: 5px; }
 
-/* ---------- 儿童模式底栏 ---------- */
-/* 底栏自身高度（不含安全区）：上下 padding 8+8 + 图标 24 + 文字约 14 + gap 3 */
-:root { --tabs-h: 60px; }
+/* ---------- 底部 dock：迷你播放条 + 儿童底栏融合成一整块 ---------- */
+.dock {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+  background: var(--dock-bg);
+  /* 顶部一条细高光，区分 dock 与内容；用 inset 阴影不占布局高度 */
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+}
+/* 设计取向：之前迷你条是"左右留边的圆角胶囊浮在底栏上方"，跟底栏那条通栏平面叠在
+   一起很难看。改成主流播放器的做法（Apple Music / Spotify / 网易云）：
+   两块合并成同一个通栏表面，迷你条坐在底栏正上方，同色、同宽、无圆角、无阴影。 */
 .kid-tabs {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
   display: flex; padding: 8px 0 calc(var(--safe-bottom) + 8px);
-  background: rgba(23, 20, 54, .96);
-  backdrop-filter: blur(18px);
-  border-top: 1px solid rgba(255,255,255,.07);
-  /* 迷你播放条出现时把底栏抬起来，否则 mini（z-index 70）会整个盖住底栏按钮，
-     孩子点不到「书架 / 找书 / 设置」。--mini-lift 由 body[data-mini="1"] 设置。 */
-  bottom: var(--mini-lift, 0px);
-  transition: bottom .2s ease;
 }
-/* 迷你条显示时：底栏上移，给 mini 条让位 */
-/* 迷你条出现时把底栏抬到迷你条的正上方（间距 0，避免中间露一条内容） */
-body[data-mini="1"] { --mini-lift: var(--mini-rest); }
-/* 儿童模式底部有底栏（约 78px）：内容底部要留出底栏 + 迷你条，否则最后一行卡片被压 */
-body[data-view="kidhome"] #view,
-body[data-view="search"] #view {
-  padding-bottom: calc(var(--mini-rest) + var(--tabs-h) + 14px);
-}
+
+/* 内容底部留白 = dock 实测高度 + 一点呼吸空间。
+   dock 高度已含安全区，不用再加。 */
+#view { padding-bottom: calc(var(--dock-h) + 20px); }
 /* 播放页：没有底栏也没有迷你条（进播放页会隐藏），不需要为它们留白。
    但内容总高常小于屏幕 → 空白会全堆在底部（看着"下面空一大块"）。
    所以让播放页撑满屏高，用 auto 边距把内容组垂直居中，空白分到上下两侧。
@@ -372,9 +372,9 @@ body[data-view="player"] #extra { margin-bottom: auto; }
 /* ---------- 语音搜索 ---------- */
 .voice-fab {
   position: fixed; right: 18px;
-  /* 底部偏移要跟着底栏一起抬高（body[data-mini] 时 --mini-lift 生效），
-     否则迷你条出现时会压住儿童模式底栏的「设置」 */
-  bottom: calc(var(--mini-rest) + var(--mini-lift, 0px) + 14px);
+  /* FAB 只在儿童模式出现 → 坐在整个 dock 上方。dock 含迷你条后自然变高，
+     用实测高度 --dock-h，FAB 自动跟着抬，不需要分别算迷你条在不在播。 */
+  bottom: calc(var(--dock-h) + 14px);
   width: 62px; height: 62px; border-radius: 50%; z-index: 60;
   border: none; cursor: pointer;
   background: linear-gradient(140deg, var(--accent), var(--accent-2));
@@ -412,40 +412,38 @@ body[data-view="player"] #extra { margin-bottom: auto; }
 
 /* ---------- 迷你播放条 ---------- */
 .mini {
-  position: fixed; left: 10px; right: 10px;
-  bottom: calc(var(--safe-bottom) + 10px);
-  height: 58px; z-index: 70;
+  height: var(--mini-h);
   display: flex; align-items: center; gap: 10px;
-  padding: 0 10px;
-  background: rgba(42, 35, 88, .97);
-  backdrop-filter: blur(18px);
-  border-radius: 18px;
-  box-shadow: 0 8px 26px rgba(0,0,0,.4);
+  padding: 0 12px;
+  /* 与底栏同色同宽、无圆角无阴影 → 和底栏连成一整块 dock */
+  background: var(--dock-bg);
+  border-radius: 0;
   cursor: pointer;
 }
-/* 迷你条下面到屏幕底部是安全区，滚动内容会从那儿透出来，看着像"迷你条浮在半空"。
-   盖一块背板。注意：不能用 .mini::after —— .mini 有 backdrop-filter，
-   按规范它会成为 position:fixed 子元素的包含块，背板会被困在条内（实测无效）。
-   所以用独立兄弟元素 #miniBackdrop（见 index.html）。 */
-#miniBackdrop {
-  position: fixed; left: 0; right: 0; bottom: 0;
-  height: var(--mini-rest);
-  background: var(--bg);
-  z-index: 65;          /* 高于内容、低于迷你条(70)，且能盖住底栏(50) */
-  pointer-events: none;
-  display: none;
+/* 没有底栏时（成人模式）：迷你条自己吃进安全区 */
+body[data-tabs="0"] .mini {
+  height: calc(var(--mini-h) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
 }
-body[data-mini="1"] #miniBackdrop { display: block; }
+/* 没有底栏时（成人模式）：迷你条自己贴底，并把安全区吃进去 */
+body[data-tabs="0"] .mini {
+  height: calc(var(--mini-h) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
+}
+/* 迷你条与底栏融合后，两者之间不再有缝隙，底部也全被覆盖，
+   所以之前那块 #miniBackdrop 背板不再需要（已删除）。 */
 /* 迷你条封面：无封面书要显示占位封面，否则 <img src=""> 会露出"破图"图标 */
 .mini-cover-slot {
   position: relative; width: 42px; height: 42px; flex: 0 0 42px;
   border-radius: 10px; overflow: hidden;
 }
 .mini-cover { width: 100%; height: 100%; object-fit: cover; display: block; position: relative; z-index: 1; }
-.mini-cover-slot .cover-ph { border-radius: 0; }
-.mini-cover-slot .cover-ph { padding: 6%; }
-.mini-cover-slot .cover-ph-title { font-size: 26cqi; line-height: 1.05; letter-spacing: 0; }
-.mini-cover-slot .cover-ph-spine { width: 10%; }
+/* 占位封面在 42px 小图里：去掉书脊竖条（小尺寸下像一道硬边，不好看），
+   只留居中书名，字号按容器宽算 */
+.mini-cover-slot .cover-ph { border-radius: 0; padding: 8%; }
+.mini-cover-slot .cover-ph-spine { display: none; }
+.mini-cover-slot .cover-ph-title { font-size: 27cqi; line-height: 1.05; letter-spacing: 0; }
+.mini-cover-slot .cover-ph-sub { display: none; }
 
 .mini-info { flex: 1; min-width: 0; }
 .mini-title { font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

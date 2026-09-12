@@ -5,6 +5,7 @@ import { voiceSupported } from '../lib/voice.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { icon } from '../lib/icons.js'
+import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 
 let lastQuery = ''
 
@@ -34,14 +35,8 @@ export async function renderSearch(root, params = {}) {
   const input = $('#q'), results = $('#results')
 
   if (kid) {
-    root.insertAdjacentHTML('beforeend', `
-      <div class="kid-tabs">
-        <button class="kid-tab" data-nav="kidhome"><span class="ic">${icon('books', 24)}</span>书架</button>
-        <button class="kid-tab active" data-nav="search"><span class="ic">${icon('search', 24)}</span>找书</button>
-        <button class="kid-tab" data-nav="settings"><span class="ic">${icon('cog', 24)}</span>设置</button>
-      </div>`)
-    root.querySelector('[data-nav="kidhome"]').onclick = () => go('kidhome')
-    root.querySelector('[data-nav="settings"]').onclick = async () => { if (await requireParentPin()) go('settings') }
+    root.insertAdjacentHTML('beforeend', kidTabsHTML('search'))
+    wireKidTabs(root, { go, requireParentPin })
   }
   $('#btnBack').onclick = () => go(kid ? 'kidhome' : 'shelf')
 
@@ -72,6 +67,37 @@ export async function renderSearch(root, params = {}) {
         try { await playItem(it) } catch (e) { toast(e.message || '打开失败') }
       }
     })
+  }
+
+  // 没输入关键词时不要留一大片空白：显示可浏览的书籍列表（主流播放器的做法）
+  const showBrowse = async () => {
+    try {
+      let all = state.items.length ? state.items
+        : (await abs.getLibraryItems(state.libraryId, { limit: 300 }))?.results || []
+      if (!all.length) return
+      results.innerHTML = `<div class="section-h">全部书籍 <small>${all.length} 本</small></div>`
+        + all.map(it => {
+          const m = it.media?.metadata || {}
+          return `<div class="list-item" data-id="${it.id}">
+            <div class="cover-slot">
+              ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
+              <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">
+            </div>
+            <div class="list-main">
+              <div class="list-title">${esc(m.title || '未命名')}</div>
+              <div class="list-sub">${esc(m.authorName || m.narratorName || '')} · ${fmtDur(it.media?.duration)}</div>
+            </div>
+            <div class="list-pct">${icon('play', 15)}</div>
+          </div>`
+        }).join('')
+      wireCoverFallback(results)
+      results.querySelectorAll('[data-id]').forEach(el => {
+        el.onclick = async () => {
+          const it = all.find(x => x.id === el.dataset.id)
+          try { await playItem(it) } catch (e) { toast(e.message || '打开失败') }
+        }
+      })
+    } catch (_) { /* 拉不到就保持空白，不打扰用户 */ }
   }
 
   const doSearch = async (q) => {
@@ -106,5 +132,7 @@ export async function renderSearch(root, params = {}) {
   })
 
   if (initialQ) { input.value = initialQ; doSearch(initialQ) }
+  else await showBrowse()
+
   updateMini()
 }

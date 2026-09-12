@@ -4,6 +4,7 @@ import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini }
 import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { icon } from '../lib/icons.js'
+import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 
 let cache = { items: [], at: 0, libraryId: null }
 
@@ -85,10 +86,10 @@ export async function renderShelf(root, { kid }) {
       </div>`
   }
 
+  // 儿童模式：设置入口只留底栏那个（右上角齿轮去掉，两个入口重复）
   const head = kid
     ? `<div class="page-head">
          <div class="page-title">我的书架</div>
-         <button class="icon-btn" id="btnGear" aria-label="设置">${icon('cog', 21)}</button>
        </div>`
     : `<div class="page-head">
          <button class="icon-btn" id="btnBack" aria-label="返回">${icon('back', 22)}</button>
@@ -150,24 +151,22 @@ export async function renderShelf(root, { kid }) {
          : `<div class="shelf-list">${items.map(rowHTML).join('')}</div>`)
 
   if (kid) {
-    root.insertAdjacentHTML('beforeend', `
-      <button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>
-      <div class="kid-tabs">
-        <button class="kid-tab active" data-nav="kidhome"><span class="ic">${icon('books', 24)}</span>书架</button>
-        <button class="kid-tab" data-nav="search"><span class="ic">${icon('search', 24)}</span>找书</button>
-        <button class="kid-tab" data-nav="settings"><span class="ic">${icon('cog', 24)}</span>设置</button>
-      </div>`)
-    root.querySelector('[data-nav="search"]').onclick = () => go('search')
-    root.querySelector('[data-nav="settings"]').onclick = async () => { if (await requireParentPin()) go('settings') }
+    root.insertAdjacentHTML('beforeend',
+      `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>`
+      + kidTabsHTML('kidhome'))
+    wireKidTabs(root, { go, requireParentPin })
   } else {
     root.querySelector('#btnSearch').onclick = () => go('search')
     root.querySelector('#btnBack').onclick = () => go('kidhome')
   }
-  if (kid) {
-    root.querySelector('#btnGear').onclick = async () => { if (await requireParentPin()) go('settings') }
-  } else {
+  // 儿童模式的设置入口只有底栏那个（右上角齿轮已去掉，避免两个入口重复），
+  // 所以这里要判空 —— 之前直接 .onclick 会抛错、整页渲染失败、被踢回登录页。
+  const gear = root.querySelector('#btnGear')
+  if (gear) {
     // 成人模式直接进设置（自己人用，不用家长锁）
-    root.querySelector('#btnGear').onclick = () => go('settings')
+    gear.onclick = kid
+      ? async () => { if (await requireParentPin()) go('settings') }
+      : () => go('settings')
   }
 
   // 无封面的书用占位封面兜底

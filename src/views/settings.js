@@ -4,6 +4,7 @@ import { store, CONFIG_KEYS } from '../lib/store.js'
 import { state, go, toast, esc, requireParentPin, stopCurrent, updateMini } from '../app.js'
 import { voiceSupported } from '../lib/voice.js'
 import { icon } from '../lib/icons.js'
+import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 import { checkVoicePermission, requestVoicePermission, openSystemSettings, onAppResume } from '../lib/permissions.js'
 
 export async function renderSettings(root, { firstRun = false } = {}) {
@@ -104,6 +105,8 @@ export async function renderSettings(root, { firstRun = false } = {}) {
     <div class="hint" style="margin-top:8px">
       听书 v${typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '—'} · 音频来自你自己的 Audiobookshelf 服务器
     </div>
+
+    ${state.mode !== 'adult' ? kidTabsHTML('settings') : ''}
   `
 
   const $ = s => root.querySelector(s)
@@ -111,6 +114,8 @@ export async function renderSettings(root, { firstRun = false } = {}) {
   // 返回一律回到当前模式的主页（成人→书架，儿童→儿童书架）
   const goHome = () => go(state.mode === 'adult' ? 'shelf' : 'kidhome')
   $('#btnBack').onclick = goHome
+  // 儿童模式的三页签要跟书架/搜索页一致（之前这里没有底栏，只有左上角返回）
+  wireKidTabs(root, { go, requireParentPin })
 
   // ---- 语音权限：显示实时状态 + 重新申请 + 跳设置 ----
   const micState = $('#micState')

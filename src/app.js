@@ -88,7 +88,35 @@ export async function go(name, params = {}) {
   root.innerHTML = ''
   await fn(root, params)
   currentCleanup = typeof root._cleanup === 'function' ? root._cleanup : null
+  // 把底栏从 #view 移进底部 dock 容器（和迷你条同一个表面 → 视觉上连成一整块）。
+  // 在这一个地方处理，各视图只管往 root 里插 .kid-tabs 即可。
+  const tabsEl = root.querySelector('.kid-tabs')
+  const dock = $('#dock')
+  if (tabsEl && dock) dock.appendChild(tabsEl)
+  document.body.dataset.tabs = tabsEl ? '1' : '0'
   updateMini()
+  syncDockHeight()
+}
+
+/** 把 dock 的真实高度写进 --dock-h，供内容底部留白与 FAB 定位使用。
+ *  之前是手写 calc(--safe-bottom + --mini-h + --tabs-h + ...)，常量一改就错位、
+ *  差 1px 就露缝；手动调用又容易漏（迷你条显隐、安全区变化都会改高度）。
+ *  所以用 ResizeObserver 盯着它，高度一变就更新，永远准确。 */
+function syncDockHeight() {
+  const dock = $('#dock')
+  if (!dock) return
+  const h = dock.getBoundingClientRect().height
+  document.documentElement.style.setProperty('--dock-h', h + 'px')
+}
+
+function watchDock() {
+  const dock = $('#dock')
+  if (!dock || dock._saWatched) return
+  dock._saWatched = true
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(syncDockHeight).observe(dock)
+  }
+  syncDockHeight()
 }
 
 // ---------------- 家长锁 ----------------
@@ -227,10 +255,14 @@ export async function stopCurrent() {
 // ---------------- 迷你条 ----------------
 function updateMini() {
   const mini = $('#mini'), c = state.current, p = state.player
-  // data-mini 让 CSS 知道"迷你条显示了"，据此把儿童模式底栏抬起来（否则被盖住点不到）
-  const liftOff = () => { document.body.dataset.mini = '0' }
-  if (!c || !p) { mini.classList.add('hidden'); liftOff(); return }
-  if (document.body.dataset.view === 'player') { mini.classList.add('hidden'); liftOff(); return }
+  // data-mini 让 CSS 知道"迷你条显示了"，据此调整内容底部留白
+  const hide = () => {
+    document.body.dataset.mini = '0'
+    mini.classList.add('hidden')
+    syncDockHeight()
+  }
+  if (!c || !p) { hide(); return }
+  if (document.body.dataset.view === 'player') { hide(); return }
 
   mini.classList.remove('hidden')
   document.body.dataset.mini = '1'
@@ -253,6 +285,7 @@ function updateMini() {
   const chapter = c.chapters[p.trackIndex]?.title || t?.title || ''
   $('#miniSub').textContent = p.playing ? '正在播放 · ' + chapter : '已暂停 · ' + chapter
   $('#miniToggle').innerHTML = icon(p.playing ? 'pause' : 'play', 17)
+  syncDockHeight()
 }
 
 export { updateMini }
@@ -322,6 +355,11 @@ route('settings', async (root) => {
 
 // ---------------- 全局事件 ----------------
 window.addEventListener('DOMContentLoaded', () => {
+  // dock 高度自动同步（内容留白与 FAB 都依赖 --dock-h）
+  watchDock()
+  window.addEventListener('resize', syncDockHeight)
+  window.addEventListener('orientationchange', syncDockHeight)
+
   // 静态图标：迷你条三个按钮 + 启动闪屏（index.html 里只留空容器，图标由这里注入）
   $('#miniPrev').innerHTML = icon('prev', 19)
   $('#miniNext').innerHTML = icon('next', 19)

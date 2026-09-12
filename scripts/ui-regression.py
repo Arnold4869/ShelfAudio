@@ -1,33 +1,91 @@
 #!/usr/bin/env python3
 """
 UI 回归检查（真实渲染）——把审计中发现的 UI 问题固化成断言，防退化。
-覆盖：占位封面裁切、底部固定层重叠、成人/儿童布局差异、文本溢出。
+
+为什么要真渲染：UI 问题（字号不缩放、底栏被遮挡、元素重叠）靠读 CSS 推断
+极易出错。本轮读 CSS 时漏掉多处，一上 Chromium 就暴露。
+
+前置：
+  cp scripts/ui-fixtures.json 到工作区（默认 ./scripts/ui-fixtures.json）
+  起静态服务：python3 -m http.server 8899 -d dist
+  装浏览器：/tmp/pwenv/bin/python -m playwright install chromium
+
+用法：
+  python3 scripts/ui-regression.py [--base http://127.0.0.1:8899] [--fixtures scripts/ui-fixtures.json]
 """
-import json, pathlib, re, sys
+import argparse, json, pathlib, re, sys
 from playwright.sync_api import sync_playwright
 
-BASE = 'http://127.0.0.1:8899/index.html'
-FX = json.loads(pathlib.Path('/tmp/abs-fixtures.json').read_text())
-TOKEN = pathlib.Path('/tmp/tok.txt').read_text().strip()
+HERE = pathlib.Path(__file__).resolve().parent
+ROOT = HERE.parent
+
+ap = argparse.ArgumentParser()
+ap.add_argument('--base', default='http://127.0.0.1:8899')
+ap.add_argument('--fixtures', default=str(HERE / 'ui-fixtures.json'))
+ap.add_argument('--token', default='')
+args = ap.parse_args()
+
+BASE = args.base.rstrip('/') + '/index.html'
+FX = json.loads(pathlib.Path(args.fixtures).read_text())
+# token 无处可取时用占位符：路由已被拦截，不会真的发给服务器
+TOKEN = args.token or 'test-token-not-used'
 PNG = bytes.fromhex('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082')
 
 PASS = FAIL = 0
 def ok(name, cond, extra=''):
     global PASS, FAIL
-    if cond: PASS += 1; print(f"  ✅ {name}")
-    else: FAIL += 1; print(f"  ❌ {name}{' — ' + extra if extra else ''}")
+    if cond:
+        PASS += 1; print(f"  ✅ {name}")
+    else:
+        FAIL += 1; print(f"  ❌ {name}{' — ' + extra if extra else ''}")
+
+
+MULTI = FX.get('__multiId')
+
+
+def _play_body(lid):
+    """按 ABS 的 /play 结构合成 audioTracks（真实响应里是 audioTracks，不是 tracks）"""
+    item = FX.get('/api/items/%s' % lid) or FX.get('/api/items/%s' % MULTI) or {}
+    media = item.get('media') or {}
+    tracks, off = [], 0.0
+    for i, af in enumerate(media.get('audioFiles') or []):
+        d = af.get('duration') or 0
+        tracks.append({'index': i + 1, 'startOffset': off, 'duration': d,
+                       'contentUrl': '/api/items/%s/file/%s' % (lid, af.get('ino', '1')),
+                       'title': '第%d集' % (i + 1), 'mimeType': 'audio/mpeg'})
+        off += d
+    if not tracks:
+        tracks = [{'index': 1, 'startOffset': 0, 'duration': 3600,
+                   'contentUrl': '/api/items/%s/file/1' % lid,
+                   'title': '第1集', 'mimeType': 'audio/mpeg'}]
+        off = 3600
+    return json.dumps({'id': 's1', 'audioTracks': tracks, 'duration': off,
+                       'libraryItem': {'id': lid, 'media': media}})
+
 
 def routes(pg):
     def h(route):
-        p = re.sub(r'^https?://[^/]+', '', route.request.url).split('?')[0]
+        req = route.request
+        p = re.sub(r'^https?://[^/]+', '', req.url).split('?')[0]
         if p in FX:
             return route.fulfill(status=200, content_type='application/json', body=json.dumps(FX[p]))
         if p.endswith('/cover'):
             return route.fulfill(status=200, content_type='image/png', body=PNG)
+        if p.endswith('/play'):
+            try:
+                lid = (json.loads(req.post_data or '{}') or {}).get('libraryItemId') or MULTI
+            except Exception:
+                lid = MULTI
+            return route.fulfill(status=200, content_type='application/json', body=_play_body(lid))
+        if p.startswith('/api/me/progress/'):
+            return route.fulfill(status=200, content_type='application/json', body='{}')
+        if '/file/' in p:
+            return route.fulfill(status=200, content_type='audio/mpeg', body=b'')
         route.fulfill(status=200, content_type='application/json', body='{}')
     pg.route('**/api/**', h)
 
-def newpg(br, mode, vp={'width':390,'height':844}):
+
+def newpg(br, mode, vp={'width': 390, 'height': 844}):
     ctx = br.new_context(viewport=vp, device_scale_factor=2, is_mobile=True, has_touch=True)
     pg = ctx.new_page(); routes(pg)
     pg.add_init_script(f"""
@@ -40,63 +98,79 @@ def newpg(br, mode, vp={'width':390,'height':844}):
     pg.goto(BASE); pg.wait_for_timeout(1500)
     return ctx, pg
 
+
+def overlap_area(a, b):
+    if not a or not b:
+        return 0
+    ox = max(0, min(a['right'], b['right']) - max(a['left'], b['left']))
+    oy = max(0, min(a['bottom'], b['bottom']) - max(a['top'], b['top']))
+    return ox * oy
+
+
+def rect(pg, sel):
+    return pg.evaluate("""(s)=>{const e=document.querySelector(s); if(!e) return null;
+      const r=e.getBoundingClientRect();
+      return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,w:r.width,h:r.height};}""", sel)
+
+
 with sync_playwright() as pw:
     br = pw.chromium.launch()
 
-    print("\n=== 1. 占位封面文字不被裁切（每种尺寸、全部 41 本）===")
+    print("\n=== 1. 占位封面文字不被裁切（全部书 × 两种模式）===")
     for mode in ['kid', 'adult']:
         ctx, pg = newpg(br, mode)
         r = pg.evaluate("""() => {
           const bad = [];
-          document.querySelectorAll('.cover-ph').forEach((ph,i) => {
+          document.querySelectorAll('.cover-ph').forEach((ph) => {
             const t = ph.querySelector('.cover-ph-title');
             if (!t) return;
             const rp = ph.getBoundingClientRect(), rt = t.getBoundingClientRect();
-            const clipped = t.scrollHeight > t.clientHeight + 1;
-            const belowTop = rt.top < rp.top - 0.5;
-            const aboveBottom = rt.bottom > rp.bottom + 0.5;
-            const wider = t.scrollWidth > t.clientWidth + 1;
-            if (clipped || belowTop || aboveBottom || wider)
-              bad.push({i, text:t.textContent.slice(0,10), fs:getComputedStyle(t).fontSize,
-                        clipped, belowTop, aboveBottom, wider});
+            if (t.scrollHeight > t.clientHeight + 1 || rt.top < rp.top - 0.5 ||
+                rt.bottom > rp.bottom + 0.5 || t.scrollWidth > t.clientWidth + 1)
+              bad.push(t.textContent.slice(0, 10));
           });
           return {total: document.querySelectorAll('.cover-ph').length, bad};
         }""")
-        ok(f"[{mode}] {r['total']} 个占位封面全部放得下", len(r['bad']) == 0, json.dumps(r['bad'][:3], ensure_ascii=False))
+        ok(f"[{mode}] {r['total']} 个占位封面全部放得下", len(r['bad']) == 0,
+           json.dumps(r['bad'][:3], ensure_ascii=False))
         ctx.close()
 
-    print("\n=== 2. 儿童模式：底栏/FAB/迷你条互不遮挡 ===")
+    print("\n=== 2. 儿童模式：底栏 / FAB / 迷你条 互不遮挡 ===")
     ctx, pg = newpg(br, 'kid')
-    tabs = pg.evaluate("()=>{const e=document.querySelector('.kid-tabs');const r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom}}")
-    fab  = pg.evaluate("()=>{const e=document.querySelector('.voice-fab');if(!e)return null;const r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom}}")
+    tabs = rect(pg, '.kid-tabs')
+    fab = rect(pg, '.voice-fab')
     ok("底栏存在", tabs is not None)
-    ok("FAB 在底栏上方（不遮挡）", fab and fab['bottom'] <= tabs['top'] + 1,
+    ok("FAB 在底栏上方", bool(fab and tabs and fab['bottom'] <= tabs['top'] + 1),
        f"FAB底={fab['bottom'] if fab else None} 底栏顶={tabs['top'] if tabs else None}")
 
-    # 模拟迷你条出现
     pg.evaluate("""() => {
       document.querySelector('#mini').classList.remove('hidden');
       document.body.dataset.mini = '1';
-      document.querySelector('#miniTitle').textContent = '测试';
-      document.querySelector('#miniSub').textContent = '正在播放';
+      document.querySelector('#miniTitle').textContent = '测试书';
+      document.querySelector('#miniSub').textContent = '已暂停';
     }""")
     pg.wait_for_timeout(400)
-    g = pg.evaluate("""() => {
-      const q = s => { const e=document.querySelector(s); if(!e) return null; const r=e.getBoundingClientRect(); return {top:r.top,bottom:r.bottom,left:r.left,right:r.right}; };
-      return {tabs:q('.kid-tabs'), mini:q('#mini'), fab:q('.voice-fab')};
-    }""")
-    def ov(a,b):
-        if not a or not b: return 0
-        ox=max(0,min(a['right'],b['right'])-max(a['left'],b['left']))
-        oy=max(0,min(a['bottom'],b['bottom'])-max(a['top'],b['top']))
-        return ox*oy
-    ok("迷你条与底栏不重叠", ov(g['mini'], g['tabs']) <= 1, f"面积={ov(g['mini'], g['tabs'])}")
-    ok("迷你条与 FAB 不重叠", ov(g['mini'], g['fab']) <= 1, f"面积={ov(g['mini'], g['fab'])}")
-    ok("FAB 抬到底栏上方", g['fab'] and g['fab']['bottom'] <= g['tabs']['top'] + 1,
-       f"FAB底={g['fab']['bottom'] if g['fab'] else None} 底栏顶={g['tabs']['top']}")
-
-    print("\n=== 3. 儿童/成人模式布局必须不同 ===")
+    mini = rect(pg, '#mini'); tabs2 = rect(pg, '.kid-tabs'); fab2 = rect(pg, '.voice-fab')
+    ok("迷你条与底栏不重叠", overlap_area(mini, tabs2) <= 1,
+       f"面积={overlap_area(mini, tabs2)}")
+    ok("迷你条与 FAB 不重叠", overlap_area(mini, fab2) <= 1,
+       f"面积={overlap_area(mini, fab2)}")
+    ok("FAB 抬到底栏上方", bool(fab2 and tabs2 and fab2['bottom'] <= tabs2['top'] + 1),
+       f"FAB底={fab2['bottom'] if fab2 else None} 底栏顶={tabs2['top'] if tabs2 else None}")
+    ok("迷你条与底栏紧贴（无缝隙露内容）", abs(tabs2['top'] - mini['bottom']) <= 1.5,
+       f"间隙={tabs2['top'] - mini['bottom']:.1f}px")
+    # 新的 dock 设计：迷你条坐在底栏正上方，整个 dock 贴底（不再是浮在底部 10px 的胶囊）
+    ok("整个 dock 贴底（底边贴屏底）", abs(844 - max(mini['bottom'], tabs2['bottom'])) <= 1.5,
+       f"dock 底边离屏底={844 - max(mini['bottom'], tabs2['bottom']):.1f}px")
+    # 迷你条与底栏已融合成一整块，底部由 dock 自己铺满，不再需要背板补缝。
+    # 这里改成验证"dock 一直铺到屏底"，等价但更贴合新设计。
+    ok("dock 铺满到屏幕底部（安全区无透色）", abs(tabs2['bottom'] - 844) <= 1.5,
+       f"底栏底边={tabs2['bottom']:.1f}")
+    ok("迷你条与底栏之间无缝隙", abs(tabs2['top'] - mini['bottom']) <= 1.5,
+       f"接缝={tabs2['top'] - mini['bottom']:.1f}px")
     ctx.close()
+
+    print("\n=== 3. 儿童/成人布局必须不同 ===")
     ctx, pg = newpg(br, 'kid')
     kid_grid = pg.evaluate("!!document.querySelector('.shelf-grid')")
     kid_list = pg.evaluate("!!document.querySelector('.shelf-list')")
@@ -108,40 +182,139 @@ with sync_playwright() as pw:
     ad_rows = pg.evaluate("document.querySelectorAll('.shelf-list .list-item').length")
     ok("成人模式用列表（不是网格）", ad_list and not ad_grid, f"grid={ad_grid} list={ad_list}")
     ok("成人列表渲染出条目", ad_rows > 0, f"{ad_rows} 行")
-    nxt = pg.evaluate("()=>{const e=document.querySelector('.kid-tabs'); const f=document.querySelector('.voice-fab'); return {tabs:!!e, fab:!!f}}")
+    nxt = pg.evaluate("()=>({tabs:!!document.querySelector('.kid-tabs'),"
+                      "fab:!!document.querySelector('.voice-fab')})")
     ok("成人模式无底栏/无 FAB", not nxt['tabs'] and not nxt['fab'], json.dumps(nxt))
 
-    print("\n=== 4. 成人列表行的进度尾标与内容不溢出 ===")
+    print("\n=== 4. 列表文本要么放得下、要么正确省略号截断 ===")
     r = pg.evaluate("""() => {
       const bad = [];
-      const usesEllipsis = e => {
-        const c = getComputedStyle(e);
-        return c.textOverflow === 'ellipsis' && c.whiteSpace === 'nowrap';
-      };
-      document.querySelectorAll('.shelf-list .list-item').forEach((el,i) => {
-        const t = el.querySelector('.list-title'), s = el.querySelector('.list-sub');
-        // 用了省略号截断是设计如此；没做截断却溢出容器才是 bug
-        if (t && t.scrollWidth > t.clientWidth + 1 && !usesEllipsis(t)) bad.push({i, which:'title', text:t.textContent.slice(0,14)});
-        if (s && s.scrollWidth > s.clientWidth + 1 && !usesEllipsis(s)) bad.push({i, which:'sub', text:s.textContent.slice(0,20)});
+      const ellipsis = e => { const c = getComputedStyle(e);
+        return c.textOverflow === 'ellipsis' && c.whiteSpace === 'nowrap'; };
+      document.querySelectorAll('.shelf-list .list-item').forEach((el, i) => {
+        for (const sel of ['.list-title', '.list-sub']) {
+          const e = el.querySelector(sel);
+          if (e && e.scrollWidth > e.clientWidth + 1 && !ellipsis(e))
+            bad.push({i, sel, text: e.textContent.slice(0, 18)});
+        }
       });
       return bad;
     }""")
-    ok("标题/副标题要么放得下、要么正确省略号截断", len(r) == 0, json.dumps(r[:3], ensure_ascii=False))
+    ok("无未截断的溢出", len(r) == 0, json.dumps(r[:3], ensure_ascii=False))
     ctx.close()
 
-    print("\n=== 5. 版本号来自 VERSION 文件（不再是写死的 v0.1.0）===")
+    print("\n=== 5. 图标：全部自绘 SVG，界面无 emoji ===")
+    for mode in ['kid', 'adult']:
+        ctx, pg = newpg(br, mode)
+        n_svg = pg.evaluate("document.querySelectorAll('svg.ic-svg').length")
+        leftover = pg.evaluate("""() => [...document.querySelectorAll('*')]
+          .filter(e => e.children.length === 0 && e.textContent.includes('${icon(')).length""")
+        emoji = pg.evaluate("""() => {
+          const isEmoji = ch => { const o = ch.codePointAt(0);
+            return (o >= 0x1F000 && o <= 0x1FAFF) || (o >= 0x2300 && o <= 0x27BF) ||
+                   (o >= 0x2B00 && o <= 0x2BFF) || o === 0xFE0F; };
+          const bad = [];
+          document.querySelectorAll('button, .kid-tab, .mini-btn, .icon-btn, .setting-ic, .glyph')
+            .forEach(e => { for (const ch of (e.textContent || ''))
+              if (isEmoji(ch)) { bad.push({t: e.textContent.trim().slice(0, 12), ch}); break; } });
+          return bad;
+        }""")
+        ok(f"[{mode}] 渲染出 {n_svg} 个自绘图标", n_svg > 0)
+        ok(f"[{mode}] 无未求值的 ${{icon( 残留", leftover == 0, f"{leftover} 处")
+        ok(f"[{mode}] 按钮里无 emoji", len(emoji) == 0, json.dumps(emoji[:3], ensure_ascii=False))
+        ctx.close()
+
+    print("\n=== 6. 播放页底部空白已收敛 ===")
+    ctx, pg = newpg(br, 'kid')
+    # 点到具体某本书（.book-card 可能被占位封面盖住，直接点它的容器）
+    pg.evaluate("document.querySelector('.shelf-grid .book-card')?.click()")
+    pg.wait_for_timeout(2600)
+    if pg.evaluate("document.body.dataset.view") == 'player':
+        g = pg.evaluate("""() => {
+          const last = document.querySelector('#extra') || document.querySelector('.player-tools');
+          const r = last ? last.getBoundingClientRect() : null;
+          const first = document.querySelector('.player-cover-wrap');
+          const fr = first ? first.getBoundingClientRect() : null;
+          return {clientH: document.documentElement.clientHeight,
+                  lastBottom: r ? r.bottom : null, firstTop: fr ? fr.top : null};
+        }""")
+        if g['lastBottom']:
+            below = g['clientH'] - g['lastBottom']
+            ok("底部留白 < 150px（修前 197px 全堆底部）", below < 150, f"留白 {below:.0f}px")
+            ok("留白上下均衡（顶部也有空白）", g['firstTop'] > 20, f"顶部 {g['firstTop']:.0f}px")
+    else:
+        ok("进入播放页", False, "没能进入 player 视图")
+    ctx.close()
+
+    print("\n=== 7. 设置页版本号来自 VERSION 文件 ===")
     ctx, pg = newpg(br, 'adult')
     pg.evaluate("document.querySelector('#btnGear')?.click()")
     pg.wait_for_timeout(900)
-    print("  当前 view:", pg.evaluate("document.body.dataset.view"))
     ver = pg.evaluate("(document.body.innerText.match(/听书 v([\\d.]+)/)||[])[1] || null")
-    print("  设置页渲染版本:", ver)
     ok("设置页显示真实版本（非写死的 0.1.0）", bool(ver) and ver != '0.1.0', f"ver={ver}")
     ents = pg.evaluate("document.querySelectorAll('.setting-row').length")
     ok("设置页渲染出行项", ents > 0, f"{ents} 行")
     ctx.close()
 
+
+    print("\n=== 8. 底部 dock 融合（迷你条 + 底栏）===")
+    ctx, pg = newpg(br, 'kid')
+    pg.evaluate("window.scrollTo(0, 800)")
+    pg.evaluate("""() => {
+      document.querySelector('#mini').classList.remove('hidden');
+      document.body.dataset.mini = '1';
+      document.querySelector('#miniTitle').textContent = '测试书';
+      document.querySelector('#miniSub').textContent = '正在播放';
+    }""")
+    pg.wait_for_timeout(500)
+    d = rect(pg, '#dock'); m = rect(pg, '#mini'); t = rect(pg, '.kid-tabs'); f = rect(pg, '.voice-fab')
+    ok("迷你条与底栏紧贴（无缝，接缝 0）", bool(m and t and abs(t['top'] - m['bottom']) <= 1.5),
+       f"接缝={t['top'] - m['bottom']:.1f}px" if m and t else "")
+    ok("迷你条与底栏同宽同色（看起来是一整块）", bool(m and t and
+       m['left'] == t['left'] and m['right'] == t['right']), "")
+    ok("迷你条无圆角（与底栏同一平面）", pg.evaluate(
+        "getComputedStyle(document.querySelector('#mini')).borderTopLeftRadius") == '0px')
+    ok("FAB 在 dock 上方不遮挡", bool(f and d and f['bottom'] <= d['top'] + 1),
+       f"FAB底={f['bottom'] if f else None} dock顶={d['top'] if d else None}")
+    ok("--dock-h 已被写入（供留白与 FAB 定位）", pg.evaluate(
+        "parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dock-h'))") > 0)
+    ctx.close()
+
+    print("\n=== 9. 儿童模式三页导航一致 + 主页无重复设置入口 ===")
+    ctx, pg = newpg(br, 'kid')
+    ok("主页右上角没有重复的齿轮（设置入口只留底栏）",
+       not pg.evaluate("!!document.querySelector('#btnGear')"))
+    ok("主页有底栏", pg.evaluate("!!document.querySelector('.kid-tabs')"))
+    pg.evaluate("document.querySelector('[data-nav=\"search\"]')?.click()")
+    pg.wait_for_timeout(1200)
+    ok("搜索页有底栏", pg.evaluate("!!document.querySelector('.kid-tabs')"))
+    ok("搜索页初始不是一片空白（显示可浏览列表）",
+       pg.evaluate("document.querySelectorAll('#results .list-item').length") > 0)
+    ctx.close()
+
+    ctx, pg = newpg(br, 'kid')
+    pg.evaluate("document.querySelector('[data-nav=\"settings\"]')?.click()")
+    pg.wait_for_timeout(800)
+    pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+    pg.wait_for_timeout(1400)
+    ok("设置页也有底栏（与其他页一致）", pg.evaluate("!!document.querySelector('.kid-tabs')"),
+       "view=" + str(pg.evaluate("document.body.dataset.view")))
+    ok("设置页底栏高亮「设置」",
+       (pg.evaluate("document.querySelector('.kid-tab.active')?.textContent.trim()") or '') == '设置')
+    ctx.close()
+
+    print("\n=== 10. 顶部/底部无白色安全区条带 ===")
+    for mode in ['kid', 'adult']:
+        ctx, pg = newpg(br, mode)
+        px_top = pg.evaluate("""() => {
+          const b = document.body, h = document.documentElement;
+          return getComputedStyle(b).backgroundColor + '|' + getComputedStyle(h).backgroundColor;
+        }""")
+        ok(f"[{mode}] HTML/body 底色为深色（不会露白）",
+           'rgb(15, 13, 32)' in px_top or 'rgb(23, 20, 54)' in px_top, px_top)
+        ctx.close()
+
     br.close()
 
-print(f"\n{'='*46}\n结果：{PASS} 通过 / {FAIL} 失败")
+print(f"\n{'=' * 46}\n结果：{PASS} 通过 / {FAIL} 失败")
 sys.exit(1 if FAIL else 0)

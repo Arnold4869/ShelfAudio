@@ -13,8 +13,9 @@
     "allowMixedContent": true
   },
   "ios": {
-    "contentInset": "always",
-    "limitsNavigationsToAppBoundDomains": false
+    "contentInset": "never",
+    "limitsNavigationsToAppBoundDomains": false,
+    "backgroundColor": "#0f0d20"
   },
   "plugins": {
     "NativeAudio": {
@@ -23,5 +24,6 @@
     "CapacitorHttp": {
       "enabled": true
     }
-  }
+  },
+  "backgroundColor": "#0f0d20"
 }
