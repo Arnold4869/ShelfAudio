@@ -81,8 +81,11 @@ with sync_playwright() as pw:
 
     print("\n=== A. 进度条默认单集 + 慢速断言 ===")
     ctx, pg, errs = mk(br, 'kid')
-    pg.evaluate("document.querySelector('.book-card')?.click()")
-    pg.wait_for_timeout(2600)
+    for _ in range(3):
+        pg.evaluate("document.querySelector('.book-card')?.click()")
+        pg.wait_for_timeout(2200)
+        if pg.evaluate("document.body.dataset.view") == 'player':
+            break
     ok("能进播放页", pg.evaluate("document.body.dataset.view") == 'player',
        pg.evaluate("document.body.dataset.view"))
     # 进度条时间：默认应是单集时长（不是全书累计）
@@ -95,8 +98,10 @@ with sync_playwright() as pw:
 
     print("\n=== B. 收藏按钮 + 三个点菜单 ===")
     ctx, pg, errs = mk(br, 'kid')
-    pg.evaluate("document.querySelector('.book-card')?.click()")
-    pg.wait_for_timeout(2600)
+    for _ in range(3):
+        pg.evaluate("document.querySelector('.book-card')?.click()")
+        pg.wait_for_timeout(2600)
+        if pg.evaluate("document.body.dataset.view") == 'player': break
     ok("播放页有心形收藏按钮", pg.evaluate("!!document.querySelector('#btnFavTop')"))
     # 老板要求：收藏和书签重复，只要收藏
     ok("播放页没有重复的书签按钮", not pg.evaluate("!!document.querySelector('#btnBookmark')"))
@@ -118,21 +123,23 @@ with sync_playwright() as pw:
     ok("菜单无 JS 报错", not errs, str(errs[:2]))
     ctx.close()
 
-    print("\n=== C. 继续听：按最后播放时间倒序 ===")
+    print("\n=== C. 历史记录页按最后播放时间倒序（首页已无预览列表，口径移到历史页断言）===")
     ctx, pg, errs = mk(br, 'kid')
+    pg.evaluate("document.querySelector('#historyEntryCard')?.click()")
+    pg.wait_for_timeout(1800)
     order = pg.evaluate("""() => {
       const me = %s;
       const mp = {};
       (me.mediaProgress||[]).forEach(p => { mp[p.libraryItemId||p.mediaItemId] = p; });
-      return [...document.querySelectorAll('.continue-item')].map(el => {
+      return [...document.querySelectorAll('[data-hist]')].map(el => {
         const p = mp[el.dataset.id];
         return { id: el.dataset.id, ts: (p&&p.lastUpdate)||0 };
       });
     }""" % json.dumps(FX.get('/api/me', {})))
-    print("     卡片顺序:", [(o['id'][:8], o['ts']) for o in order])
+    print("     记录顺序:", [(o['id'][:8], o['ts']) for o in order])
     ts = [o['ts'] for o in order]
-    ok("继续听按时间倒序（最近在最前）", ts == sorted(ts, reverse=True), str(ts))
-    ok("继续听卡片存在", len(order) > 0)
+    ok("历史记录按时间倒序（最近在最前）", ts == sorted(ts, reverse=True), str(ts))
+    ok("历史记录有内容", len(order) > 0)
     ctx.close()
 
     print("\n=== D. 搜索框内话筒 ===")
@@ -311,8 +318,10 @@ with sync_playwright() as pw:
 
     print("\n=== K. 播放页布局与选集弹窗（老板 2026-09-13）===")
     ctx, pg, errs = mk(br, 'kid')
-    pg.evaluate("document.querySelector('.book-card')?.click()")
-    pg.wait_for_timeout(2600)
+    for _ in range(3):
+        pg.evaluate("document.querySelector('.book-card')?.click()")
+        pg.wait_for_timeout(2600)
+        if pg.evaluate("document.body.dataset.view") == 'player': break
     ok("能进播放页", pg.evaluate("document.body.dataset.view") == 'player')
     # 1) 播放页没有底栏（全屏播放器；之前残留上一页底栏压住倍速/定时/选集）
     ok("播放页没有底部导航条（不遮挡下方按钮）",
@@ -360,7 +369,7 @@ with sync_playwright() as pw:
     # 样式：应为 .list-item 列表行，且不再有横排卡片
     n_card = pg.evaluate("document.querySelectorAll('.continue-card').length")
     n_item = pg.evaluate("document.querySelectorAll('.continue-item').length")
-    ok("继续听已改列表行（无横排卡片）", n_card == 0 and n_item > 0,
+    ok("首页无继续听列表（入口化后移除）", n_card == 0,
        f"cards={n_card} items={n_item}")
     # 列表行高度一致性：取前两个条目比较高度
     hs = pg.evaluate("[...document.querySelectorAll('.continue-item')].slice(0,3).map(e=>Math.round(e.getBoundingClientRect().height))")
@@ -371,10 +380,9 @@ with sync_playwright() as pw:
     # 等大：两个按钮宽度一致
     w = pg.evaluate("[document.querySelector('#historyEntryCard'), document.querySelector('#favEntryCard')].map(e=>Math.round(e.getBoundingClientRect().width))")
     ok("两入口按钮等宽", len(w) == 2 and w[0] == w[1], str(w))
-    # 列表预览只显示 3 条（完整列表进历史页）
-    n = pg.evaluate("document.querySelectorAll('.continue-item').length")
-    ok("首页历史预览只显示 3 条", n == 3, f"n={n}")
-    ok("分区标题已改名「历史记录」", '历史记录' in (pg.evaluate("document.querySelector('.section-h')?.textContent") or ''))
+    # 老板 2026-09-14 晚间：首页不再有第二个历史记录（预览列表已删）
+    n = pg.evaluate("document.querySelectorAll('.continue-item, .section-h').length")
+    ok("首页无第二个历史记录（无预览列表）", n == 0, f"n={n}")
     ctx.close()
 
     print("\n=== M. 历史记录页（老板 2026-09-14）===")

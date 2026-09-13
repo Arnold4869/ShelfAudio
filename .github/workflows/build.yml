@@ -37,6 +37,8 @@ jobs:
 
       - name: Card size consistency (Playwright)
         run: python3 scripts/test-card-size.py
+      - name: Chapter sheet virtualization (Playwright)
+        run: python3 scripts/test-chapter-sheet.py
       - name: Old WebView compat (Playwright)
         run: python3 scripts/test-old-webview.py
       - name: Android XML checks
@@ -160,6 +162,8 @@ jobs:
 
       - name: Card size consistency (Playwright)
         run: python3 scripts/test-card-size.py
+      - name: Chapter sheet virtualization (Playwright)
+        run: python3 scripts/test-chapter-sheet.py
       - name: Old WebView compat (Playwright)
         run: python3 scripts/test-old-webview.py
       - name: Android XML checks

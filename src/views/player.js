@@ -151,7 +151,10 @@ export async function renderPlayer(root) {
   paintProgress(); paintState()
 
   // ---- 事件 ----
-  const onTime = () => { if (document.body.dataset.view === 'player') { paintProgress(); updateMini() } }
+  // 性能（2026-09-14 审计）：sa:time 每秒触发一次。播放页里迷你条本来就是隐藏的，
+// updateMini 每秒跑一遍（读 DOM、改 class、算 dock 高度）纯属白做 —— 去掉。
+// 迷你条的状态在 onState（播放/暂停切换，低频）时更新就够。
+const onTime = () => { if (document.body.dataset.view === 'player') paintProgress() }
   const onState = () => { paintState(); updateMini() }
   const onTrack = () => { paintProgress(); renderExtra() }
   window.addEventListener('sa:time', onTime)
@@ -476,22 +479,75 @@ export async function renderPlayer(root) {
         <div class="sheet-title">选集 <span class="sheet-count">共 ${chapters.length} 集</span></div>
         <button class="icon-btn" id="chClose" aria-label="关闭">${icon('back', 20)}</button>
       </div>
-      <div class="sheet-body" id="chList">
-        ${chapters.map((ch, i) => `
-          <div class="chapter-item ${i === p.trackIndex ? 'active' : ''}" data-ch="${i}">
-            <div class="chapter-idx">${i + 1}</div>
-            <div class="chapter-title">${esc(ch.title || '第 ' + (i + 1) + ' 集')}</div>
-            <div class="chapter-dur">${fmtTime((ch.end || 0) - (ch.start || 0))}</div>
-          </div>`).join('')}
-      </div>
+      <div class="sheet-body"><div id="chList"></div></div>
     </div>`
     document.body.appendChild(modal)
 
-    // 打开时把当前集滚到可视区中间（536 集的书，否则要自己翻很久）
+    // ⚠️ chList（内容层）必须独立于 .sheet-body（滚动层）：
+    // 虚拟渲染要在一个「总高 536×行高」的内容容器里绝对定位行，
+    // 滚动监听/scrollTop 都属于外面的滚动层。合并成一层会导致
+    // list.parentElement 变成不滚动的 .sheet-card，滚动补画永不触发。
     const list = modal.querySelector('#chList')
-    const act = list.querySelector('.chapter-item.active')
-    if (act) requestAnimationFrame(() => {
-      try { act.scrollIntoView({ block: 'center' }) } catch (_) {}
+
+    // 性能（2026-09-14 审计）：536 集一次性渲染 = 2149 个 DOM 节点 + 28ms 布局
+    //（桌面 Chrome 实测；小米 8SE 的老 WebView 会放大 3~5 倍，弹窗打开明显顿）。
+    // 改成按需渲染：只画可视区附近 ±PAGE 条，滚动时增量补画。行高固定（CSS 已定），
+    // 用一个总高容器 + 绝对定位窗口，滚动条长度始终正确。
+    // kid 模式（App 只有 kid）行高 76px，与 CSS .sheet-body .chapter-item 的 height 一致
+    const ROW_H = 76
+    const PAGE = 30                       // 一次补画 30 条（约一屏半）
+    let paintedFrom = -1, paintedTo = -1  // 当前已画的 [from, to) 区间
+    const chItem = (i) => {
+      const ch = chapters[i]
+      return `<div class="chapter-item ${i === p.trackIndex ? 'active' : ''}" data-ch="${i}"
+                style="position:absolute;top:${i * ROW_H}px;left:0;right:0">
+          <div class="chapter-idx">${i + 1}</div>
+          <div class="chapter-title">${esc(ch.title || '第 ' + (i + 1) + ' 集')}</div>
+          <div class="chapter-dur">${fmtTime((ch.end || 0) - (ch.start || 0))}</div>
+        </div>`
+    }
+    const paint = (from, to) => {
+      // 需要覆盖的范围（clamp + 多画一页余量）
+      from = Math.max(0, from - PAGE)
+      to = Math.min(chapters.length, to + PAGE)
+      if (from === paintedFrom && to === paintedTo) return
+      // 在已画区间内就只画缺的部分，不清重来（避免滚动闪烁）
+      if (paintedFrom >= 0 && from >= paintedFrom && to <= paintedTo + PAGE * 2) {
+        if (from < paintedFrom) list.insertAdjacentHTML('afterbegin',
+          chapters.slice(from, paintedFrom).map((_, i) => chItem(from + i)).join(''))
+        if (to > paintedTo) list.insertAdjacentHTML('beforeend',
+          chapters.slice(paintedTo, to).map((_, i) => chItem(paintedTo + i)).join(''))
+      } else {
+        list.innerHTML = chapters.slice(from, to).map((_, i) => chItem(from + i)).join('')
+      }
+      paintedFrom = from; paintedTo = to
+    }
+    // 总高容器：滚动条长度与完整 536 集一致
+    list.style.position = 'relative'
+    list.style.height = chapters.length * ROW_H + 'px'
+
+    const visible = () => {
+      const st = list.parentElement.scrollTop   // sheet-body 才是滚动容器
+      const h = list.parentElement.clientHeight
+      const from = Math.max(0, Math.floor(st / ROW_H) - 2)
+      const to = Math.min(chapters.length, Math.ceil((st + h) / ROW_H) + 2)
+      paint(from, to)
+    }
+    // 滚动容器是 .sheet-body（list 的父级）。scroll 事件不冒泡到 window，
+    // 必须直接绑在容器上；rAF 合帧避免 536 集快速滑动时 paint 风暴。
+    list.parentElement.addEventListener('scroll', () => requestAnimationFrame(visible), { passive: true })
+
+    // 首画：定位到当前集附近（打开弹窗就看到当前集，且首画只有 ~60 条）
+    const cur = Math.max(0, p.trackIndex)
+    const firstFrom = Math.max(0, cur - PAGE)
+    const firstTo = Math.min(chapters.length, firstFrom + PAGE * 2)
+    paint(firstFrom, firstTo)
+    // 打开时把当前集滚到可视区中间（536 集的书，否则要自己翻很久）
+    requestAnimationFrame(() => {
+      try {
+        list.parentElement.scrollTop = Math.max(0, cur * ROW_H - list.parentElement.clientHeight / 2)
+        visible()
+      } catch (_) {}
     })
 
     const close = () => modal.remove()
@@ -499,14 +555,15 @@ export async function renderPlayer(root) {
     // 点遮罩关闭
     modal.addEventListener('click', e => { if (e.target === modal) close() })
 
-    list.querySelectorAll('[data-ch]').forEach(el => {
-      el.onclick = async () => {
-        haptic.select()
-        const i = parseInt(el.dataset.ch, 10)
-        close()
-        // 正在播时换集：播放器内部会停旧音轨再播新的（见 _keepOnly）
-        await p.seek(chapters[i].start || 0)
-      }
+    // 事件委托：列表长，逐条绑 onclick 会建 536 个闭包；绑在容器上一个就够
+    list.addEventListener('click', async e => {
+      const el = e.target.closest('[data-ch]')
+      if (!el) return
+      haptic.select()
+      const i = parseInt(el.dataset.ch, 10)
+      close()
+      // 正在播时换集：播放器内部会停旧音轨再播新的（见 _keepOnly）
+      await p.seek(chapters[i].start || 0)
     })
   }
   /** 把播放区滚回视野中央：选完章节后用户应看到封面+播放按钮，而不是页面底部的列表 */

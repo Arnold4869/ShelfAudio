@@ -12,6 +12,7 @@ import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 import { haptic } from '../lib/haptics.js'
 import { cacheSize, cachedBooks, fmtBytes } from '../lib/offline.js'
+import { voiceHidden, setVoiceHidden } from '../lib/ui-prefs.js'
 
 export async function renderSettings(root, { firstRun = false } = {}) {
   let cacheUsed = 0, cacheCount = 0
@@ -48,6 +49,14 @@ export async function renderSettings(root, { firstRun = false } = {}) {
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
+      <div class="setting-row" id="rowVoice">
+        <div class="setting-ic">${icon('mic', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">语音搜索按钮</div>
+          <div class="setting-value" id="voiceVal">${voiceHidden() ? '已隐藏' : '已显示'}</div>
+        </div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
+      </div>
       <div class="setting-row" id="rowParent">
         <div class="setting-ic">${icon('lock', 22)}</div>
         <div class="setting-main">
@@ -81,6 +90,19 @@ export async function renderSettings(root, { firstRun = false } = {}) {
   $('#rowCache').onclick = () => { haptic.tap(); go('cache') }
 
   // 家长设置：进之前验密码。没设过密码就直接进（否则用户永远进不去）。
+  // 语音按钮显隐（老板 2026-09-14）：点一下切换，立刻生效（下次渲染视图就不显示）
+  $('#rowVoice').onclick = async () => {
+    haptic.tap()
+    const next = !voiceHidden()
+    await setVoiceHidden(next)
+    $('#voiceVal').textContent = next ? '已隐藏' : '已显示'
+    // 已经在页面上的语音按钮立即跟着变，不用等重进页面
+    document.querySelectorAll('.voice-fab, .search-mic').forEach(el => {
+      el.style.display = next ? 'none' : ''
+    })
+    toast(next ? '已隐藏语音按钮' : '已显示语音按钮')
+  }
+
   $('#rowParent').onclick = async () => {
     haptic.tap()
     if (state.kidPin) {

@@ -81,12 +81,16 @@ export async function go(name, params = {}) {
     try { currentCleanup() } catch (_) {}
     currentCleanup = null
   }
-  // 离开页面时关掉语音浮层，避免它挂着麦克风
-  document.querySelectorAll('.voice-overlay').forEach(e => e.remove())
-  try {
-    const { forceStopCurrent } = await import('./lib/voice.js')
-    await forceStopCurrent()
-  } catch (_) {}
+  // 离开页面时关掉语音浮层，避免它挂着麦克风。
+  // 性能（2026-09-14 审计）：动态 import + 桥调用每次切页都跑。语音浮层没打开时
+  // （绝大多数切页），两个都白做 —— 浮层存在才需要清理。
+  if (document.querySelector('.voice-overlay')) {
+    document.querySelectorAll('.voice-overlay').forEach(e => e.remove())
+    try {
+      const { forceStopCurrent } = await import('./lib/voice.js')
+      await forceStopCurrent()
+    } catch (_) {}
+  }
 
   // 旧底栏**先留在 dock 上**，等新页面 render 完再处理 ——
   // 之前是先删掉旧的，新底栏要等 render（可能含网络 await）完才出现，
@@ -119,8 +123,14 @@ function syncDockHeight() {
   const dock = $('#dock')
   if (!dock) return
   const h = dock.getBoundingClientRect().height
+  // 性能（2026-09-14 审计）：写 CSS 自定义属性会让整棵树的样式失效并触发重算。
+  // 这个函数在播放中由 updateMini 每秒调用一次，值其实几乎不变 ——
+  // 值相同就跳过，省掉每秒一次的全树样式重算。
+  if (h === _lastDockH) return
+  _lastDockH = h
   document.documentElement.style.setProperty('--dock-h', h + 'px')
 }
+let _lastDockH = -1
 
 function watchDock() {
   const dock = $('#dock')
@@ -321,20 +331,37 @@ function updateMini() {
   const slot = $('#miniCoverSlot')
   const cov = $('#miniCover')
   if (slot) {
-    const old = slot.querySelector('.cover-ph')
-    if (old) old.remove()
-    slot.insertAdjacentHTML('afterbegin',
-      fallbackCover({ title: c.title, cls: 'cover-ph-mini' }))
-    cov.onload = () => { cov.style.opacity = '1' }
-    cov.onerror = () => { cov.removeAttribute('src'); cov.style.opacity = '0' }
-    cov.style.opacity = '0'
-    if (c.cover) cov.src = c.cover
+    // 性能（2026-09-14 审计）：原来无条件 remove + insertAdjacentHTML 重建占位封面，
+    // 而 updateMini 在每次播放/暂停/缓冲状态变化时都会跑 —— 白建 DOM，
+    // 还会让封面图重复解码闪一下。只在"换了一本书"时重建。
+    const sig = c.item?.id || c.title || ''
+    if (slot._saCoverSig !== sig) {
+      slot._saCoverSig = sig
+      const old = slot.querySelector('.cover-ph')
+      if (old) old.remove()
+      slot.insertAdjacentHTML('afterbegin',
+        fallbackCover({ title: c.title, cls: 'cover-ph-mini' }))
+      cov.onload = () => { cov.style.opacity = '1' }
+      cov.onerror = () => { cov.removeAttribute('src'); cov.style.opacity = '0' }
+      cov.style.opacity = '0'
+      if (c.cover) cov.src = c.cover
+    }
   }
-  $('#miniTitle').textContent = c.title
+  // 文本只在真的变了才写（写 textContent 会失效该节点的渲染缓存）
+  const titleEl = $('#miniTitle')
+  if (titleEl.textContent !== c.title) titleEl.textContent = c.title
   const t = c.tracks[p.trackIndex]
   const chapter = c.chapters[p.trackIndex]?.title || t?.title || ''
-  $('#miniSub').textContent = p.playing ? '正在播放 · ' + chapter : '已暂停 · ' + chapter
-  $('#miniToggle').innerHTML = icon(p.playing ? 'pause' : 'play', 17)
+  const sub = p.playing ? '正在播放 · ' + chapter : '已暂停 · ' + chapter
+  const subEl = $('#miniSub')
+  if (subEl.textContent !== sub) subEl.textContent = sub
+  // 图标是 innerHTML 重建（解析 + 重绘），只在播放态翻转时换
+  const toggle = $('#miniToggle')
+  const wantIcon = p.playing ? 'pause' : 'play'
+  if (toggle._saIcon !== wantIcon) {
+    toggle._saIcon = wantIcon
+    toggle.innerHTML = icon(wantIcon, 17)
+  }
   syncDockHeight()
 }
 
@@ -446,6 +473,10 @@ route('cache', async (root) => {
 // ---------------- 全局事件 ----------------
 window.addEventListener('DOMContentLoaded', () => {
   initHaptics().catch(() => {})
+  // 显示偏好（语音按钮显隐等）：要赶在第一个视图渲染前生效，boot 阶段异步读一次。
+  // 极端时序下（偏好还没读完就渲染）按钮会先显示、读到后再隐藏 —— 可接受，
+  // 因为绝大多数情况 Preferences 读取得比书架接口快。
+  import('./lib/ui-prefs.js').then(m => m.loadUiPrefs()).catch(() => {})
   // dock 高度自动同步（内容留白与 FAB 都依赖 --dock-h）
   watchDock()
   window.addEventListener('resize', syncDockHeight)

@@ -61,5 +61,6 @@ export const CONFIG_KEYS = {
   kidLibraryIds: 'kidLibraryIds',
   haptics: 'haptics',                   // 触感反馈开关 '1' | '0'
   progressScope: 'progressScope',       // 进度条口径 'track'（单集，默认）| 'book'（整部作品）
+  hideVoice: 'hideVoice',               // 隐藏语音搜索按钮 '1' | '0'（老板 2026-09-14）
   listeningLog: 'listeningLog',         // 收听时长记录（JSON 数组）
 }

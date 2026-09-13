@@ -3,7 +3,8 @@ import { abs } from '../lib/api.js'
 import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini } from '../app.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
-import { listContinueLocal, removeContinueLocal } from '../lib/continue-local.js'
+import { listContinueLocal } from '../lib/continue-local.js'
+import { voiceHidden, uiPrefsReady } from '../lib/ui-prefs.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 import { haptic } from '../lib/haptics.js'
@@ -29,9 +30,13 @@ export async function renderShelf(root) {
 
   let items = []
   try {
-    // 缓存只用于「同一会话内快速返回」，且很短（3 秒）：
-    // 原来 60 秒会导致刚听完的书回到书架仍显示旧进度
-    if (cache.libraryId === state.libraryId && Date.now() - cache.at < 3000 && cache.items.length) {
+    // 缓存策略（2026-09-14 性能审计后重定）：
+    // 纯靠短 TTL 不行 —— 3 秒几乎永不命中（回书架都要重新 4 个请求、白等几百毫秒），
+    // 60 秒又不刷新进度（2026-09-13 老板报过"刚听完的书回到书架还显示旧进度"）。
+    // 方案：列表本体缓存 60 秒（书单很少变），但进度显示一律以随后的
+    // me() 实时结果为准（progressMap 每次都新拉，22ms 级），两全。
+    // 长按删除等改数据的操作已自带 cache.at = 0 强制失效。
+    if (cache.libraryId === state.libraryId && Date.now() - cache.at < 60000 && cache.items.length) {
       items = cache.items
     } else {
       const d = await abs.getLibraryItems(state.libraryId, { limit: 200, sort: 'media.metadata.title' })
@@ -54,19 +59,19 @@ export async function renderShelf(root) {
   // 所以本地按 progressLastUpdate 再排一次；该字段缺失时退回 mediaProgress.lastUpdate。
   let inProgress = []
   let progressMapEarly = {}
-  try {
-    const me = await abs.me()
-    for (const mp of (me?.mediaProgress || [])) {
-      const id = mp.libraryItemId || mp.mediaItemId
-      if (id) progressMapEarly[id] = mp
-    }
-  } catch (_) { }
-  // 本地补记：playItem 起播瞬间就写入（服务端 items-in-progress 要等会话同步才出现，
-  // 老板 2026-09-14 要求"第一时间播放就出现在最上面"）。本地记录排最前，去重按 id。
-  const localCont = await listContinueLocal()
+  // 性能（2026-09-14 审计）：me() 和 itemsInProgress() 原来串行（两次 RTT 相加），
+  // 两者互不依赖 → Promise.all 并行，书架渲染少等一个往返。
+  const localCont = await listContinueLocal()   // 本地读，先做（极快）
+  const _meP = abs.me().catch(() => null)
+  const _ipP = abs.itemsInProgress().catch(() => null)
+  const me = await _meP
+  for (const mp of (me?.mediaProgress || [])) {
+    const id = mp.libraryItemId || mp.mediaItemId
+    if (id) progressMapEarly[id] = mp
+  }
   const serverIds = new Set()
   try {
-    const raw = await abs.itemsInProgress()
+    const raw = await _ipP
     inProgress = (raw || [])
       .map(it => {
         const mp = progressMapEarly[it.id]
@@ -137,32 +142,11 @@ export async function renderShelf(root) {
   // 无封面的书只显示占位图的一小截，带图标的又不一样，观感很乱。
   // 沿用 App 里通用的 .list-item 列表样式（与收藏/缓存/搜索结果一致），
   // 高度统一、信息一行一列，不依赖封面比例。
-  // 历史记录（原「继续听」）：列表里只露最近 3 条（老板 2026-09-14「不要都显示出来」），
-  // 完整列表点上方「历史记录」入口看。入口与「我的收藏」等大并排在最上方。
-  const PREVIEW = 3
-  const historyPreview = inProgress.slice(0, PREVIEW)
-  const continueHTML = entryHTML + `
-    <div class="section-h">历史记录 <small>长按移除</small></div>
-    <div class="continue-list">
-      ${historyPreview.map(it => {
-        const m = it.media?.metadata || {}
-        const libItemId = it.id
-        const prog = progressMap[libItemId]
-        const pct = prog && prog.duration ? Math.round((prog.currentTime || 0) / prog.duration * 100) : 0
-        const shown = prog?.isFinished ? '已听完' : (pct > 0 ? `已听 ${pct}%` : '未开始')
-        return `<div class="list-item continue-item" data-id="${libItemId}" data-continue="1">
-          <div class="cover-slot">
-            ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
-            <img class="list-cover" data-cover src="${abs.coverUrl(libItemId, { width: 160 })}" alt="" loading="lazy">
-          </div>
-          <div class="list-main">
-            <div class="list-title">${esc(m.title || '未命名')}</div>
-            <div class="list-sub">${esc(m.authorName || m.narratorName || '')}</div>
-          </div>
-          <div class="list-pct">${shown}</div>
-        </div>`
-      }).join('')}
-    </div>`
+  // ⚠️ 首页不再放历史记录预览列表（老板 2026-09-14：「首页现在有两个历史记录，
+  // 把第二个那个占用大的历史记录去掉」）。原来这里是「入口按钮 + 小节标题 + 3 条预览」，
+  // 等于同一件事出现两次，而且预览列表很占竖向空间。现在只留顶部那两枚入口按钮，
+  // 点「历史记录」进完整清单页。
+  const continueHTML = entryHTML
 
   // （原来这里有一套"成人模式紧凑列表"分支，随模式分类一起移除了）
   const rowHTML = (it) => {
@@ -191,8 +175,10 @@ export async function renderShelf(root) {
   root.innerHTML = head + continueHTML +
     `<div class="shelf-grid">${items.map(it => cardHTML(it, true)).join('')}</div>`
 
+  await uiPrefsReady()   // 先确保偏好读完，按钮显隐不闪
+  // 语音按钮：设置页可隐藏（老板 2026-09-14：「加个开关…可以隐藏语音按钮」）
   root.insertAdjacentHTML('beforeend',
-    `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>`
+    (voiceHidden() ? '' : `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>`)
     + kidTabsHTML('kidhome'))
   wireKidTabs(root, { go, requireParentPin })
 
@@ -213,10 +199,6 @@ export async function renderShelf(root) {
 
   // 点击书籍
   root.querySelectorAll('[data-id]').forEach(el => {
-    // 长按 = 从「继续听」里删掉这条记录（只在继续听卡片上生效）
-    if (el.dataset.continue === '1') {
-      wireLongPress(el, () => confirmRemoveFromContinue(el.dataset.id))
-    }
     el.addEventListener('click', async () => {
       if (el._longPressed) { el._longPressed = false; return }   // 长按已处理，别再当点击
       haptic.tap()
@@ -233,60 +215,4 @@ export async function renderShelf(root) {
   })
 
   updateMini()
-}
-
-/**
- * 长按（600ms）触发。触摸/鼠标都支持。
- * 设 el._longPressed，让随后的 click 不要再触发一次普通点击 —— 否则长按删除后
- * 手指抬起会顺带把这本书打开。
- */
-function wireLongPress(el, fn) {
-  let timer = null
-  const start = () => {
-    clearTimeout(timer)
-    el.classList.add('longpress')
-    timer = setTimeout(() => {
-      timer = null
-      el._longPressed = true
-      el.classList.remove('longpress')
-      haptic.heavy()
-      fn()
-    }, 600)
-  }
-  const cancel = () => { clearTimeout(timer); timer = null; el.classList.remove('longpress') }
-  el.addEventListener('touchstart', start, { passive: true })
-  el.addEventListener('touchend', cancel)
-  el.addEventListener('touchcancel', cancel)
-  el.addEventListener('touchmove', cancel, { passive: true })
-  el.addEventListener('mousedown', start)
-  el.addEventListener('mouseup', cancel)
-  el.addEventListener('mouseleave', cancel)
-}
-
-/** 二次确认后把这本书从「继续听」移除（ABS 端一起改，不只是本机隐藏） */
-async function confirmRemoveFromContinue(itemId) {
-  const modal = document.createElement('div')
-  modal.className = 'lock'
-  modal.innerHTML = `<div class="lock-card">
-    <div class="lock-title">从「继续听」移除？</div>
-    <div class="lock-sub">这本书的收听进度会被清空，书架里还在。服务器上也会一起改。</div>
-    <div class="lock-actions">
-      <button class="btn ghost" id="rmCancel">取消</button>
-      <button class="btn danger" id="rmOk">移除</button>
-    </div>
-  </div>`
-  document.body.appendChild(modal)
-  modal.querySelector('#rmCancel').onclick = () => modal.remove()
-  modal.querySelector('#rmOk').onclick = async () => {
-    modal.remove()
-    try {
-      // 本地补记也要一起删，否则重新渲染时它会从本地列表里冒出来（假复活）
-      try { await removeContinueLocal(itemId) } catch (_) {}
-      await abs.removeFromContinue(itemId)
-      haptic.success()
-      toast('已从继续听移除')
-      cache.at = 0   // 让书架重新拉取
-      await go('kidhome')
-    } catch (e) { haptic.error(); toast('移除失败：' + e.message) }
-  }
 }

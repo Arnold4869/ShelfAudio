@@ -576,7 +576,14 @@ body[data-tabs="0"] .mini {
   border-radius: var(--radius-sm); margin-bottom: 10px; cursor: pointer;
 }
 .list-item:active { background: var(--card); }
-.list-cover { width: 58px; height: 58px; border-radius: 10px; object-fit: cover; flex: 0 0 58px; background: var(--card); }
+.list-cover {
+  width: 58px; height: 58px; border-radius: 10px; object-fit: cover;
+  flex: 0 0 58px; background: var(--card);
+  /* 必须在占位封面之上：.cover-ph 是 position:absolute;z-index:0，
+     而定位元素永远画在普通文档流元素上面 —— 不提升就会永远只看到占位图。
+     （与播放页 .player-cover 的修复同源，见 styles.css 里那段注释） */
+  position: relative; z-index: 1;
+}
 .list-main { flex: 1; min-width: 0; }
 .list-title { font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -631,7 +638,15 @@ body[data-tabs="0"] .mini {
   padding: 6px 12px 4px;
 }
 /* 弹窗里的章节行复用 .chapter-item，但间距收紧一些（536 集要滚得动） */
-.sheet-body .chapter-item { padding: 12px 8px; margin-bottom: 2px; border-radius: 12px; }
+/* 弹窗里的章节行是虚拟渲染（只画可视区），行高必须固定（ROW_H = 64px 与 JS 一致）：
+   标题压成一行省略（两行会让行高不定、虚拟定位错位）。 */
+.sheet-body .chapter-item {
+  padding: 10px 8px; margin-bottom: 0; border-radius: 12px;
+  height: 64px; box-sizing: border-box;
+}
+.sheet-body .chapter-title { -webkit-line-clamp: 1; display: block; white-space: nowrap; }
+/* kid 模式行高更大（ROW_H = 76px） */
+body.kid .sheet-body .chapter-item { height: 76px; }
 .sheet-body .chapter-item:active { background: rgba(255,255,255,.05); }
 .sheet-body .chapter-item.active { background: rgba(124,92,255,.18); }
 

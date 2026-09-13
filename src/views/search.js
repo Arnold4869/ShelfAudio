@@ -1,5 +1,6 @@
 /** 搜索页：文字 + 语音（语音走同一入口，识别结果可当指令也可当关键词） */
 import { abs } from '../lib/api.js'
+import { voiceHidden, uiPrefsReady } from '../lib/ui-prefs.js'
 import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini } from '../app.js'
 import { voiceSupported } from '../lib/voice.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
@@ -11,6 +12,7 @@ import { haptic } from '../lib/haptics.js'
 let lastQuery = ''
 
 export async function renderSearch(root, params = {}) {
+  await uiPrefsReady()   // 确保「语音按钮隐藏」偏好已读，按钮显隐不闪
   const kid = true   // 只有一种模式（老板要求取消儿童/成人分类）
   const initialQ = params.q || lastQuery
 
@@ -24,12 +26,12 @@ export async function renderSearch(root, params = {}) {
       <div class="search-field">
         <input id="q" type="search" placeholder="输入书名，或说“我要听示例故事甲”" value="${esc(lastQuery)}"
                autocapitalize="off" autocorrect="off" enterkeyhint="search" />
-        ${voiceSupported() ? `<button class="search-mic" data-voice="1" aria-label="语音搜索">${icon('mic', 20)}</button>` : ''}
+        ${(voiceSupported() && !voiceHidden()) ? `<button class="search-mic" data-voice="1" aria-label="语音搜索">${icon('mic', 20)}</button>` : ''}
       </div>
       <button class="btn" id="btnGo" style="padding:13px 18px">搜索</button>
     </div>
     <div id="results"></div>
-    ${kid ? `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>` : ''}
+    ${(kid && !voiceHidden()) ? `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>` : ''}
   `
 
   const $ = s => root.querySelector(s)
