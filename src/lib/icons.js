@@ -67,6 +67,8 @@ const BODY = {
   bookmark: '<path d="M6.6 3.8h10.8a1 1 0 0 1 1 1v15.4l-6.4-4-6.4 4V4.8a1 1 0 0 1 1-1z" fill="none"/>',
   trash: '<path d="M4.6 7.2h14.8" fill="none"/><path d="M9.4 7.2V5.4a1.2 1.2 0 0 1 1.2-1.2h2.8a1.2 1.2 0 0 1 1.2 1.2v1.8" fill="none"/><path d="M6.6 7.2l.9 12a1.6 1.6 0 0 0 1.6 1.5h5.8a1.6 1.6 0 0 0 1.6-1.5l.9-12" fill="none"/><path d="M10.4 10.8v6.2M13.6 10.8v6.2" fill="none"/>',
   chart: '<path d="M4 20.2h16" fill="none"/><rect x="5.6" y="12" width="3.4" height="6.6" rx="1.2" fill="none"/><rect x="10.3" y="7.2" width="3.4" height="11.4" rx="1.2" fill="none"/><rect x="15" y="10" width="3.4" height="8.6" rx="1.2" fill="none"/>',
+  bell: '<path d="M18.4 15.6V10a6.4 6.4 0 1 0-12.8 0v5.6l-1.8 2.6h16.4z" fill="none"/><path d="M10 20.6a2.2 2.2 0 0 0 4 0" fill="none"/>',
+  clock: '<circle cx="12" cy="12" r="8.6" fill="none"/><path d="M12 7.2V12l3.4 2.2" fill="none"/>',
   download: '<path d="M12 3.8v11.4" fill="none"/><path d="m7.6 11 4.4 4.4 4.4-4.4" fill="none"/><path d="M4.6 18.6a1.6 1.6 0 0 0 1.6 1.6h11.6a1.6 1.6 0 0 0 1.6-1.6" fill="none"/>',
 }
 
@@ -75,7 +77,7 @@ const STROKE = new Set([
   'back15', 'forward15', 'books', 'search', 'back', 'forward', 'mic', 'headphones',
   'timer', 'list', 'heart', 'info', 'check', 'lock', 'person', 'child', 'server',
   'refresh', 'exit', 'warning', 'loader', 'empty',
-  'bookmark', 'trash', 'chart', 'download',
+  'bookmark', 'trash', 'chart', 'download', 'bell', 'clock',
 ])
 
 /**

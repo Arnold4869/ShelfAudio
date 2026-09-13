@@ -39,6 +39,8 @@ jobs:
         run: python3 scripts/test-card-size.py
       - name: Chapter sheet virtualization (Playwright)
         run: python3 scripts/test-chapter-sheet.py
+      - name: Parental controls (Playwright + node)
+        run: python3 scripts/test-parental.py
       - name: Old WebView compat (Playwright)
         run: python3 scripts/test-old-webview.py
       - name: Android XML checks
@@ -164,6 +166,8 @@ jobs:
         run: python3 scripts/test-card-size.py
       - name: Chapter sheet virtualization (Playwright)
         run: python3 scripts/test-chapter-sheet.py
+      - name: Parental controls (Playwright + node)
+        run: python3 scripts/test-parental.py
       - name: Old WebView compat (Playwright)
         run: python3 scripts/test-old-webview.py
       - name: Android XML checks

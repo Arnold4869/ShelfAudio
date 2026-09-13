@@ -342,6 +342,36 @@ console.log('\n=== 12. 选集后自动播放（老板 2026-09-15：点选一集�
   await p.stop()
 }
 
+console.log('\n=== 13. stop() 只卸载装载过的 asset（不随轨数线性膨胀）===')
+{
+  state.assets.clear(); state.calls.length = 0
+  const p = new BookPlayer({})
+  await p.init()
+  // 1546 轨的大书（示例长篇级别）
+  const bigTracks = Array.from({length: 1546}, (_, i) => ({
+    index: i + 1, startOffset: i * 180, duration: 180,
+    url: 'http://x/' + i, title: 't' + i,
+  }))
+  await p.load({ itemId: 'big', tracks: bigTracks, sessionId: 's', duration: 1546*180, startBookTime: 0 })
+  await p.play()
+  const unloadBefore = state.calls.filter(c => c[0] === 'unload').length
+  await p.stop({ silent: true })
+  const unloadAfter = state.calls.filter(c => c[0] === 'unload').length
+  const n = unloadAfter - unloadBefore
+  ok('1546 轨的书 stop() 卸载调用 ≤ 5 次（原来 1548 次）', n <= 5, `n=${n}`)
+  // 功能不回退：装载过的 asset 确实被卸掉
+  ok('当前播放的 asset 已被卸载', !state.assets.has('sa-' + 0),
+     `assets=${[...state.assets.keys()].slice(0,4)}`)
+  // 换书再停一遍也要干净（用小书验证兜底路径）
+  state.calls.length = 0
+  await p.load({ itemId: 'small', tracks, sessionId: 's2', duration: 900, startBookTime: 0 })
+  await p.play()
+  await p.stop({ silent: true })
+  ok('61 轨的书 stop() 后原生层无残留 asset', playingSet().length === 0,
+     `playing=${playingSet()}`)
+  await p.stop({ silent: true })
+}
+
 try { fs.unlinkSync(stubPath) } catch (_) {}
 
 console.log('\n==============================================')

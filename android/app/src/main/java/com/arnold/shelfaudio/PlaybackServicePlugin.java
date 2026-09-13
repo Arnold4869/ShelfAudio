@@ -62,6 +62,21 @@ public class PlaybackServicePlugin extends Plugin {
         }
     }
 
+    /** 老板 2026-09-15：普通通知静默开关（锁屏控制保留，见 PlaybackService.applyNotificationMode） */
+    @PluginMethod
+    public void setNotificationMode(PluginCall call) {
+        try {
+            String mode = call.getString("mode", "normal");
+            Intent i = new Intent(getContext(), PlaybackService.class);
+            i.setAction(PlaybackService.ACTION_NOTIFICATION_MODE);
+            i.putExtra(PlaybackService.EXTRA_NOTIF_MODE, mode);
+            getContext().startService(i);
+            call.resolve();
+        } catch (Throwable t) {
+            call.reject("设置通知模式失败: " + t.getMessage());
+        }
+    }
+
     @PluginMethod
     public void stop(PluginCall call) {
         try {

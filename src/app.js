@@ -16,6 +16,7 @@ import { renderSettings } from './views/settings.js'
 import { renderAbout } from './views/about.js'
 import { openVoiceOverlay } from './lib/voice-ui.js'
 import { startListening, stopListening } from './lib/stats.js'
+import { playbackBlockedReason, volumeCap } from './lib/parental.js'
 import { localTrackMap } from './lib/offline.js'
 import { recordContinue, removeContinueLocal } from './lib/continue-local.js'
 import { initHaptics } from './lib/haptics.js'
@@ -167,6 +168,26 @@ export function requireParentPin() {
   })
 }
 
+// ---------------- 家长管控：播放中的到点自停 ----------------
+let _guardTimer = null
+function _armGuardTimer() {
+  // 每 60 秒复查一次：不在时段内 / 当天额度用完 → 柔和暂停 + 提示。
+  // 为什么不用精确 setTimeout 到结束点：后台 JS 定时器会被挂起（锁屏听书场景），
+  // 60s 轮询 + tick 里记录的真实收听秒数（暂停时不计时）组合起来误差 ≤ 1 分钟。
+  if (_guardTimer) return
+  _guardTimer = setInterval(async () => {
+    const p = state.player
+    if (!p?.playing) return
+    try {
+      const blocked = await playbackBlockedReason()
+      if (blocked) {
+        await p.pause()
+        toast(blocked)
+      }
+    } catch (_) {}
+  }, 60000)
+}
+
 // ---------------- 播放器装配 ----------------
 export function initPlayer() {
   if (state.player) return state.player
@@ -181,7 +202,10 @@ export function initPlayer() {
       // （统计的是听了多久，不是开着 App 多久）
       if (s?.isPlaying) {
         const c = state.current
-        if (c) startListening(c.item?.id, c.title).catch(() => {})
+        if (c) {
+          startListening(c.item?.id, c.title).catch(() => {})
+          _armGuardTimer()   // 家长管控：播放中定期复查（到点/超时自动停）
+        }
       } else {
         stopListening().catch(() => {})
       }
@@ -199,6 +223,14 @@ export function initPlayer() {
 
 // ---------------- 开始播放一本书 ----------------
 export async function playItem(item, { startTime } = {}) {
+  // 家长管控闸门（老板 2026-09-15）：不在允许时段 / 当天时长用完 → 直接拦下，
+  // 连"加载中"都不显示，避免孩子以为坏了反复点。播放中途到点由 onState 里那个
+  // 定时检查负责（见 initPlayer 的 guard 定时器）。
+  const blocked = await playbackBlockedReason()
+  if (blocked) {
+    toast(blocked)
+    throw new Error(blocked)
+  }
   const player = initPlayer()
   const meta = item.media?.metadata || {}
   toast('正在加载…')
@@ -377,6 +409,16 @@ async function boot() {
   state.mode = 'kid'
   state.kidPin = (await store.get(CONFIG_KEYS.kidPin, '')) || ''
 
+  // 通知静默设置要在启动时重放一次（老板 2026-09-15）：
+  // Android 的通知渠道级别只有在 App 主动调用时才更新，重装/清数据后
+  // 渠道会回到默认 LOW —— 不重放的话"我明明关了通知怎么又出现了"。
+  try {
+    if ((await store.get(CONFIG_KEYS.quietNotification, '0')) === '1') {
+      const { setNotificationMode } = await import('./lib/notification-prefs.js')
+      setNotificationMode('quiet').catch(() => {})
+    }
+  } catch (_) {}
+
   if (server && token) {
     abs.configure(server, token)
     try {
@@ -444,6 +486,14 @@ route('about', async (root) => {
 
 // 家长设置（需要家长密码）：进度口径、触感、统计、服务器
 route('parents', async (root) => {
+  // 密码防护放在 route 层（老板 2026-09-15：只有家长设置要密码，其它设置项不要）。
+  // 为什么不能只拦入口按钮：统计页的「返回」也 go('parents')，只拦按钮会被绕过。
+  // _parentUnlockedAt：本次解锁的有效期（进入后 10 分钟内不再重复要密码，
+  // 否则在家长设置里点每一项都要输一次；离开 App 由进程结束自然失效）。
+  if (state.kidPin && !(Date.now() - (state._parentUnlockedAt || 0) < 600000)) {
+    if (!(await requireParentPin())) return
+    state._parentUnlockedAt = Date.now()
+  }
   document.body.dataset.view = 'parents'
   const { renderParent } = await import('./views/parents.js')
   await renderParent(root)

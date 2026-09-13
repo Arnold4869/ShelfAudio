@@ -419,7 +419,16 @@ export class BookPlayer {
   }
 
   /** 音量增减（语音“大声点/小声点”用），0.1~1.0 */
-  async setVolume(v) {
+  async setVolume(v, { enforceCap = true } = {}) {
+    // 家长音量上限（老板 2026-09-15）：设置过 volumeCap 后，App 内任何音量调整
+    // （语音"大声点"、UI）都不会超过上限。系统音量不归我们管。
+    if (enforceCap) {
+      try {
+        const { volumeCap } = await import('./parental.js')
+        const cap = await volumeCap()
+        v = Math.min(v, cap)
+      } catch (_) {}
+    }
     this._volume = Math.max(0.1, Math.min(1, v))
     if (this.isNativeEngine) {
       try { await NativeAudio.setVolume({ assetId: this._assetId(this.trackIndex), volume: this._volume }) } catch (_) {}
@@ -440,15 +449,21 @@ export class BookPlayer {
     this.buffering = false
     await fgStop()
     if (this.isNativeEngine) {
-      try { await NativeAudio.stop({ assetId: this._assetId(this.trackIndex) }) } catch (_) {}
-      // 卸载所有已装载的 asset，避免原生层堆积。
-      // ⚠️ 必须用「数组下标 i」，不能用 t.index —— ABS 的 t.index 是 1-based，
-      // 用它算 assetId 会整体错一位，导致真正在播的那条没被卸载 → 换集后旧集仍在响。
-      for (let i = 0; i < this.tracks.length; i++) {
-        try { await NativeAudio.unload({ assetId: this._assetId(i) }) } catch (_) {}
+      // 只卸载「真正装载过」的 asset —— 不要遍历全部音轨！
+      // 审计（2026-09-15，老板报「历史记录播放有时不行」）：
+      //   《示例长篇》1546 轨，原来这里 for 全表逐个 await unload，
+      //   实测 1548 次原生桥调用，真机 0.8~4.6 秒纯等待；这些 assetId 里
+      //   除了当前装载的，其余根本没 preload 过（unload 会 reject，白跑一趟）。
+      //   表现就是「偶发卡住/点了没反应」，且书越大越容易撞上。
+      // 兜底：额外扫一遍 _loadedIdx（历史装载记录），最后再补一发当前轨附近，
+      // 防止极早期版本留下的错位 id 残留（只多 2 次调用，与轨数无关）。
+      const candidates = new Set([...this._loadedIdx])
+      candidates.add(this.trackIndex)
+      if (this._playingAssetIdx != null) candidates.add(this._playingAssetIdx)
+      for (const i of candidates) {
+        if (i == null || i < 0 || i >= this.tracks.length) continue
+        await this._killAsset(i)
       }
-      // 连带清掉"可能残留"的相邻 asset（防御：早期版本可能装载过错位的 id）
-      try { await NativeAudio.unload({ assetId: this._assetId(this.trackIndex + 1) }) } catch (_) {}
       this._playingAssetIdx = null
     } else if (this._audio) {
       this._audio.pause()

@@ -45,6 +45,12 @@ public class PlaybackService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent != null ? intent.getAction() : ACTION_START;
         try {
+            if (ACTION_NOTIFICATION_MODE.equals(action)) {
+                // 只切通知渠道的打扰级别，不动服务本身（后台播放照常）。
+                String mode = intent != null ? intent.getStringExtra(EXTRA_NOTIF_MODE) : null;
+                applyNotificationMode("quiet".equals(mode));
+                return START_STICKY;
+            }
             if (ACTION_STOP.equals(action)) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     stopForeground(true);
@@ -77,14 +83,43 @@ public class PlaybackService extends Service {
         return START_STICKY;
     }
 
+    /**
+     * 通知渠道重要性。
+     * normal → IMPORTANCE_LOW（在下拉栏可见，无声）
+     * quiet  → IMPORTANCE_NONE（不显示，服务照常；Android 不允许前台服务无通知，
+     *          所以这是能做到的"最静"档）
+     * 用户如果自己在系统设置里改过渠道级别，这里不再覆盖（尊重用户）。
+     */
+    private void applyNotificationMode(boolean quiet) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        NotificationChannel ch = nm.getNotificationChannel(CHANNEL_ID);
+        if (ch == null) {
+            ch = new NotificationChannel(CHANNEL_ID, "后台播放",
+                    quiet ? NotificationManager.IMPORTANCE_NONE : NotificationManager.IMPORTANCE_LOW);
+            ch.setDescription("听书在后台播放时的常驻通知（关闭后不影响播放与锁屏控制）");
+            ch.setShowBadge(false);
+            nm.createNotificationChannel(ch);
+        } else {
+            int want = quiet ? NotificationManager.IMPORTANCE_NONE : NotificationManager.IMPORTANCE_LOW;
+            if (ch.getImportance() != want) {
+                ch.setImportance(want);
+                ch.setShowBadge(false);
+                nm.createNotificationChannel(ch);
+            }
+        }
+    }
+
     private void createChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+            // 默认 LOW；若用户设过静默，下次 start 时由 applyNotificationMode 纠正
             NotificationChannel ch = new NotificationChannel(
-                    CHANNEL_ID, "播放控制", NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("听书播放时的常驻通知");
+                    CHANNEL_ID, "后台播放", NotificationManager.IMPORTANCE_LOW);
+            ch.setDescription("听书在后台播放时的常驻通知（关闭后不影响播放与锁屏控制）");
             ch.setShowBadge(false);
             nm.createNotificationChannel(ch);
         }

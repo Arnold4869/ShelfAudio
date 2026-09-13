@@ -105,12 +105,8 @@ export async function renderSettings(root, { firstRun = false } = {}) {
 
   $('#rowParent').onclick = async () => {
     haptic.tap()
-    if (state.kidPin) {
-      if (!(await requireParentPin())) return
-    } else {
-      toast('还没设家长密码')
-    }
-    await go('parents')
+    if (!state.kidPin) toast('还没设家长密码，进页面后先设置一个')
+    await go('parents')   // 密码校验在 route 层（app.js），入口不重复拦
   }
 
   updateMini()
