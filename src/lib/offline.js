@@ -97,14 +97,17 @@ export async function localTrackUri(bookId, idx) {
   }
 }
 
-/** 该书的本地音轨映射：{ [idx]: uri } */
-export async function localTrackMap(bookId) {
-  const out = {}
-  for (const k of Object.keys((await offlineInfo(bookId))?.tracks || {})) {
-    const uri = await localTrackUri(bookId, Number(k))
-    if (uri) out[Number(k)] = uri
-  }
-  return out
+/**
+ * 该书当前要播的**那一集**的本地 URI（未缓存/文件丢失 → null）。
+ *
+ * 性能（老板 2026-09-16 报「全缓存的书点历史记录没反应」）：
+ * 旧版 localTrackMap 会把全书每一集都 stat+getUri 各一次 —— 536 集的书
+ * = 1072 次原生桥调用（真机 0.5~3 秒纯等待），而播放器只会用到其中 1 条。
+ * 播放中途换集时也是一次桥调用（player._nativeLoadTrack 内部按需查），
+ * 与"提前把全部 536 条查好"相比用户无感知差异。
+ */
+export async function localTrackUriLazy(bookId, idx) {
+  try { return await localTrackUri(bookId, idx) } catch (_) { return null }
 }
 
 // ---------------- 下载 ----------------

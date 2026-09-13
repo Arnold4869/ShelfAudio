@@ -70,22 +70,46 @@ export async function renderHistory(root, params = {}) {
     bindRows()
   }
 
+  // 重入防护（老板 2026-09-16「它会卡着播放两次一样感觉」）：
+  // playItem 网络慢时 1~3 秒无反馈，用户再点 → 第二次 playItem 停掉第一次、
+  // 从头重播。正在加载时忽略后续点击 + 行上加半透明表示"点了、在干活"。
+  let _opening = false
+
   const bindRows = () => {
     root.querySelectorAll('[data-hist]').forEach(el => {
       wireLongPress(el, () => confirmRemove(el.dataset.id))
       el.addEventListener('click', async () => {
         if (el._longPressed) { el._longPressed = false; return }
-        haptic.tap()
-        const id = el.dataset.id
-        const entry = entries.find(x => x.id === id)
-        if (!entry) return
+        if (_opening) return
+        _opening = true
+        el.style.opacity = '0.5'
         try {
-          // 有进度就接着听，没进度从头开始（与首页口径一致）
-          const resumeAt = (entry.pct > 0 && !entry.finished) ? undefined : 0
-          await playItem(entry.raw || { id, media: entry.media }, { startTime: resumeAt })
-        } catch (e) { toast(e.message || '打不开这本书') }
+          await openEntry(el)
+        } finally {
+          _opening = false
+          el.style.opacity = ''
+        }
       })
     })
+  }
+
+  /** 打开某条历史记录对应的书 */
+  const openEntry = async (el) => {
+    haptic.tap()
+    const id = el.dataset.id
+    const entry = entries.find(x => x.id === id)
+    if (!entry) return
+    try {
+      // 有进度就接着听。⚠️ 不能用 entry.pct 判断 —— pct 是四舍五入的百分比，
+      // 时长很长的书「听了 2 秒」也是 0%（老板 2026-09-16 实测：
+      // 《示例侦探剧1》2.7s / 74390s → pct=0）。旧写法把它当"未开始"，
+      // 于是 resumeAt=0 把服务器上真实的进度覆盖掉，从第 1 集开头重播 ——
+      // 用户看到的就是"我明明刚听了，怎么又从头"。
+      // 正确做法：不传 startTime（undefined）→ playItem 去读服务器进度；
+      // 只有「已听完」才显式归零（重听语义）。
+      const resumeAt = entry.finished ? 0 : undefined
+      await playItem(entry.raw || { id, media: entry.media }, { startTime: resumeAt })
+    } catch (e) { toast(e.message || '打不开这本书') }
   }
 
   const confirmRemove = async (id) => {

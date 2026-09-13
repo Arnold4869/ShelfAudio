@@ -205,9 +205,11 @@ export async function renderShelf(root) {
       const id = el.dataset.id
       const it = state.items.find(x => x.id === id) || inProgress.find(x => x.id === id)
       if (!it) return
-      // 有进度就接着听（卡片上有"听 N%"徽标，从头播会丢进度）；没进度才从 0 开始
+      // 有进度就接着听（卡片上有"听 N%"徽标，从头播会丢进度）。
+      // ⚠️ 阈值不能是 >5 秒：孩子的书单集很短、随手点开就退出，
+      // 听 2~5 秒也是真实进度，归零会"重听一遍"（老板 2026-09-16）。
       const prog = progressMap[it.id]
-      const resumeAt = (prog && !prog.isFinished && prog.currentTime > 5) ? undefined : 0
+      const resumeAt = (prog && !prog.isFinished) ? undefined : 0
       try {
         await playItem(it, { startTime: resumeAt })
       } catch (e) { toast(e.message || '打不开这本书') }

@@ -155,7 +155,7 @@ export class BookPlayer {
    * @param {object} opts
    *   itemId, tracks[], sessionId, duration, startBookTime, notification{title,artist,album,artworkUrl}
    */
-  async load({ itemId, tracks, sessionId, duration, startBookTime = 0, notification, localMap = null }) {
+  async load({ itemId, tracks, sessionId, duration, startBookTime = 0, notification, localMap = null, localResolver = null }) {
     await this.stop({ silent: true })
     // 加载前把「上次被杀时残留的播放意图」清干净：
     // App 被杀时 _wantPlaying 可能还是 true，重开后这里不清，
@@ -170,6 +170,9 @@ export class BookPlayer {
     // ⚠️ 必须直接赋值，不能 `|| this.localMap`：换书时若新书没传 localMap，
     // 会继承上一本的映射，把 A 书的本地文件当成 B 书的音轨加载。
     this.localMap = localMap || {}
+    // 懒解析器（老板 2026-09-16）：本地缓存按集现查，替代"整本书一次查完"的
+    // localMap —— 536 集的书旧路径要 1072 次原生桥调用。两者都给时优先 lazy。
+    this._localResolver = typeof localResolver === 'function' ? localResolver : null
     this.sessionId = sessionId || null
     this.duration = duration || this.tracks.reduce((a, t) => a + (t.duration || 0), 0)
     this.notification = notification || null
@@ -563,8 +566,13 @@ export class BookPlayer {
     // 同一条音轨重新载入（seek/重播）也要先彻底停，避免重影
     await this._killAsset(idx)
 
-    // 有本地缓存就用本地文件：不耗流量、无网也能听
-    const local = this.localMap?.[idx]
+    // 有本地缓存就用本地文件：不耗流量、无网也能听。
+    // 优先走懒解析器（每次一次桥调用），没有才回落整本映射。
+    let local = this.localMap?.[idx]
+    if (!local && this._localResolver) {
+      try { local = await this._localResolver(idx) } catch (_) { local = null }
+      if (local) this.localMap[idx] = local
+    }
     const useLocal = !!local
     const preloadArgs = {
       assetId,

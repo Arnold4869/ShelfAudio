@@ -17,7 +17,7 @@ import { renderAbout } from './views/about.js'
 import { openVoiceOverlay } from './lib/voice-ui.js'
 import { startListening, stopListening } from './lib/stats.js'
 import { playbackBlockedReason, volumeCap } from './lib/parental.js'
-import { localTrackMap } from './lib/offline.js'
+import { localTrackUriLazy } from './lib/offline.js'
 import { recordContinue, removeContinueLocal } from './lib/continue-local.js'
 import { initHaptics } from './lib/haptics.js'
 import { syncToServer } from './lib/favs.js'
@@ -233,11 +233,28 @@ export async function playItem(item, { startTime } = {}) {
   }
   const player = initPlayer()
   const meta = item.media?.metadata || {}
-  toast('正在加载…')
+  const sameBook = state.current?.item?.id === item.id && !!player.tracks?.length
+
+  // 同一本书已经在播（或暂停）→ 直接回播放页，**不要**重建会话重播。
+  // 老板 2026-09-16：「没缓存的，我刚听的，退出，进历史记录再点它，
+  // 卡着播放两次一样感觉，播了 2 秒然后又从头播放」—— 根因就是这个重建：
+  // 旧音频还在响（那 2 秒），新会话建好后从（被归零的）位置重新开播 →
+  // 听感上就是"播了一次又从头播一次"。
+  // 例外：显式传了 startTime（如"已听完需重头听"）时才真的重载。
+  if (sameBook && startTime === undefined) {
+    toast('继续播放')
+    await go('player')
+    return
+  }
 
   // 换书前把上一本收尾：关掉旧会话并落盘进度，否则 server 端会话泄漏
   if (state.current && state.current.item?.id !== item.id) {
     try { await player.finish() } catch (_) {}
+    // ⚠️ 立刻停掉旧音频：以前只 close 会话，旧音轨会一直响到新书 load 完成
+    //（网络 1~3 秒），用户听到"两段声音叠着/先后响" —— 就是那个"卡着"的观感。
+    try { await player.stop({ silent: true }) } catch (_) {}
+    state.current = null
+    updateMini()
   }
 
   // 进度：优先用传入的，其次 ABS 的上次进度
@@ -289,9 +306,11 @@ export async function playItem(item, { startTime } = {}) {
     startAt: start,
   }
 
-  // 有离线缓存的集优先用本地文件（无网也能听；没缓存的集自动回落在线上）
-  let localMap = {}
-  try { localMap = await localTrackMap(item.id) } catch (_) {}
+  // 离线缓存：按集懒查（只查当前要播的那一集）。
+  // 老板 2026-09-16 报「全缓存的书点历史记录没反应」——
+  // 旧写法把整本书每一集都 stat+getUri 各一次，536 集 = 1072 次原生桥调用，
+  // 真机 0.5~3 秒纯等待、期间界面上什么都没发生。播放器换集时按需再查。
+  const localResolver = (idx) => localTrackUriLazy(item.id, idx)
 
   // 第一时间补记「继续听」（老板 2026-09-14：播放就该立刻出现在列表最上面，
   // 不能等服务端 items-in-progress 慢慢更新）。
@@ -312,7 +331,7 @@ export async function playItem(item, { startTime } = {}) {
       sessionId,
       duration,
       startBookTime: start,
-      localMap,
+      localResolver,
       notification: {
         title,
         artist: meta.authorName || meta.author || '听书',
