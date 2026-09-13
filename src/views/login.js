@@ -1,7 +1,7 @@
 /** 登录 / 首次配置 */
 import { abs } from '../lib/api.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
-import { go, toast, esc, state, initPlayer } from '../app.js'
+import { go, toast, state, initPlayer } from '../app.js'
 import { icon } from '../lib/icons.js'
 
 export async function renderLogin(root) {
