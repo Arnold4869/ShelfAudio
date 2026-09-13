@@ -517,15 +517,16 @@ export class BookPlayer {
       }
     }
 
-    // ⚠️ 冷启动/缓冲期不能信"未在播"事件。
-    // 插件 play() 后立刻 notifyPlaybackState("play")，而它内部取的是 ExoPlayer
-    // 实时状态：远程音频刚 setPlayWhenReady(true) 时还停在 STATE_BUFFERING，
-    // 于是这里收到一个 state=paused/stopped 的事件，把 UI 打回"暂停"——
-    // 用户看到的就是"点了播放，图标还是三角形，像没按上"，于是反复点。
-    // 刚发出 play 的容忍窗口内（_startDeadline 之前）只接"已在播"，
-    // 忽略"未在播"，让 UI 保持用户意图；原因带 buffer 时按缓冲处理。
-    if (!playing && this._wantPlaying && Date.now() < this._startDeadline) {
-      if (!this.buffering) { this.buffering = true; this.onState({ state: 'buffering', isPlaying: true, reason: ev?.reason }) }
+    // ⚠️ "未在播"事件不能盲信：ExoPlayer 缓冲中、音频焦点被短暂抢占时
+    // asset.isPlaying() 会闪回 false，插件据此发 paused/stopped ——
+    // 但声音实际还在播。历史上这一下把 UI 从暂停键翻回播放键
+    // （老板实测："正在播放时中间还是播放键"）。
+    // 但也不能盲拒（之前 15s 容忍窗口的教训）：用户按锁屏暂停/拔耳机时
+    // 原生层是真停了，UI 必须跟着翻回播放键，否则就是"假播放"。
+    // 正确姿势：收到"未在播"→ 立即反查原生层真实状态（asset.isPlaying()），
+    // 真停才翻，抖动维持原状。
+    if (!playing && this._wantPlaying) {
+      this._resolveRealPause(ev)
       return
     }
 
@@ -533,6 +534,50 @@ export class BookPlayer {
     this.buffering = false
     this.playing = playing
     this.onState({ state: ev?.state || (playing ? 'playing' : 'paused'), isPlaying: playing, reason: ev?.reason })
+  }
+
+  /**
+   * 收到"未在播"事件后，向原生层核实到底停没停。
+   * 核实期间 UI 保持当前状态（不闪），结果回来后一次性校准：
+   *   真的停了 → 按暂停处理（用户意图标记一并清掉）
+   *   还在播   → 维持播放态，视为缓冲/焦点抖动，UI 不动
+   */
+  _resolveRealPause(ev) {
+    if (this._verifyingPause) return
+    this._verifyingPause = true
+    // 缓冲观感：短暂转圈比错误地显示"播放键"好 —— 用户知道在干活
+    if (!this.buffering && this.playing) {
+      this.buffering = true
+      this.onState({ state: 'buffering', isPlaying: true, reason: ev?.reason })
+    }
+    const finish = (reallyPaused) => {
+      this._verifyingPause = false
+      if (reallyPaused) {
+        // 原生层真停了：接受现实（锁屏暂停/拔耳机/系统抢占且未恢复）
+        this._starting = false
+        this.buffering = false
+        this.playing = false
+        this.onState({ state: 'paused', isPlaying: false, reason: ev?.reason || 'native-confirmed-pause' })
+      } else {
+        // 还在播：抖动，维持播放态
+        this.buffering = false
+        this.playing = true
+        this.onState({ state: 'playing', isPlaying: true, reason: 'native-confirmed-playing' })
+      }
+    }
+    let settled = false
+    const settle = v => { if (!settled) { settled = true; finish(v) } }
+    // 反查原生真值（若反查失败，短超时后按"还在播"兜底 —— 与用户意图一致，
+    // 也避免把真在播的会话错杀成暂停）
+    try {
+      NativeAudio.isPlaying({ assetId: this._assetId(this.trackIndex) })
+        .then(r => settle(!!(r && r.isPlaying === false)))
+        .catch(() => setTimeout(() => settle(false), 400))
+    } catch (_) {
+      setTimeout(() => settle(false), 400)
+    }
+    // 硬超时：防止原生桥卡死让 UI 永远停在转圈
+    setTimeout(() => settle(false), 2500)
   }
 
   /** 返回 Promise，便于调用方（含测试）等待换集真正完成 */

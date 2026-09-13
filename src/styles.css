@@ -317,15 +317,16 @@ input, textarea { user-select: text; -webkit-user-select: text; }
   display: flex; padding: 8px 0 calc(var(--safe-bottom) + 8px);
 }
 
-/* 内容底部留白 = dock 实测高度 + 一点呼吸空间。
-   dock 高度已含安全区，不用再加。 */
-#view { padding-bottom: calc(var(--dock-h) + 20px); }
-/* 播放页：有底栏（kids 一直在），底部留白必须含 dock 高度。
-   旧版播放页没有底栏所以只留 safe-bottom —— 现在底栏会把「倍速/定时/选集」
-   一行压住只露上半截（小米 8SE 实测）。margin-bottom:auto 仍负责把
-   剩余空白分到上下两侧，内容超出时 auto 归零、可正常滚动。 */
+/* 内容底部留白 = 底部遮挡物的实测高度 + 呼吸空间。
+   注意：必须取 max(dock, safe-bottom)：dock 可见时它的高度已含安全区；
+   dock 不存在时（播放页）它是 0，此时必须退到安全区 ——
+   直接写 --dock-h 会在无 dock 的页面把内容压进系统手势条底下。 */
+#view { padding-bottom: calc(max(var(--dock-h), var(--safe-bottom)) + 20px); }
+/* 播放页：全屏播放器（无底栏），底部只需避开安全区。
+   内容总高常小于屏幕 → 用 flex + auto 边距把空白分到上下两侧，
+   封面按剩余空间自适应（见 .player-cover-wrap）。 */
 body[data-view="player"] #view {
-  padding-bottom: calc(var(--dock-h) + 20px);
+  padding-bottom: calc(max(var(--dock-h), var(--safe-bottom)) + 20px);
   display: flex; flex-direction: column;
   min-height: 100dvh;
 }
@@ -343,9 +344,24 @@ body[data-view="player"] #extra { margin-bottom: auto; }
 /* ---------- 播放页（儿童模式：大圆按钮） ---------- */
 .player-page { padding-top: 6px; }
 .player-cover-wrap { display: grid; place-items: center; margin: 8px 0 18px; }
+/* 封面尺寸自适应：不写死 vw 比例，而是按「可用高度」分配。
+   播放页要同时装下：封面 + 标题 + 进度条 + 收藏 + 播放键 + 工具行，
+   小屏（≤640 CSS 高）时 72vw 的正方形会占掉一半以上屏高，
+   挤得其它区块贴在一起 → 观感"整个界面变小/挤"。
+   用 min(72vw, 46dvh, 290px)：大屏到 290 上限，小屏按高度收缩，
+   宽度方向仍有 72vw 兜底，横竖屏/平板都稳。 */
+.player-cover-wrap .cover-slot,
 .player-cover {
-  width: min(72vw, 290px); aspect-ratio: 1/1;
+  width: min(72vw, 46dvh, 290px);
+  aspect-ratio: 1 / 1;
+}
+.player-cover {
   border-radius: 26px; object-fit: cover;
+  /* 必须浮在占位封面（.cover-ph，z-index:0 绝对定位）之上，
+     否则有封面的书在播放页永远显示的是占位图 ——
+     书架的 .book-cover 有 position:relative;z-index:1，播放页漏了，
+     历史遗留 bug（老板 2026-09-13 发现"播放页中间一大块空/没封面"）。 */
+  position: relative; z-index: 1;
 }
 .player-title { font-size: 20px; font-weight: 800; text-align: center; line-height: 1.35; }
 .player-chapter { font-size: 13px; color: var(--text-dim); text-align: center; margin-top: 6px; }

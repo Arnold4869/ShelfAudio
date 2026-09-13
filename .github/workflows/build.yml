@@ -46,6 +46,8 @@ jobs:
 
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs
+      - name: 播放键状态一致性
+        run: node scripts/test-play-icon.mjs
 
       - name: Update-check version compare
         run: node scripts/test-updater.mjs
@@ -157,6 +159,8 @@ jobs:
 
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs
+      - name: 播放键状态一致性
+        run: node scripts/test-play-icon.mjs
 
       - name: Update-check version compare
         run: node scripts/test-updater.mjs
