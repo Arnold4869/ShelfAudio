@@ -33,6 +33,11 @@ const FakeAudio = {
   async addListener(name, cb) { (state.events[name] ||= []).push(cb); return { remove() {} } },
   async preload({ assetId }) {
     state.calls.push(['preload', assetId])
+    // ⚠️ 忠于真实插件（NativeAudio.preloadAsset）：
+    //     assetId 已存在时直接 reject ERROR_AUDIO_EXISTS，不是覆盖！
+    //     真实代码见 node_modules/@capgo/capacitor-native-audio/.../NativeAudio.java
+    //     if (audioAssetList.containsKey(audioId)) { call.reject(ERROR_AUDIO_EXISTS ...) }
+    if (state.assets.has(assetId)) throw new Error('audio asset already exists - ' + assetId)
     state.assets.set(assetId, { playing: false, time: 0 })
   },
   async play({ assetId, time }) {
@@ -49,6 +54,7 @@ const FakeAudio = {
   async setCurrentTime({ assetId, time }) { const a = state.assets.get(assetId); if (a) a.time = time; state.calls.push(['setTime', assetId, time]) },
   async setRate() {}, async setVolume() {},
   async getCurrentTime({ assetId }) { return { currentTime: state.assets.get(assetId)?.time ?? 0 } },
+  async clearCache() { state.calls.push(['clearCache']); state.cacheCleared = true },
 }
 
 // ---------- 用替身跑真实 src/lib/player.js ----------
@@ -84,6 +90,7 @@ const ok = (name, cond, extra = '') => {
 console.log('\n=== 1. 顺序播放：每次换集后只应有一个音轨在播 ===')
 {
   const p = new BookPlayer({})
+  p._watchdogMs = 500
   await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
   await p.play()
   ok('第1集在播', playingSet().join() === 'sa-0', `实际=${playingSet()}`)
@@ -105,6 +112,7 @@ console.log('\n=== 2. 直接点选任意集（章节跳转路径）===')
 {
   state.assets.clear(); state.calls.length = 0
   const p = new BookPlayer({})
+  p._watchdogMs = 500
   await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
   await p.play()
   ok('起始第1集在播', playingSet().join() === 'sa-0')
@@ -131,6 +139,7 @@ console.log('\n=== 3. 暂停态换集不应出声 ===')
 {
   state.assets.clear(); state.calls.length = 0
   const p = new BookPlayer({})
+  p._watchdogMs = 500
   await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
   await p.play()
   await p.pause()
@@ -172,6 +181,7 @@ console.log('\n=== 5. 音轨下标与 assetId 的映射（1-based index 陷阱�
 {
   state.assets.clear()
   const p = new BookPlayer({})
+  p._watchdogMs = 500
   await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
   await p.play()
   // ABS 的 track.index 是 1-based；assetId 必须用数组下标
@@ -213,6 +223,70 @@ console.log('\n=== 8. 恢复位置在最后一集末尾（无下一集）→ 不
   ok('最后一集末尾保持原位（跳到开头交还用户处理）',
      p.trackIndex === 2 && Math.abs(p.currentBookTime - 898) < 0.01,
      `trackIndex=${p.trackIndex} bookTime=${p.currentBookTime}`)
+  await p.stop()
+}
+
+console.log('\n=== 9. App 被杀后重开：原生层残留 asset（preload 撞车）===')
+{
+  state.assets.clear(); state.calls.length = 0
+  // 模拟被杀现场：原生层还留着上次播放的 sa-0 / sa-1（前台服务保活进程）
+  state.assets.set('sa-0', { playing: false, time: 175 })
+  state.assets.set('sa-1', { playing: false, time: 0 })
+  const p = new BookPlayer({})
+  // 恢复「继续听第一本」：load 不应被 preload 拒绝卡死
+  let loadErr = null
+  try {
+    await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 150 })
+    await p.play()
+  } catch (e) { loadErr = e }
+  ok('恢复播放不因残留 asset 失败', loadErr === null, String(loadErr))
+  ok('残留 asset 已被替换为新实例',
+     state.assets.get('sa-0')?.playing === true,
+     `sa-0.playing=${state.assets.get('sa-0')?.playing}`)
+  ok('同时只有一条在播', playingSet().length === 1, playingSet().join(','))
+  await p.stop()
+}
+
+console.log('\n=== 10. 启动看门狗：play 后从未出声（缓存损坏卡死）→ 清缓存自愈 ===')
+{
+  state.assets.clear(); state.calls.length = 0; state.cacheCleared = false
+  const p = new BookPlayer({})
+  p._watchdogMs = 500   // 测试注入：500ms 触发，不用真等 12s
+  await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 150 })
+  // 替身里 asset 永远不发 currentTime（模拟坏缓存卡死）
+  await p.play()
+  ok('看门狗定时器已布防', p._startWatchdog !== null)
+  await new Promise(r => setTimeout(r, 1400))   // 500ms 触发 + 自愈余量
+  ok('看门狗触发：调用了 clearCache', state.cacheCleared === true,
+     `cacheCleared=${state.cacheCleared}`)
+  ok('看门狗自愈后重新 preload+play',
+     state.calls.filter(c => c[0] === 'preload').length >= 2 &&
+     state.calls.filter(c => c[0] === 'play').length >= 2,
+     JSON.stringify(state.calls.filter(c => c[0]==='preload'||c[0]==='play'||c[0]==='clearCache')))
+  ok('自愈后仍处播放意图', p._wantPlaying === true)
+  await p.stop()
+}
+
+console.log('\n=== 11. 看门狗不误伤：正常播放（有 currentTime 事件）不触发 ===')
+{
+  state.assets.clear(); state.calls.length = 0; state.cacheCleared = false
+  const p = new BookPlayer({})
+  p._watchdogMs = 500
+  await p.init()   // 必须先 init：currentTime 监听器是在 init() 里注册的
+  await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  await p.play()
+  ok('currentTime 监听器已注册（否则本测试无效）',
+     (state.events['currentTime'] || []).length > 0,
+     `listeners=${(state.events['currentTime']||[]).length}`)
+  // 模拟正常播放：原生按秒发 currentTime
+  const tick = setInterval(() => {
+    for (const cb of (state.events['currentTime']||[]))
+      cb({ assetId: 'sa-' + p.trackIndex, currentTime: (state.assets.get('sa-'+p.trackIndex)?.time||0) + 1, duration: 300 })
+  }, 200)
+  await new Promise(r => setTimeout(r, 1400))
+  clearInterval(tick)
+  ok('正常播放看门狗不触发（没清缓存）', state.cacheCleared === false,
+     `cacheCleared=${state.cacheCleared}`)
   await p.stop()
 }
 

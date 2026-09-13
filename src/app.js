@@ -250,21 +250,31 @@ export async function playItem(item, { startTime } = {}) {
   let localMap = {}
   try { localMap = await localTrackMap(item.id) } catch (_) {}
 
-  await player.load({
-    itemId: item.id,
-    tracks: withUrls,
-    sessionId,
-    duration,
-    startBookTime: start,
-    localMap,
-    notification: {
-      title,
-      artist: meta.authorName || meta.author || '听书',
-      album: meta.seriesName || '',
-      artworkUrl: abs.coverUrl(item.id, { width: 400 }),
-    },
-  })
-  await player.play()
+  try {
+    await player.load({
+      itemId: item.id,
+      tracks: withUrls,
+      sessionId,
+      duration,
+      startBookTime: start,
+      localMap,
+      notification: {
+        title,
+        artist: meta.authorName || meta.author || '听书',
+        album: meta.seriesName || '',
+        artworkUrl: abs.coverUrl(item.id, { width: 400 }),
+      },
+    })
+    await player.play()
+  } catch (e) {
+    // load/play 失败不能把用户晾在播放页显示"正在播放"却没声音 ——
+    // 把状态复位，给出可见的错误提示（"继续听第一本加载不出来"的可见兜底）。
+    console.warn('播放加载失败', e)
+    try { await player.stop({ silent: true }) } catch (_) {}
+    state.current = null
+    updateMini()
+    throw new Error('加载失败，请再点一次试试')
+  }
   await go('player')
 }
 

@@ -74,6 +74,9 @@ export class BookPlayer {
     this._chain = Promise.resolve() // play/pause 串行队列：原生调用不允许交叉
     this._starting = false       // 已发出 play、但还没收到 STATE_PLAYING 的窗口
     this._startDeadline = 0      // 该窗口的截止时间（超过就不再容忍"未播"事件）
+    this._startWatchdog = null   // 启动看门狗定时器（play 后从未出声 → 自愈）
+    this._watchdogFired = false
+    this._lastTimeEventAt = 0    // 最后一次收到 currentTime 事件的时间
     this.buffering = false       // 正在缓冲（UI 显示加载态，而不是装作在播）
   }
 
@@ -154,6 +157,12 @@ export class BookPlayer {
    */
   async load({ itemId, tracks, sessionId, duration, startBookTime = 0, notification, localMap = null }) {
     await this.stop({ silent: true })
+    // 加载前把「上次被杀时残留的播放意图」清干净：
+    // App 被杀时 _wantPlaying 可能还是 true，重开后这里不清，
+    // 第一条"未在播"事件就会走进 _resolveRealPause 把 UI 卡在缓冲态。
+    this._wantPlaying = false
+    this._starting = false
+    this.buffering = false
     this.itemId = itemId
     this.tracks = tracks || []
     // 本地缓存映射 { idx: file:// URI }。有缓存的集优先离线播放（不联网也能听），
@@ -242,7 +251,52 @@ export class BookPlayer {
       this.onState({ state: 'playing', isPlaying: true })
       this._startWebTickerIfNeeded()
       this._startNativeTicker()
+      // 启动看门狗：如果到 _startDeadline 还没收到任何 currentTime 事件
+      // （原生层从未真正出声），执行自愈 —— 清插件磁盘流缓存后整体重载重试。
+      // 场景：App 被杀时 ExoPlayer 的磁盘流缓存（getCacheDir()/media）留下损坏条目，
+      // 重开后同一本书的同一集永远缓冲不出来 —— 表现为「继续听第一本一直正在播放
+      // 却加载不出来，其它书都正常」。清缓存 + 重载能救回来。
+      this._armStartWatchdog()
     })
+  }
+
+  /**
+   * 启动看门狗：play() 后若 _startDeadline 内连一次 currentTime 都没收到，
+   * 说明原生层从未真正出声（不是慢，是卡死）。执行两级自愈：
+   *   1) 清掉插件的磁盘流缓存（App 被杀时可能留下损坏的 SimpleCache 条目，
+   *      之后的每次 preload 都会命中坏缓存 → 永远缓冲中）
+   *   2) 整体重载当前轨再 play 一次
+   * 自愈成功/失败都向 UI 发状态，绝不无限循环（只试一轮）。
+   */
+  _armStartWatchdog() {
+    if (!this.isNativeEngine) return
+    clearTimeout(this._startWatchdog)
+    this._watchdogFired = false
+    this._startWatchdog = setTimeout(async () => {
+      if (this._watchdogFired || !this._wantPlaying) return
+      // 收到过时间事件 = 真的在播，看门狗无事可做
+      if (this._lastTimeEventAt && Date.now() - this._lastTimeEventAt < 5000) return
+      this._watchdogFired = true
+      console.warn('启动看门狗触发：play 后从未出声，清缓存重载')
+      this.onState({ state: 'buffering', isPlaying: true, reason: 'start-watchdog' })
+      try {
+        try { await NativeAudio.clearCache?.() } catch (_) {}
+        await this._nativeLoadTrack(this.trackIndex, this._fileTimeFor(this.trackIndex))
+        await NativeAudio.play({ assetId: this._assetId(this.trackIndex), time: this._fileTimeFor(this.trackIndex) })
+        this._playingAssetIdx = this.trackIndex
+        this._startDeadline = Date.now() + 15000
+        this._armStartWatchdog()   // 再观察一轮；仍不出声就真报错
+      } catch (e) {
+        console.warn('看门狗自愈失败', e)
+        this._starting = false
+        this.buffering = false
+        this.playing = false
+        this._wantPlaying = false
+        this.onState({ state: 'error', isPlaying: false, reason: 'start-watchdog-failed' })
+      }
+    // 默认 12 秒：冷启动/弱网真慢给了足够余量，缓存卡死也不至于让用户干等。
+    // 测试可通过 this._watchdogMs 注入更短的值（不必真等 12 秒）。
+    }, this._watchdogMs ?? 12000)
   }
 
   async pause() {
@@ -359,6 +413,7 @@ export class BookPlayer {
   }
 
   async stop({ silent = false } = {}) {
+    clearTimeout(this._startWatchdog)
     this._stopNativeTicker()
     this._wantPlaying = false
     this._starting = false
@@ -476,7 +531,7 @@ export class BookPlayer {
     // 有本地缓存就用本地文件：不耗流量、无网也能听
     const local = this.localMap?.[idx]
     const useLocal = !!local
-    await NativeAudio.preload({
+    const preloadArgs = {
       assetId,
       assetPath: useLocal ? local : url,
       isUrl: true,
@@ -488,7 +543,26 @@ export class BookPlayer {
         album: this.notification.album,
         artworkUrl: this.notification.artworkUrl,
       } : undefined,
-    })
+    }
+    try {
+      await NativeAudio.preload(preloadArgs)
+    } catch (firstErr) {
+      // 插件对"assetId 已存在"的 preload 直接 reject（ERROR_AUDIO_EXISTS）。
+      // 什么时候会发生：App 被系统杀掉时，原生层的 asset 没来得及 unload（前台服务
+      // 把进程保活），重开 App 后同一下标的 assetId 与残留的撞车 ——
+      // 表现就是「继续听第一本（被杀时正播的那本）永远加载不出来」：
+      // preload reject → load() 抛 → playItem 中断 → play() 没执行，
+      // 但 UI 已进播放页显示"正在播放"。
+      // 修法：先彻底卸载这条 assetId，再重试一次；再失败才真报错。
+      try { await NativeAudio.unload({ assetId }) } catch (_) {}
+      try { await NativeAudio.stop({ assetId }) } catch (_) {}
+      try {
+        await NativeAudio.preload(preloadArgs)
+      } catch (secondErr) {
+        console.warn('preload 两次失败', assetId, firstErr?.message, secondErr?.message)
+        throw secondErr
+      }
+    }
     this._loadedIdx.add(idx)
     if (fileTime > 0.5) {
       try { await NativeAudio.setCurrentTime({ assetId, time: fileTime }) } catch (_) {}
@@ -499,6 +573,7 @@ export class BookPlayer {
     // ev: { assetId, currentTime, duration }
     const idx = this._indexFromAssetId(ev.assetId)
     if (idx === null || idx !== this.trackIndex) return
+    this._lastTimeEventAt = Date.now()   // 供启动看门狗判断"真的出过声"
     const off = this.tracks[idx]?.startOffset || 0
     this.currentBookTime = off + (ev.currentTime || 0)
     this._timeListened += 1     // currentTime 事件约 1s 一次，近似累计
