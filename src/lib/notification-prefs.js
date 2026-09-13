@@ -1,5 +1,5 @@
 /**
- * 通知控制（老板 2026-09-15：锁屏控制要能用，普通通知可以关）
+ * 通知控制（老板 2026-09-13：锁屏控制要能用，普通通知可以关）
  *
  * Android 上有两条通知：
  *  A. 插件 MediaStyle 通知（ID 1001）—— 锁屏/下拉的播放控制（上一集/播放暂停/下一集），
@@ -14,7 +14,7 @@
  *    渠道用户完全感知不到，效果等同关闭。
  *  - 渠道设置在 App 装好后只能改 importance（用户改的除外），改完对已有通知立即生效。
  *
- * 锁屏控制可用性（本文件 2026-09-15 检查结论）：
+ * 锁屏控制可用性（本文件 2026-09-13 检查结论）：
  *  插件源码（NativeAudio.java）里 MediaSession 已完整接线：
  *    setupMediaSession() 注册 play/pause/stop/rewind/ffwd/seekTo 回调，
  *    通知用 MediaStyle + 三个按钮，由 showNotification:true 打开。

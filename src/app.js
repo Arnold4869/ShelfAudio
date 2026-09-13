@@ -83,7 +83,7 @@ export async function go(name, params = {}) {
     currentCleanup = null
   }
   // 离开页面时关掉语音浮层，避免它挂着麦克风。
-  // 性能（2026-09-14 审计）：动态 import + 桥调用每次切页都跑。语音浮层没打开时
+  // 性能（2026-09-13 审计）：动态 import + 桥调用每次切页都跑。语音浮层没打开时
   // （绝大多数切页），两个都白做 —— 浮层存在才需要清理。
   if (document.querySelector('.voice-overlay')) {
     document.querySelectorAll('.voice-overlay').forEach(e => e.remove())
@@ -124,7 +124,7 @@ function syncDockHeight() {
   const dock = $('#dock')
   if (!dock) return
   const h = dock.getBoundingClientRect().height
-  // 性能（2026-09-14 审计）：写 CSS 自定义属性会让整棵树的样式失效并触发重算。
+  // 性能（2026-09-13 审计）：写 CSS 自定义属性会让整棵树的样式失效并触发重算。
   // 这个函数在播放中由 updateMini 每秒调用一次，值其实几乎不变 ——
   // 值相同就跳过，省掉每秒一次的全树样式重算。
   if (h === _lastDockH) return
@@ -223,7 +223,7 @@ export function initPlayer() {
 
 // ---------------- 开始播放一本书 ----------------
 export async function playItem(item, { startTime } = {}) {
-  // 家长管控闸门（老板 2026-09-15）：不在允许时段 / 当天时长用完 → 直接拦下，
+  // 家长管控闸门（老板 2026-09-13）：不在允许时段 / 当天时长用完 → 直接拦下，
   // 连"加载中"都不显示，避免孩子以为坏了反复点。播放中途到点由 onState 里那个
   // 定时检查负责（见 initPlayer 的 guard 定时器）。
   const blocked = await playbackBlockedReason()
@@ -236,7 +236,7 @@ export async function playItem(item, { startTime } = {}) {
   const sameBook = state.current?.item?.id === item.id && !!player.tracks?.length
 
   // 同一本书已经在播（或暂停）→ 直接回播放页，**不要**重建会话重播。
-  // 老板 2026-09-16：「没缓存的，我刚听的，退出，进历史记录再点它，
+  // 老板 2026-09-13：「没缓存的，我刚听的，退出，进历史记录再点它，
   // 卡着播放两次一样感觉，播了 2 秒然后又从头播放」—— 根因就是这个重建：
   // 旧音频还在响（那 2 秒），新会话建好后从（被归零的）位置重新开播 →
   // 听感上就是"播了一次又从头播一次"。
@@ -307,12 +307,12 @@ export async function playItem(item, { startTime } = {}) {
   }
 
   // 离线缓存：按集懒查（只查当前要播的那一集）。
-  // 老板 2026-09-16 报「全缓存的书点历史记录没反应」——
+  // 老板 2026-09-13 报「全缓存的书点历史记录没反应」——
   // 旧写法把整本书每一集都 stat+getUri 各一次，536 集 = 1072 次原生桥调用，
   // 真机 0.5~3 秒纯等待、期间界面上什么都没发生。播放器换集时按需再查。
   const localResolver = (idx) => localTrackUriLazy(item.id, idx)
 
-  // 第一时间补记「继续听」（老板 2026-09-14：播放就该立刻出现在列表最上面，
+  // 第一时间补记「继续听」（老板 2026-09-13：播放就该立刻出现在列表最上面，
   // 不能等服务端 items-in-progress 慢慢更新）。
   // 放在 load 之前记，load 失败时在下面 catch 里撤销 —— 只留真正播起来的。
   try {
@@ -382,7 +382,7 @@ function updateMini() {
   const slot = $('#miniCoverSlot')
   const cov = $('#miniCover')
   if (slot) {
-    // 性能（2026-09-14 审计）：原来无条件 remove + insertAdjacentHTML 重建占位封面，
+    // 性能（2026-09-13 审计）：原来无条件 remove + insertAdjacentHTML 重建占位封面，
     // 而 updateMini 在每次播放/暂停/缓冲状态变化时都会跑 —— 白建 DOM，
     // 还会让封面图重复解码闪一下。只在"换了一本书"时重建。
     const sig = c.item?.id || c.title || ''
@@ -428,7 +428,7 @@ async function boot() {
   state.mode = 'kid'
   state.kidPin = (await store.get(CONFIG_KEYS.kidPin, '')) || ''
 
-  // 通知静默设置要在启动时重放一次（老板 2026-09-15）：
+  // 通知静默设置要在启动时重放一次（老板 2026-09-13）：
   // Android 的通知渠道级别只有在 App 主动调用时才更新，重装/清数据后
   // 渠道会回到默认 LOW —— 不重放的话"我明明关了通知怎么又出现了"。
   try {
@@ -505,7 +505,7 @@ route('about', async (root) => {
 
 // 家长设置（需要家长密码）：进度口径、触感、统计、服务器
 route('parents', async (root) => {
-  // 密码防护放在 route 层（老板 2026-09-15：只有家长设置要密码，其它设置项不要）。
+  // 密码防护放在 route 层（老板 2026-09-13：只有家长设置要密码，其它设置项不要）。
   // 为什么不能只拦入口按钮：统计页的「返回」也 go('parents')，只拦按钮会被绕过。
   // _parentUnlockedAt：本次解锁的有效期（进入后 10 分钟内不再重复要密码，
   // 否则在家长设置里点每一项都要输一次；离开 App 由进程结束自然失效）。

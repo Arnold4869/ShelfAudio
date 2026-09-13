@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""家长管控回归（老板 2026-09-15 五项需求）：
+"""家长管控回归（老板 2026-09-13 五项需求）：
 
  1. 设置页普通项不要密码，只有「家长设置」要
  2. 播放通知开关（静默 = 保留锁屏控制）
@@ -83,7 +83,7 @@ const results = []
 const ok = (name, cond, extra='') => results.push([cond ? '✅' : '❌', name, extra])
 
 // 周三 10:00
-const WED10 = new Date(2026, 8, 16, 10, 0)   // 2026-09-16 周三
+const WED10 = new Date(2026, 8, 16, 10, 0)   // 2026-09-13 周三
 const SAT21 = new Date(2026, 8, 19, 21, 0)   // 周六晚 21:00
 const SUN2  = new Date(2026, 8, 20, 2, 0)    // 周日凌晨 2:00（测跨午夜）
 

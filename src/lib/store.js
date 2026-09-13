@@ -61,9 +61,9 @@ export const CONFIG_KEYS = {
   kidLibraryIds: 'kidLibraryIds',
   haptics: 'haptics',                   // 触感反馈开关 '1' | '0'
   progressScope: 'progressScope',       // 进度条口径 'track'（单集，默认）| 'book'（整部作品）
-  hideVoice: 'hideVoice',               // 隐藏语音搜索按钮 '1' | '0'（老板 2026-09-14）
+  hideVoice: 'hideVoice',               // 隐藏语音搜索按钮 '1' | '0'（老板 2026-09-13）
   listeningLog: 'listeningLog',         // 收听时长记录（JSON 数组）
-  // ---- 老板 2026-09-15 ----
+  // ---- 老板 2026-09-13 ----
   quietNotification: 'quietNotification', // 静默「普通通知」'1'|'0'（锁屏控制保留）
   volumeCap: 'volumeCap',                 // 全局音量上限 0.1~1（'1'=不限制）
   timeLimitEnabled: 'timeLimitEnabled',   // 使用时间管控开关 '1'|'0'

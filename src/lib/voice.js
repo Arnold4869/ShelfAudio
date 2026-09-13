@@ -333,7 +333,7 @@ export function currentText() {
 
 /** 硬停：中断当前会话（清理监听 + 释放原生资源） */
 export async function forceStopCurrent() {
-  // 性能（2026-09-14 审计）：go() 每次切页都会调这里。没有进行中的语音会话时
+  // 性能（2026-09-13 审计）：go() 每次切页都会调这里。没有进行中的语音会话时
   // （绝大多数切页），直接返回 —— 省一次原生桥 SpeechRecognition.stop() 往返。
   if (!activeSession) return
   activeSession = null

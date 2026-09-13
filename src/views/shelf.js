@@ -30,7 +30,7 @@ export async function renderShelf(root) {
 
   let items = []
   try {
-    // 缓存策略（2026-09-14 性能审计后重定）：
+    // 缓存策略（2026-09-13 性能审计后重定）：
     // 纯靠短 TTL 不行 —— 3 秒几乎永不命中（回书架都要重新 4 个请求、白等几百毫秒），
     // 60 秒又不刷新进度（2026-09-13 老板报过"刚听完的书回到书架还显示旧进度"）。
     // 方案：列表本体缓存 60 秒（书单很少变），但进度显示一律以随后的
@@ -59,7 +59,7 @@ export async function renderShelf(root) {
   // 所以本地按 progressLastUpdate 再排一次；该字段缺失时退回 mediaProgress.lastUpdate。
   let inProgress = []
   let progressMapEarly = {}
-  // 性能（2026-09-14 审计）：me() 和 itemsInProgress() 原来串行（两次 RTT 相加），
+  // 性能（2026-09-13 审计）：me() 和 itemsInProgress() 原来串行（两次 RTT 相加），
   // 两者互不依赖 → Promise.all 并行，书架渲染少等一个往返。
   const localCont = await listContinueLocal()   // 本地读，先做（极快）
   const _meP = abs.me().catch(() => null)
@@ -90,7 +90,7 @@ export async function renderShelf(root) {
       .map(mp => mp.libraryItemId || mp.mediaItemId)
       .filter(Boolean)
   )
-  // ⚠️ 审计发现（2026-09-14，真实服务器实测）：ABS 的 /api/me/items-in-progress
+  // ⚠️ 审计发现（2026-09-13，真实服务器实测）：ABS 的 /api/me/items-in-progress
   // **会返回已标记 hideFromContinueListening 的书**（实测「示例故事乙1」「示例科普」
   // 两本 hide=true 却仍在列表里）。所以「长按删除」看着没生效 —— 服务端确实记了隐藏，
   // 但列表接口照样把它吐回来。必须客户端自己按 mediaProgress 过滤。
@@ -129,7 +129,7 @@ export async function renderShelf(root) {
          <div class="page-title">我的书架</div>
        </div>`
 
-  // 两个入口按钮并排等大（老板 2026-09-14）：「历史记录」「我的收藏」
+  // 两个入口按钮并排等大（老板 2026-09-13）：「历史记录」「我的收藏」
   const entBtn = (id, ico, label) => `<button class="entry-btn" id="${id}" aria-label="${label}">
         <span class="entry-ic">${icon(ico, 22)}</span><span class="entry-label">${label}</span>
       </button>`
@@ -137,12 +137,12 @@ export async function renderShelf(root) {
       ${entBtn('historyEntryCard', 'list', '历史记录')}
       ${entBtn('favEntryCard', 'heart', '我的收藏')}
     </div>`
-  // 继续听：**列表形式**（老板 2026-09-14 拍板）。
+  // 继续听：**列表形式**（老板 2026-09-13 拍板）。
   // 之前是横排卡片，问题：不同书封面比例不一 → 卡片一高一矮；
   // 无封面的书只显示占位图的一小截，带图标的又不一样，观感很乱。
   // 沿用 App 里通用的 .list-item 列表样式（与收藏/缓存/搜索结果一致），
   // 高度统一、信息一行一列，不依赖封面比例。
-  // ⚠️ 首页不再放历史记录预览列表（老板 2026-09-14：「首页现在有两个历史记录，
+  // ⚠️ 首页不再放历史记录预览列表（老板 2026-09-13：「首页现在有两个历史记录，
   // 把第二个那个占用大的历史记录去掉」）。原来这里是「入口按钮 + 小节标题 + 3 条预览」，
   // 等于同一件事出现两次，而且预览列表很占竖向空间。现在只留顶部那两枚入口按钮，
   // 点「历史记录」进完整清单页。
@@ -176,7 +176,7 @@ export async function renderShelf(root) {
     `<div class="shelf-grid">${items.map(it => cardHTML(it, true)).join('')}</div>`
 
   await uiPrefsReady()   // 先确保偏好读完，按钮显隐不闪
-  // 语音按钮：设置页可隐藏（老板 2026-09-14：「加个开关…可以隐藏语音按钮」）
+  // 语音按钮：设置页可隐藏（老板 2026-09-13：「加个开关…可以隐藏语音按钮」）
   root.insertAdjacentHTML('beforeend',
     (voiceHidden() ? '' : `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>`)
     + kidTabsHTML('kidhome'))
@@ -207,7 +207,7 @@ export async function renderShelf(root) {
       if (!it) return
       // 有进度就接着听（卡片上有"听 N%"徽标，从头播会丢进度）。
       // ⚠️ 阈值不能是 >5 秒：孩子的书单集很短、随手点开就退出，
-      // 听 2~5 秒也是真实进度，归零会"重听一遍"（老板 2026-09-16）。
+      // 听 2~5 秒也是真实进度，归零会"重听一遍"（老板 2026-09-13）。
       const prog = progressMap[it.id]
       const resumeAt = (prog && !prog.isFinished) ? undefined : 0
       try {

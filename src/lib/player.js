@@ -170,7 +170,7 @@ export class BookPlayer {
     // ⚠️ 必须直接赋值，不能 `|| this.localMap`：换书时若新书没传 localMap，
     // 会继承上一本的映射，把 A 书的本地文件当成 B 书的音轨加载。
     this.localMap = localMap || {}
-    // 懒解析器（老板 2026-09-16）：本地缓存按集现查，替代"整本书一次查完"的
+    // 懒解析器（老板 2026-09-13）：本地缓存按集现查，替代"整本书一次查完"的
     // localMap —— 536 集的书旧路径要 1072 次原生桥调用。两者都给时优先 lazy。
     this._localResolver = typeof localResolver === 'function' ? localResolver : null
     this.sessionId = sessionId || null
@@ -180,7 +180,7 @@ export class BookPlayer {
     this._timeListened = 0
     this._lastSyncAt = Date.now()
 
-    // 审计加固（2026-09-14）：恢复落点合法性校验，必须在 _trackIndexForBookTime 之前做 ——
+    // 审计加固（2026-09-13）：恢复落点合法性校验，必须在 _trackIndexForBookTime 之前做 ——
     // 它遇到 NaN 会一路 false 走到末轨、遇到越界进度会返回不存在的位置。
     // 服务器进度可能越界（currentTime ≥ 总时长：清数据残留 / 上次进度写坏），
     // 越界的表现就是"加载后一动不动"或瞬间 complete。非法落点 → 归零从头播。
@@ -338,7 +338,7 @@ export class BookPlayer {
    * @param {number} bookTime 整本书的时间位置（秒）
    * @param {object} [opts]
    * @param {boolean} [opts.autoPlay=false] 跳完强制开播。
-   *   选集走 true（老板 2026-09-15：「点选一集之后不自动播放」—— 之前语义是
+   *   选集走 true（老板 2026-09-13：「点选一集之后不自动播放」—— 之前语义是
    *   「跟随当前状态」，暂停态点选集就停在暂停，看起来像点了没反应）；
    *   进度条拖拽/±15s 保持默认 false（用户拖到某处不一定要立刻响）。
    */
@@ -423,7 +423,7 @@ export class BookPlayer {
 
   /** 音量增减（语音“大声点/小声点”用），0.1~1.0 */
   async setVolume(v, { enforceCap = true } = {}) {
-    // 家长音量上限（老板 2026-09-15）：设置过 volumeCap 后，App 内任何音量调整
+    // 家长音量上限（老板 2026-09-13）：设置过 volumeCap 后，App 内任何音量调整
     // （语音"大声点"、UI）都不会超过上限。系统音量不归我们管。
     if (enforceCap) {
       try {
@@ -453,7 +453,7 @@ export class BookPlayer {
     await fgStop()
     if (this.isNativeEngine) {
       // 只卸载「真正装载过」的 asset —— 不要遍历全部音轨！
-      // 审计（2026-09-15，老板报「历史记录播放有时不行」）：
+      // 审计（2026-09-13，老板报「历史记录播放有时不行」）：
       //   《示例长篇》1546 轨，原来这里 for 全表逐个 await unload，
       //   实测 1548 次原生桥调用，真机 0.8~4.6 秒纯等待；这些 assetId 里
       //   除了当前装载的，其余根本没 preload 过（unload 会 reject，白跑一趟）。

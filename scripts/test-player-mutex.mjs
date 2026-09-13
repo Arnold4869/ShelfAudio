@@ -316,7 +316,7 @@ console.log('\n=== 10. 恢复落点合法性（播放路径审计加固）===')
      `idx=${p.trackIndex} t=${p.currentBookTime}`)
 }
 
-console.log('\n=== 12. 选集后自动播放（老板 2026-09-15：点选一集不自动播）===')
+console.log('\n=== 12. 选集后自动播放（老板 2026-09-13：点选一集不自动播）===')
 {
   state.assets.clear(); state.calls.length = 0
   const p = new BookPlayer({})

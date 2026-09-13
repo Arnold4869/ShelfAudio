@@ -62,7 +62,7 @@ public class PlaybackServicePlugin extends Plugin {
         }
     }
 
-    /** 老板 2026-09-15：普通通知静默开关（锁屏控制保留，见 PlaybackService.applyNotificationMode） */
+    /** 老板 2026-09-13：普通通知静默开关（锁屏控制保留，见 PlaybackService.applyNotificationMode） */
     @PluginMethod
     public void setNotificationMode(PluginCall call) {
         try {

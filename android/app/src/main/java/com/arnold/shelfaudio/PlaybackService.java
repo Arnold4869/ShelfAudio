@@ -33,7 +33,7 @@ public class PlaybackService extends Service {
     public static final String ACTION_START = "com.arnold.shelfaudio.START";
     public static final String ACTION_UPDATE = "com.arnold.shelfaudio.UPDATE";
     public static final String ACTION_STOP = "com.arnold.shelfaudio.STOP";
-    // 老板 2026-09-15：可关"普通通知"但保留锁屏控制（插件 MediaStyle 那条不动）。
+    // 老板 2026-09-13：可关"普通通知"但保留锁屏控制（插件 MediaStyle 那条不动）。
     public static final String ACTION_NOTIFICATION_MODE = "com.arnold.shelfaudio.NOTIF_MODE";
     public static final String EXTRA_NOTIF_MODE = "mode";   // "normal" | "quiet"
     public static final String EXTRA_TITLE = "title";

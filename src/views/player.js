@@ -151,7 +151,7 @@ export async function renderPlayer(root) {
   paintProgress(); paintState()
 
   // ---- 事件 ----
-  // 性能（2026-09-14 审计）：sa:time 每秒触发一次。播放页里迷你条本来就是隐藏的，
+  // 性能（2026-09-13 审计）：sa:time 每秒触发一次。播放页里迷你条本来就是隐藏的，
 // updateMini 每秒跑一遍（读 DOM、改 class、算 dock 高度）纯属白做 —— 去掉。
 // 迷你条的状态在 onState（播放/暂停切换，低频）时更新就够。
 const onTime = () => { if (document.body.dataset.view === 'player') paintProgress() }
@@ -489,7 +489,7 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
     // list.parentElement 变成不滚动的 .sheet-card，滚动补画永不触发。
     const list = modal.querySelector('#chList')
 
-    // 性能（2026-09-14 审计）：536 集一次性渲染 = 2149 个 DOM 节点 + 28ms 布局
+    // 性能（2026-09-13 审计）：536 集一次性渲染 = 2149 个 DOM 节点 + 28ms 布局
     //（桌面 Chrome 实测；小米 8SE 的老 WebView 会放大 3~5 倍，弹窗打开明显顿）。
     // 改成按需渲染：只画可视区附近 ±PAGE 条，滚动时增量补画。行高固定（CSS 已定），
     // 用一个总高容器 + 绝对定位窗口，滚动条长度始终正确。
@@ -563,7 +563,7 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
       const i = parseInt(el.dataset.ch, 10)
       close()
       // autoPlay：选集是"我要听这一集"的明确意图，暂停态点也要响
-      //（老板 2026-09-15：点选一集后不自动播放）。换集时播放器内部会先停旧音轨。
+      //（老板 2026-09-13：点选一集后不自动播放）。换集时播放器内部会先停旧音轨。
       await p.seek(chapters[i].start || 0, { autoPlay: true })
     })
   }

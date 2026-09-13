@@ -3,7 +3,7 @@
  *
  * 数据源 = 服务端 items-in-progress + 本地补记（continue-local），合并去重，
  * 并**必须过滤 hideFromContinueListening**（审计发现 ABS 列表接口会返回已隐藏的书，
- * 不过滤就会「长按删了又回来」——老板 2026-09-14 实测反馈）。
+ * 不过滤就会「长按删了又回来」——老板 2026-09-13 实测反馈）。
  *
  * 产出条目：{ id, media, pct, finished, raw }，raw 保留原 item 供 playItem 用。
  */

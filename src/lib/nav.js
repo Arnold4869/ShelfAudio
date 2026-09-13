@@ -37,7 +37,7 @@ export function wireKidTabs(root, { go, requireParentPin }) {
     const nav = b.dataset.nav
     b.onclick = async () => {
       haptic.tap()
-      // 老板 2026-09-15：只有「家长设置」需要密码；普通设置页直接进。
+      // 老板 2026-09-13：只有「家长设置」需要密码；普通设置页直接进。
       // （原来整个 settings 页都拦，普通用户改语音开关也要输密码，太重。）
       go(nav)
     }

@@ -90,7 +90,7 @@ export async function renderSettings(root, { firstRun = false } = {}) {
   $('#rowCache').onclick = () => { haptic.tap(); go('cache') }
 
   // 家长设置：进之前验密码。没设过密码就直接进（否则用户永远进不去）。
-  // 语音按钮显隐（老板 2026-09-14）：点一下切换，立刻生效（下次渲染视图就不显示）
+  // 语音按钮显隐（老板 2026-09-13）：点一下切换，立刻生效（下次渲染视图就不显示）
   $('#rowVoice').onclick = async () => {
     haptic.tap()
     const next = !voiceHidden()

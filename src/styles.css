@@ -175,7 +175,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
      靠圆角和间距跟背景区分就够了 */
   transition: transform .14s ease;
   position: relative;
-  /* 卡片高度统一（老板 2026-09-14：「有的卡片比别的小」）：
+  /* 卡片高度统一（老板 2026-09-13：「有的卡片比别的小」）：
      之前高度由内容撑开 —— 标题 1 行 vs 2 行、有无「听 N%」徽标/进度条，
      实测同一屏出现 237/251/258/272 四种高度，看着参差。
      改成内部网格：封面 1fr（正方形由 cover-slot 保底）+ 文字区固定高度。 */
@@ -285,7 +285,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
   display: flex; align-items: baseline; gap: 8px;
 }
 .section-h small { font-weight: 500; color: var(--text-dim); font-size: 13px; }
-/* 继续听：列表形式（老板 2026-09-14 拍板，替代原横排卡片 ——
+/* 继续听：列表形式（老板 2026-09-13 拍板，替代原横排卡片 ——
    卡片因封面比例不一而高矮不齐、观感乱；列表行高统一、与收藏/缓存页一致）。
    行结构直接复用通用 .list-item，这里只补少量差异。 */
 .continue-list { margin-bottom: 22px; }
@@ -293,7 +293,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 /* 长按删除：按住时轻微下沉，给个明确反馈 */
 .continue-item.longpress { transform: scale(.96); }
 .continue-item:active { transform: scale(.985); }
-/* 顶部两个入口按钮：「历史记录」「我的收藏」，等大并排（老板 2026-09-14）。
+/* 顶部两个入口按钮：「历史记录」「我的收藏」，等大并排（老板 2026-09-13）。
    用 grid 1fr 1fr 保证无论文字长短都一样宽 —— 之前一个用卡片一个用列表行，
    两者尺寸不同，看着不齐。 */
 .entry-row {

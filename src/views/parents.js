@@ -19,7 +19,7 @@ import { timeWindowLabel } from '../lib/parental.js'
 
 export async function renderParent(root) {
   const scope = (await store.get(CONFIG_KEYS.progressScope, 'track')) === 'book' ? 'book' : 'track'
-  // 老板 2026-09-15 新增：通知静默 / 音量上限 / 使用时间
+  // 老板 2026-09-13 新增：通知静默 / 音量上限 / 使用时间
   const quiet = (await store.get(CONFIG_KEYS.quietNotification, '0')) === '1'
   const cap = Number(await store.get(CONFIG_KEYS.volumeCap, '1'))
   const capPct = Math.round((Number.isFinite(cap) ? cap : 1) * 100)
@@ -182,7 +182,7 @@ export async function renderParent(root) {
   }
 
   /**
-   * 收听时间设置弹窗（老板 2026-09-15）
+   * 收听时间设置弹窗（老板 2026-09-13）
    * 工作日（周一~五）与周末分开设允许时段，支持跨午夜（如 20:00–07:00）；
    * 另有"每天最多听多久"。留空 = 不限制对应维度。
    */

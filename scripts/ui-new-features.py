@@ -364,7 +364,7 @@ with sync_playwright() as pw:
     ok("播放页无 JS 报错", not errs, str(errs[:3]))
     ctx.close()
 
-    print("\n=== L. 继续听：列表样式 + 本地补记排最前（老板 2026-09-14）===")
+    print("\n=== L. 继续听：列表样式 + 本地补记排最前（老板 2026-09-13）===")
     ctx, pg, errs = mk(br, 'kid')
     # 样式：应为 .list-item 列表行，且不再有横排卡片
     n_card = pg.evaluate("document.querySelectorAll('.continue-card').length")
@@ -374,18 +374,18 @@ with sync_playwright() as pw:
     # 列表行高度一致性：取前两个条目比较高度
     hs = pg.evaluate("[...document.querySelectorAll('.continue-item')].slice(0,3).map(e=>Math.round(e.getBoundingClientRect().height))")
     ok("列表行高统一", len(set(hs)) <= 1, str(hs))
-    # 入口区（老板 2026-09-14 定稿）：「历史记录」「我的收藏」等大并排两枚按钮
+    # 入口区（老板 2026-09-13 定稿）：「历史记录」「我的收藏」等大并排两枚按钮
     ok("历史记录+我的收藏入口并排", pg.evaluate(
         "!!document.querySelector('.entry-row .entry-btn#historyEntryCard') && !!document.querySelector('.entry-row .entry-btn#favEntryCard')"))
     # 等大：两个按钮宽度一致
     w = pg.evaluate("[document.querySelector('#historyEntryCard'), document.querySelector('#favEntryCard')].map(e=>Math.round(e.getBoundingClientRect().width))")
     ok("两入口按钮等宽", len(w) == 2 and w[0] == w[1], str(w))
-    # 老板 2026-09-14 晚间：首页不再有第二个历史记录（预览列表已删）
+    # 老板 2026-09-13 晚间：首页不再有第二个历史记录（预览列表已删）
     n = pg.evaluate("document.querySelectorAll('.continue-item, .section-h').length")
     ok("首页无第二个历史记录（无预览列表）", n == 0, f"n={n}")
     ctx.close()
 
-    print("\n=== M. 历史记录页（老板 2026-09-14）===")
+    print("\n=== M. 历史记录页（老板 2026-09-13）===")
     ctx, pg, errs = mk(br, 'kid')
     # 点入口进历史页
     pg.evaluate("document.querySelector('#historyEntryCard').click()")
