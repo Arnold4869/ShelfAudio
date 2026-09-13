@@ -34,6 +34,9 @@ const store = {
 // 改成把 parental.js 里的 `./store.js` 换成本地桩文件路径
 '''
 os.makedirs('/tmp/parental_test', exist_ok=True)
+for _stale in ('store.js','stats.js','parental.js','run.js'):
+    try: os.remove('/tmp/parental_test/' + _stale)
+    except OSError: pass
 stub_store = '''
 const mem = new Map()
 export const store = {
@@ -53,7 +56,7 @@ export const CONFIG_KEYS = {
   timeWeekendTo:'timeWeekendTo', timeDailyMinutes:'timeDailyMinutes',
 }
 '''
-open('/tmp/parental_test/store.js','w').write(stub_store)
+open('/tmp/parental_test/store.mjs','w').write(stub_store)
 # stats 桩（dayRecords 返回注入值）
 stub_stats = '''
 export let TODAY = []
@@ -61,17 +64,20 @@ export function __set(v){ TODAY = v }
 export async function dayRecords(){ return TODAY }
 export function fmtDuration(sec){ return '' }
 '''
-open('/tmp/parental_test/stats.js','w').write(stub_stats)
+open('/tmp/parental_test/stats.mjs','w').write(stub_stats)
 
 src = (ROOT / 'src/lib/parental.js').read_text()
-src = src.replace("from './store.js'", "from '/tmp/parental_test/store.js'")
-src = src.replace("from './stats.js'", "from '/tmp/parental_test/stats.js'")
-open('/tmp/parental_test/parental.js','w').write(src)
+src = src.replace("from './store.js'", "from '/tmp/parental_test/store.mjs'")
+src = src.replace("from './stats.js'", "from '/tmp/parental_test/stats.mjs'")
+# parental.js 里 stats 是**动态** import（import('./stats.js')），上面那条静态替换匹配不到
+src = src.replace("import('./stats.js')", "import('/tmp/parental_test/stats.mjs')")
+src = src.replace("import('.\\/stats.js')", "import('/tmp/parental_test/stats.mjs')")
+open('/tmp/parental_test/parental.mjs','w').write(src)
 
 test_js = r'''
-import { withinTimeWindow, dailyQuota, playbackBlockedReason, volumeCap } from '/tmp/parental_test/parental.js'
-import { store, CONFIG_KEYS } from '/tmp/parental_test/store.js'
-import { __set as setDay } from '/tmp/parental_test/stats.js'
+import { withinTimeWindow, dailyQuota, playbackBlockedReason, volumeCap } from '/tmp/parental_test/parental.mjs'
+import { store, CONFIG_KEYS } from '/tmp/parental_test/store.mjs'
+import { __set as setDay } from '/tmp/parental_test/stats.mjs'
 
 const results = []
 const ok = (name, cond, extra='') => results.push([cond ? '✅' : '❌', name, extra])
