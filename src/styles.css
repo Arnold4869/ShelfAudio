@@ -320,12 +320,12 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 /* 内容底部留白 = dock 实测高度 + 一点呼吸空间。
    dock 高度已含安全区，不用再加。 */
 #view { padding-bottom: calc(var(--dock-h) + 20px); }
-/* 播放页：没有底栏也没有迷你条（进播放页会隐藏），不需要为它们留白。
-   但内容总高常小于屏幕 → 空白会全堆在底部（看着"下面空一大块"）。
-   所以让播放页撑满屏高，用 auto 边距把内容组垂直居中，空白分到上下两侧。
-   不用 justify-content:center —— 内容超出时它会裁掉顶部；auto 边距在溢出时会自动归零。 */
+/* 播放页：有底栏（kids 一直在），底部留白必须含 dock 高度。
+   旧版播放页没有底栏所以只留 safe-bottom —— 现在底栏会把「倍速/定时/选集」
+   一行压住只露上半截（小米 8SE 实测）。margin-bottom:auto 仍负责把
+   剩余空白分到上下两侧，内容超出时 auto 归零、可正常滚动。 */
 body[data-view="player"] #view {
-  padding-bottom: calc(var(--safe-bottom) + 14px);
+  padding-bottom: calc(var(--dock-h) + 20px);
   display: flex; flex-direction: column;
   min-height: 100dvh;
 }
@@ -578,6 +578,30 @@ body[data-tabs="0"] .mini {
 .sheet-item:active { background: rgba(255,255,255,.06); }
 .sheet-ic { display: grid; place-items: center; color: var(--text-dim); flex: 0 0 22px; }
 .sheet-label { flex: 1; }
+
+/* ---------- 选集弹窗（整屏浮层 + 内部滚动列表） ---------- */
+/* .sheet-full 复用 .lock 的遮罩定位，只是卡片更大、内部滚动 */
+.sheet-full { align-items: stretch; padding: max(24px, var(--safe-top)) 0 max(24px, var(--safe-bottom)); }
+.sheet-card {
+  width: min(560px, 100%); margin: auto;
+  max-height: 100%; display: flex; flex-direction: column;
+  background: var(--card); border-radius: var(--radius);
+  padding: 14px 0 10px; overflow: hidden;
+}
+.sheet-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 18px 10px; border-bottom: 1px solid rgba(255,255,255,.07);
+}
+.sheet-title { font-size: 17px; font-weight: 800; }
+.sheet-count { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-left: 6px; }
+.sheet-body {
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 6px 12px 4px;
+}
+/* 弹窗里的章节行复用 .chapter-item，但间距收紧一些（536 集要滚得动） */
+.sheet-body .chapter-item { padding: 12px 8px; margin-bottom: 2px; border-radius: 12px; }
+.sheet-body .chapter-item:active { background: rgba(255,255,255,.05); }
+.sheet-body .chapter-item.active { background: rgba(124,92,255,.18); }
 
 /* ---------- 统计页 ---------- */
 .day-switch { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 14px; scrollbar-width: none; }

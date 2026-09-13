@@ -10,8 +10,6 @@ import { icon } from '../lib/icons.js'
 
 let sleepTimer = null
 let sleepAt = 0
-let adultTab = 'chapters'
-let chaptersOpen = false   // 章节面板是否展开（默认收起，点「选集」或三个点才展开）
 // 进度条口径：'track' = 当前这一集（默认）；'book' = 整部作品。
 // 之前写死了整本（ABS 的 currentTime 是全书累计秒），用户看着"进度条是整个作品的"很别扭。
 let progressScope = 'track'
@@ -50,8 +48,6 @@ export async function renderPlayer(root) {
   progressScope = (await store.get(CONFIG_KEYS.progressScope, 'track')) === 'book' ? 'book' : 'track'
   const meta = c.item.media?.metadata || {}
   const chapters = c.chapters || []
-  // 章节列表默认收起，点「选集」或右上角三个点再展开
-  chaptersOpen = false
 
   // 收藏/缓存状态：**不在渲染前 await**！
   // 之前这里串行等 collections()（网络请求）+ hasLocal + isCached 才画页面，
@@ -218,7 +214,6 @@ export async function renderPlayer(root) {
     $('#btnRate').textContent = next.toFixed(2).replace(/0$/, '') + '×'
     await store.set(CONFIG_KEYS.playbackRate, String(next))
     toast('播放速度 ' + next + '×')
-    if (adultTab === 'info' && chaptersOpen) renderExtra()
   }
 
   // ---- 睡眠定时 ----
@@ -251,7 +246,8 @@ export async function renderPlayer(root) {
   // 三个点在所有播放器里都是"针对当前内容的操作"。
   $('#btnMore').onclick = () => { haptic.tap(); openEpisodeMenu() }
 
-  /** 当前集的操作菜单（收藏 / 书签 / 选集 / 倍速 / 定时 / 书籍信息） */
+  /** 当前集的操作菜单（老板 2026-09-13：播放页已有的按钮不再重复 ——
+   *  收藏(心形)/选集/倍速/定时 都在页面上，这里只留缓存和书籍信息） */
   function openEpisodeMenu() {
     const ch = chapters[p.trackIndex]
     const t = c.tracks[p.trackIndex]
@@ -261,25 +257,9 @@ export async function renderPlayer(root) {
     modal.innerHTML = `<div class="lock-card">
       <div class="lock-title">${esc(curCh)}</div>
       <div class="lock-sub">第 ${p.trackIndex + 1} / ${c.tracks.length} 集${t?.duration ? ' · ' + fmtTime(t.duration) : ''}</div>
-      <button class="sheet-item" data-act="fav">
-        <span class="sheet-ic">${icon('heart', 20)}</span>
-        <span class="sheet-label">${favState.on ? '取消收藏' : '收藏这本书'}</span>
-      </button>
       <button class="sheet-item" data-act="download">
         <span class="sheet-ic">${icon('download', 20)}</span>
         <span class="sheet-label">${cachedNow ? '已缓存（点击删除）' : '缓存到本机（离线听）'}</span>
-      </button>
-      <button class="sheet-item" data-act="chapters">
-        <span class="sheet-ic">${icon('list', 20)}</span>
-        <span class="sheet-label">选集</span>
-      </button>
-      <button class="sheet-item" data-act="rate">
-        <span class="sheet-ic">${icon('play', 20)}</span>
-        <span class="sheet-label">播放速度（当前 ${(p.rate || 1)}×）</span>
-      </button>
-      <button class="sheet-item" data-act="sleep">
-        <span class="sheet-ic">${icon('timer', 20)}</span>
-        <span class="sheet-label">睡眠定时</span>
       </button>
       <button class="sheet-item" data-act="info">
         <span class="sheet-ic">${icon('info', 20)}</span>
@@ -293,13 +273,33 @@ export async function renderPlayer(root) {
       const act = b.dataset.act
       haptic.select()
       modal.remove()
-      if (act === 'fav') await toggleFav()
-      else if (act === 'download') await toggleDownload()
-      else if (act === 'chapters') { chaptersOpen = true; adultTab = 'chapters'; renderExtra(); $('#extra')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
-      else if (act === 'rate') $('#btnRate').click()
-      else if (act === 'sleep') $('#btnSleep').click()
-      else if (act === 'info') { adultTab = 'info'; chaptersOpen = true; renderExtra(); $('#extra')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
+      if (act === 'download') await toggleDownload()
+      else if (act === 'info') openInfoSheet()
     })
+  }
+
+  /** 书籍信息弹窗（原来塞在播放页底部的 renderExtra，改独立窗口） */
+  function openInfoSheet() {
+    const m = c.item.media || {}
+    const md = m.metadata || {}
+    const modal = document.createElement('div')
+    modal.className = 'lock'
+    modal.innerHTML = `<div class="lock-card">
+      <div class="lock-title">书籍信息</div>
+      <div style="line-height:1.9;font-size:14px;text-align:left">
+        <div><span style="color:var(--text-dim)">书名：</span>${esc(md.title || '')}</div>
+        <div><span style="color:var(--text-dim)">作者：</span>${esc(md.authorName || '未知')}</div>
+        <div><span style="color:var(--text-dim)">演播：</span>${esc(md.narratorName || '未知')}</div>
+        <div><span style="color:var(--text-dim)">时长：</span>${fmtTime(c.duration)}</div>
+        <div><span style="color:var(--text-dim)">集数：</span>${c.tracks.length}</div>
+        <div><span style="color:var(--text-dim)">倍速：</span>${(p.rate || 1)}×</div>
+      </div>
+      ${md.description ? `<div style="font-size:13px;line-height:1.8;color:var(--text-dim);text-align:left;max-height:180px;overflow:auto">${esc(String(md.description).replace(/<[^>]+>/g, '').slice(0, 600))}</div>` : ''}
+      <div class="lock-actions"><button class="btn ghost" id="infoClose">关闭</button></div>
+    </div>`
+    document.body.appendChild(modal)
+    modal.querySelector('#infoClose').onclick = () => modal.remove()
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove() })
   }
 
   /**
@@ -462,19 +462,52 @@ export async function renderPlayer(root) {
     }
   }
   if ($('#btnChapters')) {
-    // 同样必须用 innerHTML，否则图标被抹掉
-    const paintChapterBtn = () => {
-      $('#btnChapters').innerHTML = icon('list', 18) + (chaptersOpen ? ' 收起' : ' 选集')
-    }
-    paintChapterBtn()
-    $('#btnChapters').onclick = () => {
-      chaptersOpen = !chaptersOpen
-      adultTab = 'chapters'
-      renderExtra()
-      paintChapterBtn()
-      if (chaptersOpen) $('#extra')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      else scrollPlayerIntoView()
-    }
+    // 点「选集」= 弹出独立窗口选（老板 2026-09-13 要求），不再在播放页往下拉列表。
+    // 理由：下划列表会把播放页撑长、控件被挤出屏幕，选完还得滚回来。
+    $('#btnChapters').onclick = () => { haptic.tap(); openChapterSheet() }
+  }
+
+  /** 选集弹窗：整屏浮层 + 可滚动列表，当前集高亮并自动滚到可见处 */
+  function openChapterSheet() {
+    const modal = document.createElement('div')
+    modal.className = 'lock sheet-full'
+    modal.innerHTML = `<div class="sheet-card">
+      <div class="sheet-head">
+        <div class="sheet-title">选集 <span class="sheet-count">共 ${chapters.length} 集</span></div>
+        <button class="icon-btn" id="chClose" aria-label="关闭">${icon('back', 20)}</button>
+      </div>
+      <div class="sheet-body" id="chList">
+        ${chapters.map((ch, i) => `
+          <div class="chapter-item ${i === p.trackIndex ? 'active' : ''}" data-ch="${i}">
+            <div class="chapter-idx">${i + 1}</div>
+            <div class="chapter-title">${esc(ch.title || '第 ' + (i + 1) + ' 集')}</div>
+            <div class="chapter-dur">${fmtTime((ch.end || 0) - (ch.start || 0))}</div>
+          </div>`).join('')}
+      </div>
+    </div>`
+    document.body.appendChild(modal)
+
+    // 打开时把当前集滚到可视区中间（536 集的书，否则要自己翻很久）
+    const list = modal.querySelector('#chList')
+    const act = list.querySelector('.chapter-item.active')
+    if (act) requestAnimationFrame(() => {
+      try { act.scrollIntoView({ block: 'center' }) } catch (_) {}
+    })
+
+    const close = () => modal.remove()
+    modal.querySelector('#chClose').onclick = () => { haptic.tap(); close() }
+    // 点遮罩关闭
+    modal.addEventListener('click', e => { if (e.target === modal) close() })
+
+    list.querySelectorAll('[data-ch]').forEach(el => {
+      el.onclick = async () => {
+        haptic.select()
+        const i = parseInt(el.dataset.ch, 10)
+        close()
+        // 正在播时换集：播放器内部会停旧音轨再播新的（见 _keepOnly）
+        await p.seek(chapters[i].start || 0)
+      }
+    })
   }
   /** 把播放区滚回视野中央：选完章节后用户应看到封面+播放按钮，而不是页面底部的列表 */
   function scrollPlayerIntoView() {
@@ -486,57 +519,12 @@ export async function renderPlayer(root) {
     })
   }
 
+  // 章节列表与书籍信息都是独立弹窗（老板 2026-09-13），
+  // 播放页底部不再内联任何长列表 —— 之前会把控件挤出屏幕、选完还要滚回来。
   function renderExtra() {
     const box = $('#extra')
-    // 收起时清空。注意：儿童模式也要能渲染章节，
-    // 之前这里 `if (kid) return` 导致儿童模式点「选集」永远没反应。
-    if (!chaptersOpen) { box.innerHTML = ''; return }
-
-    if (adultTab === 'chapters' || kid) {
-      box.innerHTML = `
-        <div class="section-h" style="margin-top:22px">章节 <small>共 ${chapters.length} 集</small></div>
-        <div class="chapters kid-chapters">
-        ${chapters.map((ch, i) => `
-          <div class="chapter-item ${i === p.trackIndex ? 'active' : ''}" data-ch="${i}">
-            <div class="chapter-idx">${i + 1}</div>
-            <div class="chapter-title">${esc(ch.title || '第 ' + (i + 1) + ' 集')}</div>
-            <div class="chapter-dur">${fmtTime((ch.end || 0) - (ch.start || 0))}</div>
-          </div>`).join('')}
-        </div>`
-      box.querySelectorAll('[data-ch]').forEach(el => {
-        el.onclick = async () => {
-          haptic.select()
-          const i = parseInt(el.dataset.ch, 10)
-          // 正在播时换集：播放器内部会停掉旧音轨再播新的（见 _keepOnly）
-          await p.seek(chapters[i].start || 0)
-          // 选完就收尾：收起章节列表并滚回播放控件，
-          // 否则画面停在页面底部的章节区，看起来像"点了没返回"。
-          if (kid) {
-            chaptersOpen = false
-            renderExtra()
-          } else {
-            renderExtra()
-          }
-          scrollPlayerIntoView()
-        }
-      })
-    } else {
-      const m = c.item.media || {}
-      const md = m.metadata || {}
-      box.innerHTML = `
-        <div class="section-h" style="margin-top:22px">书籍信息</div>
-        <div class="settings-group" style="padding:16px 18px;line-height:1.9;font-size:14px">
-          <div><span style="color:var(--text-dim)">书名：</span>${esc(md.title || '')}</div>
-          <div><span style="color:var(--text-dim)">作者：</span>${esc(md.authorName || '未知')}</div>
-          <div><span style="color:var(--text-dim)">演播：</span>${esc(md.narratorName || '未知')}</div>
-          <div><span style="color:var(--text-dim)">时长：</span>${fmtTime(c.duration)}</div>
-          <div><span style="color:var(--text-dim)">集数：</span>${c.tracks.length}</div>
-          <div><span style="color:var(--text-dim)">倍速：</span>${(p.rate || 1)}×</div>
-        </div>
-        ${md.description ? `<div class="settings-group" style="padding:16px 18px;font-size:14px;line-height:1.8;color:var(--text-dim)">${esc(String(md.description).replace(/<[^>]+>/g, '').slice(0, 600))}</div>` : ''}`
-    }
+    if (box) box.innerHTML = ''
   }
-  renderExtra()
 
   // 无封面的书用占位封面兜底
   wireCoverFallback(root)

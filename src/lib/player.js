@@ -169,14 +169,27 @@ export class BookPlayer {
     this._lastSyncAt = Date.now()
 
     const idx = this._trackIndexForBookTime(startBookTime)
-    this.trackIndex = idx
-    const fileTime = Math.max(0, startBookTime - (this.tracks[idx]?.startOffset || 0))
-    this.currentBookTime = startBookTime
+    // 恢复位置的"结尾贴齐"：如果落点在这一集最后 5 秒内、且还有下一集，
+    // 直接对齐到下一集开头。
+    // 为什么：进度回写最多滞后 ~10 秒（心跳 3s + 节流 10s），在某一集临近结尾时
+    // 退出 App，存下来的位置就是"该集最后几秒"。恢复时忠实定位 → 播不到 1 秒
+    // 就 complete 自动跳下一集 —— 用户看到的就是"一回来直接到这集最后边"。
+    // 主流播放器（Audible/微信读书）同样在恢复时做尾部对齐。
+    // ⚠️ 只在 load（恢复/续播）路径做，seek() 不做 —— 用户手动拖到最后几秒必须尊重。
+    let loadIdx = idx
+    let loadFileTime = Math.max(0, startBookTime - (this.tracks[idx]?.startOffset || 0))
+    const trackDur = this.tracks[idx]?.duration || 0
+    if (trackDur > 0 && loadFileTime > trackDur - 5 && idx < this.tracks.length - 1) {
+      loadIdx = idx + 1
+      loadFileTime = 0
+    }
+    this.trackIndex = loadIdx
+    this.currentBookTime = (this.tracks[loadIdx]?.startOffset || 0) + loadFileTime
 
     if (this.isNativeEngine) {
-      await this._nativeLoadTrack(idx, fileTime)
+      await this._nativeLoadTrack(loadIdx, loadFileTime)
     } else {
-      await this._webLoadTrack(idx, fileTime)
+      await this._webLoadTrack(loadIdx, loadFileTime)
     }
     this._emitTime()
     return this
@@ -242,6 +255,10 @@ export class BookPlayer {
       this.buffering = false
       this.onState({ state: 'paused', isPlaying: false })
       this._stopWebTicker()
+      // 暂停 = 用户明确停下的位置，立刻回写 ABS。
+      // 之前只靠 10s 节流 + complete/finish，"听完这集前的暂停"会把
+      // 最后几秒漏在服务端外面，恢复时就贴着集尾（见 load 的结尾贴齐）。
+      this._syncProgress(true)
     })
   }
 

@@ -87,7 +87,7 @@ export async function go(name, params = {}) {
     await forceStopCurrent()
   } catch (_) {}
 
-  // 旧底栏**先留在 dock 上**，等新页面 render 完用新底栏原地替换 ——
+  // 旧底栏**先留在 dock 上**，等新页面 render 完再处理 ——
   // 之前是先删掉旧的，新底栏要等 render（可能含网络 await）完才出现，
   // 期间 dock 空一下，切页签时底栏「闪一下」（老板 2026-09-12 报告）。
   const root = $('#view')
@@ -95,12 +95,15 @@ export async function go(name, params = {}) {
   await fn(root, params)
   currentCleanup = typeof root._cleanup === 'function' ? root._cleanup : null
   // 把底栏从 #view 移进底部 dock 容器（和迷你条同一个表面 → 视觉上连成一整块）。
-  // 在这一个地方处理，各视图只管往 root 里插 .kid-tabs 即可。
+  // ⚠️ 新视图**没有**底栏时（如全屏播放页）必须把旧底栏删掉 ——
+  // 只写 `if (tabsEl)` 会留下上一个页面（书架/搜索/设置）的底栏，
+  // 播放页因此凭空多出一条底栏，把「倍速/定时/选集」压住只露上半截
+  // （老板 2026-09-13 实机反馈）。播放页是全屏播放器，本身不需要底栏。
   const tabsEl = root.querySelector('.kid-tabs')
   const dock = $('#dock')
-  if (tabsEl && dock) {
+  if (dock) {
     document.querySelectorAll('.kid-tabs').forEach(e => e.remove())
-    dock.appendChild(tabsEl)
+    if (tabsEl) dock.appendChild(tabsEl)
   }
   document.body.dataset.tabs = tabsEl ? '1' : '0'
   updateMini()

@@ -108,9 +108,12 @@ with sync_playwright() as pw:
        and pg.evaluate("document.body.dataset.view") == 'player')
     items = pg.evaluate("[...document.querySelectorAll('.sheet-item .sheet-label')].map(e=>e.textContent.trim())")
     print("     菜单项:", items)
-    ok("菜单含收藏/缓存/选集", any('收藏' in (i or '') for i in items)
-       and any('缓存' in (i or '') for i in items)
-       and any('选集' in (i or '') for i in items))
+    # 老板 2026-09-13：播放页已有的按钮（收藏/选集/倍速/定时）不再重复进三个点菜单
+    ok("菜单不再含收藏/选集（页面已有，去重复）",
+       not any('收藏' in (i or '') for i in items)
+       and not any('选集' in (i or '') for i in items), f"{items}")
+    ok("菜单含缓存/书籍信息", any('缓存' in (i or '') for i in items)
+       and any('信息' in (i or '') for i in items))
     ok("菜单不含书签项（与收藏重复，已去掉）", not any('书签' in (i or '') for i in items))
     ok("菜单无 JS 报错", not errs, str(errs[:2]))
     ctx.close()
@@ -304,6 +307,52 @@ with sync_playwright() as pw:
     ok("placeholder 不再是示例地址", ph != 'http://127.0.0.1:18080', f"placeholder={ph!r}")
     ok("登录页没有底部提示行", pg.evaluate("document.querySelectorAll('.login-wrap .hint').length") == 0)
     ok("登录页无 JS 报错", not errs2, str(errs2[:2]))
+    ctx.close()
+
+    print("\n=== K. 播放页布局与选集弹窗（老板 2026-09-13）===")
+    ctx, pg, errs = mk(br, 'kid')
+    pg.evaluate("document.querySelector('.book-card')?.click()")
+    pg.wait_for_timeout(2600)
+    ok("能进播放页", pg.evaluate("document.body.dataset.view") == 'player')
+    # 1) 播放页没有底栏（全屏播放器；之前残留上一页底栏压住倍速/定时/选集）
+    ok("播放页没有底部导航条（不遮挡下方按钮）",
+       pg.evaluate("document.querySelectorAll('#dock .kid-tabs').length") == 0)
+    ok("body[data-tabs]=0（dock 无底栏）", pg.evaluate("document.body.dataset.tabs") == '0')
+    # 2) 倍速/定时/选集这一行完整可见，且不被 dock 覆盖
+    g = pg.evaluate("""() => {
+      const tools = [...document.querySelectorAll('.player-tools')].pop();
+      const chips = [...(tools?.querySelectorAll('.tool-chip') || [])];
+      const dock = document.querySelector('#dock');
+      const dTop = dock ? dock.getBoundingClientRect().top : 1e9;
+      return {
+        labels: chips.map(c => c.textContent.trim()),
+        visible: chips.filter(c => { const r = c.getBoundingClientRect(); return r.height >= 40 && r.bottom <= dTop + 1 }).length,
+        total: chips.length,
+        overflow: chips.some(c => c.getBoundingClientRect().bottom > dTop + 1),
+        docW: document.documentElement.scrollWidth, cliW: document.documentElement.clientWidth,
+      };
+    }""")
+    print("     工具行:", g['labels'], "docW/cliW=", g['docW'], g['cliW'])
+    ok("有三个工具按钮（倍速/定时/选集）", g['total'] >= 3, str(g['labels']))
+    ok("工具按钮全部在 dock 之上（不被遮挡）", not g['overflow'], f"overflow={g['overflow']}")
+    # 3) 选集 → 弹窗，不是页面下划列表
+    pg.evaluate("[...document.querySelectorAll('.tool-chip')].find(b=>b.textContent.includes('选集'))?.click()")
+    pg.wait_for_timeout(600)
+    ok("选集弹出独立窗口", pg.evaluate("!!document.querySelector('.sheet-full .sheet-card')"))
+    ok("弹窗里有章节列表", pg.evaluate("document.querySelectorAll('.sheet-full #chList .chapter-item').length") > 0)
+    ok("弹窗打开时 #extra 不内联章节（页面没被撑长）",
+       pg.evaluate("document.querySelectorAll('#view #extra .chapter-item').length") == 0)
+    # 弹窗能关
+    pg.evaluate("document.querySelector('.sheet-full #chClose')?.click()")
+    pg.wait_for_timeout(400)
+    ok("弹窗能关闭", not pg.evaluate("!!document.querySelector('.sheet-full')"))
+    # 4) 点章节能换集
+    pg.evaluate("[...document.querySelectorAll('.tool-chip')].find(b=>b.textContent.includes('选集'))?.click()")
+    pg.wait_for_timeout(500)
+    pg.evaluate("document.querySelectorAll('.sheet-full #chList .chapter-item')[2]?.click()")
+    pg.wait_for_timeout(1500)
+    ok("点章节后弹窗自动关闭", not pg.evaluate("!!document.querySelector('.sheet-full')"))
+    ok("播放页无 JS 报错", not errs, str(errs[:3]))
     ctx.close()
 
     br.close()

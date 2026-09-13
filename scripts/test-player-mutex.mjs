@@ -184,6 +184,38 @@ console.log('\n=== 5. 音轨下标与 assetId 的映射（1-based index 陷阱�
   ok('stop 后原生层清空', state.assets.size === 0, `实际=${[...state.assets.keys()]}`)
 }
 
+console.log('\n=== 6. 恢复进度"结尾贴齐"（防"一回来就到集尾"）===')
+{
+  state.assets.clear(); state.calls.length = 0
+  const p = new BookPlayer({})
+  // 进度停在 297s：第1集（0~300s）的最后 3 秒
+  await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 297 })
+  ok('恢复时贴齐到下一集开头（load 路径）',
+     p.trackIndex === 1 && Math.abs(p.currentBookTime - 300) < 0.01,
+     `trackIndex=${p.trackIndex} bookTime=${p.currentBookTime}`)
+  ok('原生层装载的是第2集', state.assets.has('sa-1') && !state.assets.has('sa-0'))
+  await p.stop()
+}
+console.log('\n=== 7. 恢复位置在集中间 → 忠实定位，不贴齐 ===')
+{
+  state.assets.clear()
+  const p = new BookPlayer({})
+  await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 150 })
+  ok('中间位置不贴齐', p.trackIndex === 0 && Math.abs(p.currentBookTime - 150) < 0.01,
+     `trackIndex=${p.trackIndex} bookTime=${p.currentBookTime}`)
+  await p.stop()
+}
+console.log('\n=== 8. 恢复位置在最后一集末尾（无下一集）→ 不贴齐 ===')
+{
+  state.assets.clear()
+  const p = new BookPlayer({})
+  await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 898 })
+  ok('最后一集末尾保持原位（跳到开头交还用户处理）',
+     p.trackIndex === 2 && Math.abs(p.currentBookTime - 898) < 0.01,
+     `trackIndex=${p.trackIndex} bookTime=${p.currentBookTime}`)
+  await p.stop()
+}
+
 try { fs.unlinkSync(stubPath) } catch (_) {}
 
 console.log('\n==============================================')
