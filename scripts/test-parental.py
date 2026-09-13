@@ -147,7 +147,7 @@ console.log(`PARENTAL_RESULTS:${results.length - bad}/${results.length}`)
 process.exit(bad ? 1 : 0)
 '''
 open('/tmp/parental_test/run.mjs','w').write(test_js)
-r = subprocess.run(['/home/Bin/.local/bin/node', '/tmp/parental_test/run.mjs'],
+r = subprocess.run([os.environ.get('NODE', 'node'), '/tmp/parental_test/run.mjs'],
                    capture_output=True, text=True, timeout=60)
 print(r.stdout)
 if r.returncode != 0:
