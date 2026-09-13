@@ -2,12 +2,15 @@
  * 家长设置页（需要家长密码才能进）
  *
  * 为什么单独拆一页：老板要求「把一些操控类的设置放到一个需要密码访问的设置项里」。
- * 这里放的是会改变 App 行为 / 家长才该碰的项：
- *   进度条口径、触感开关、收听统计、家长密码、服务器与账号。
- * 孩子日常用的（书架、找书、播放、缓存）不受影响。
+ * 这里放的是会改变 App 行为 / 家长才该碰的项。
  *
- * 密码策略：进页面前 requestPin 一次即可，本页内不再反复要密码
- * （同一页面里每点一项都弹密码会很烦）。
+ * 2026-09-14 改版（老板四点反馈）：
+ *  1. 音量上限改成滑杆（滚轮式精细调节，5% 步进），不再 60/80/不限 三档循环
+ *  2. 收听时间从「小弹窗」改成**全屏子页**：弹窗在小屏上显示不全（time 输入框
+ *     被密码框的大字号样式污染）且没有返回键 —— 全屏页自带返回，内容自适应
+ *  3. 时段限制 / 每日时长限制**各自独立开关**（老板原话「只要有一个限制，
+ *     就可以限制 app 不能使用」）
+ *  4. 语音搜索按钮显隐从普通设置页挪到家长设置（孩子自己就能把语音开回来不合理）
  */
 import { abs } from '../lib/api.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
@@ -15,29 +18,23 @@ import { state, go, toast, esc, requireParentPin, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { haptic, setHaptics, hapticsEnabled } from '../lib/haptics.js'
 import { setNotificationMode } from '../lib/notification-prefs.js'
-import { timeWindowLabel } from '../lib/parental.js'
+import { timeWindowEnabled, dailyLimitEnabled, timeWindowLabel, volumeCap, volumeCapLabel } from '../lib/parental.js'
+import { voiceHidden, setVoiceHidden } from '../lib/ui-prefs.js'
 
 export async function renderParent(root) {
   const scope = (await store.get(CONFIG_KEYS.progressScope, 'track')) === 'book' ? 'book' : 'track'
-  // 老板 2026-09-13 新增：通知静默 / 音量上限 / 使用时间
   const quiet = (await store.get(CONFIG_KEYS.quietNotification, '0')) === '1'
-  const cap = Number(await store.get(CONFIG_KEYS.volumeCap, '1'))
-  const capPct = Math.round((Number.isFinite(cap) ? cap : 1) * 100)
-  const limitOn = (await store.get(CONFIG_KEYS.timeLimitEnabled, '0')) === '1'
-  const wdFrom = await store.get(CONFIG_KEYS.timeWeekdayFrom, '')
-  const wdTo = await store.get(CONFIG_KEYS.timeWeekdayTo, '')
-  const weFrom = await store.get(CONFIG_KEYS.timeWeekendFrom, '')
-  const weTo = await store.get(CONFIG_KEYS.timeWeekendTo, '')
-  const dailyMin = Number(await store.get(CONFIG_KEYS.timeDailyMinutes, '0')) || 0
+  const cap = await volumeCap()
+  // ⚠️ 收听时间的开关/时段**不在这里读**：openTimePage() 每次打开时重新读 store
+  //（闭包变量在保存后不会刷新，会导致重开显示旧配置 —— 见 openTimePage 注释）。
   // ⚠️ 必须每次重新读 store，不能用闭包里的渲染期变量 ——
   // 保存后立刻刷新摘要时，闭包里的还是旧值（"保存了但显示没变"）。
   const fmtLimit = async () => {
-    const on = (await store.get(CONFIG_KEYS.timeLimitEnabled, '0')) === '1'
-    if (!on) return '未开启'
-    const win = await timeWindowLabel()
+    const parts = []
+    if (await timeWindowEnabled()) parts.push(`时段 ${await timeWindowLabel()}`)
     const dm = Number(await store.get(CONFIG_KEYS.timeDailyMinutes, '0')) || 0
-    const dur = dm > 0 ? `每天最多 ${dm} 分钟` : '不限时长'
-    return `${win} · ${dur}`
+    if (await dailyLimitEnabled() && dm > 0) parts.push(`每天最多 ${dm} 分钟`)
+    return parts.length ? parts.join(' · ') : '未开启'
   }
 
   root.innerHTML = `
@@ -64,6 +61,14 @@ export async function renderParent(root) {
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
+      <div class="setting-row" id="rowVoice">
+        <div class="setting-ic">${icon('mic', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">语音搜索按钮</div>
+          <div class="setting-value" id="voiceVal">${voiceHidden() ? '已隐藏' : '已显示'}</div>
+        </div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
+      </div>
     </div>
 
     <div class="section-h">收听监督</div>
@@ -84,14 +89,26 @@ export async function renderParent(root) {
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
-      <div class="setting-row" id="rowCap">
+    </div>
+
+    <!-- 音量上限：滑杆直接嵌在页面上（滚轮式精细调节），不再弹窗三档循环 -->
+    <div class="settings-group cap-group">
+      <div class="cap-head">
         <div class="setting-ic">${icon('sparkle', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">音量上限</div>
-          <div class="setting-value" id="capVal">${capPct >= 100 ? '不限制' : '最高 ' + capPct + '%'}</div>
+          <div class="setting-value" id="capVal">${volumeCapLabel(cap)}</div>
         </div>
-        <div class="setting-arrow">${icon('forward', 20)}</div>
+        <div class="cap-pct" id="capPct">${Math.round(cap * 100)}%</div>
       </div>
+      <div class="cap-slider-row">
+        <input type="range" id="capSlider" min="10" max="100" step="5" value="${Math.round(cap * 100)}"
+               aria-label="音量上限百分比">
+      </div>
+      <div class="cap-scale"><span>10%</span><span>100% = 不限制</span></div>
+    </div>
+
+    <div class="settings-group">
       <div class="setting-row" id="rowTime">
         <div class="setting-ic">${icon('clock', 22)}</div>
         <div class="setting-main">
@@ -100,6 +117,9 @@ export async function renderParent(root) {
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
+    </div>
+
+    <div class="settings-group">
       <div class="setting-row" id="rowPin">
         <div class="setting-ic">${icon('lock', 22)}</div>
         <div class="setting-main">
@@ -131,15 +151,26 @@ export async function renderParent(root) {
     const next = cur === 'book' ? 'track' : 'book'
     await store.set(CONFIG_KEYS.progressScope, next)
     $('#scopeVal').textContent = next === 'book' ? '整部作品的进度' : '当前这一集的进度（默认）'
-
   }
 
   $('#rowHaptics').onclick = async () => {
     const next = !hapticsEnabled()
     await setHaptics(next)
-    $('#hapVal').textContent = next ? '已开启：按按钮时轻微震动' : '已关闭'
+    $('#hapVal').textContent = next ? '已开启' : '已关闭'
     if (next) haptic.tap()
+  }
 
+  // 语音搜索按钮显隐（2026-09-14 从设置页挪进家长设置）
+  $('#rowVoice').onclick = async () => {
+    haptic.select()
+    const next = !voiceHidden()
+    await setVoiceHidden(next)
+    $('#voiceVal').textContent = next ? '已隐藏' : '已显示'
+    // 已经在页面上的语音按钮立即跟着变，不用等重进页面
+    document.querySelectorAll('.voice-fab, .search-mic').forEach(el => {
+      el.style.display = next ? 'none' : ''
+    })
+    toast(next ? '已隐藏语音按钮' : '已显示语音按钮')
   }
 
   // 收听时间：显示当前配置（异步读，避免阻塞渲染）
@@ -155,19 +186,30 @@ export async function renderParent(root) {
     toast(next ? '已静默播放通知（锁屏控制仍在）' : '已恢复显示播放通知')
   }
 
-  // 音量上限：60% → 80% → 100% 三档循环（孩子够不着系统音量，App 内封顶）
-  $('#rowCap').onclick = async () => {
-    haptic.select()
-    const cur = Math.round(Number(await store.get(CONFIG_KEYS.volumeCap, '1')) * 100)
-    const next = cur >= 100 ? 60 : (cur >= 80 ? 100 : 80)
-    await store.set(CONFIG_KEYS.volumeCap, String(next / 100))
-    $('#capVal').textContent = next >= 100 ? '不限制' : '最高 ' + next + '%'
-    // 立刻作用到当前播放（把音量压到上限内）
-    try { await state.player?.setVolume(state.player._volume ?? 1) } catch (_) {}
-    toast(next >= 100 ? '音量不限制' : `音量最高 ${next}%`)
+  // 音量上限滑杆：5% 步进，松手才落盘（拖动过程只改显示，避免连续写 Preferences）
+  {
+    const slider = $('#capSlider')
+    let dragging = false
+    slider.addEventListener('input', () => {
+      dragging = true
+      const pct = Number(slider.value)
+      $('#capPct').textContent = pct + '%'
+      $('#capVal').textContent = pct >= 100 ? '不限制' : `最高 ${pct}%`
+    })
+    const commit = async () => {
+      if (!dragging) return
+      dragging = false
+      const pct = Number(slider.value)
+      await store.set(CONFIG_KEYS.volumeCap, String(pct / 100))
+      haptic.select()
+      try { await state.player?.reapplyVolumeCap() } catch (_) {}
+    }
+    slider.addEventListener('change', commit)
+    slider.addEventListener('touchend', commit)
   }
 
-  $('#rowTime').onclick = () => { haptic.tap(); openTimeDialog() }
+  // 收听时间 → 全屏子页（弹窗在小屏显示不全且没有返回键，2026-09-14 改版）
+  $('#rowTime').onclick = () => { haptic.tap(); openTimePage() }
 
   $('#rowStats').onclick = () => { haptic.tap(); go('stats') }
   $('#rowPin').onclick = () => { haptic.tap(); openPinDialog() }
@@ -182,79 +224,127 @@ export async function renderParent(root) {
   }
 
   /**
-   * 收听时间设置弹窗（老板 2026-09-13）
-   * 工作日（周一~五）与周末分开设允许时段，支持跨午夜（如 20:00–07:00）；
-   * 另有"每天最多听多久"。留空 = 不限制对应维度。
+   * 收听时间设置（全屏子页，替代旧弹窗 —— 老板 2026-09-14：
+   * 「显示有点问题，有些显示不全」+「还没有返回按钮」）。
+   * 时段限制 / 每日时长限制各自独立开关：开哪个哪个生效。
+   *
+   * ⚠️ 必须在打开时**重新读 store**，不能用 renderParent 渲染期的闭包变量 ——
+   * 保存后不重渲染本页，闭包里的值还是打开前的旧值（再打开显示旧配置，
+   * 实测踩到：保存过"只开时段"，重开却显示两个开关都关着）。
    */
-  function openTimeDialog() {
-    const modal = document.createElement('div')
-    modal.className = 'lock'
-    modal.innerHTML = `<div class="lock-card" style="max-height:86vh;overflow-y:auto">
-      <div class="lock-title">收听时间</div>
-      <div class="lock-sub">设好后，不在时段内或时长用完时将自动停止播放</div>
+  async function openTimePage() {
+    const winNow = await timeWindowEnabled()
+    const durNow = await dailyLimitEnabled()
+    const wdF = await store.get(CONFIG_KEYS.timeWeekdayFrom, '')
+    const wdT = await store.get(CONFIG_KEYS.timeWeekdayTo, '')
+    const weF = await store.get(CONFIG_KEYS.timeWeekendFrom, '')
+    const weT = await store.get(CONFIG_KEYS.timeWeekendTo, '')
+    const dMin = Number(await store.get(CONFIG_KEYS.timeDailyMinutes, '0')) || 0
 
-      <div style="display:flex;align-items:center;gap:10px;margin:14px 0 6px">
-        <label style="display:flex;align-items:center;gap:8px;font-size:15px">
-          <input type="checkbox" id="tEnabled" ${limitOn ? 'checked' : ''} style="width:18px;height:18px">
-          开启时间限制
-        </label>
+    const page = document.createElement('div')
+    page.className = 'subpage'
+    page.innerHTML = `
+      <div class="page-head">
+        <button class="icon-btn" id="tBack" aria-label="返回">${icon('back', 22)}</button>
+        <div class="page-title">收听时间</div>
       </div>
 
-      <div style="font-size:13px;color:var(--text-dim);margin:10px 0 4px">周一至周五（上学日）</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input class="lock-input" id="tWdFrom" type="time" value="${wdFrom}" style="flex:1;margin:0">
-        <span style="color:var(--text-dim)">至</span>
-        <input class="lock-input" id="tWdTo" type="time" value="${wdTo}" style="flex:1;margin:0">
+      <div class="settings-group">
+        <div class="switch-row">
+          <div class="setting-main">
+            <div class="setting-label">限制收听时段</div>
+            <div class="setting-value" id="tWinHint">只在允许的时间段内可以听</div>
+          </div>
+          <label class="sa-switch"><input type="checkbox" id="tWinOn" ${winNow ? 'checked' : ''}><i></i></label>
+        </div>
+        <div id="tWinBody" style="${winNow ? '' : 'display:none'}">
+          <div class="time-block">
+            <div class="time-block-h">周一至周五（上学日）</div>
+            <div class="time-pair">
+              <input class="time-input" id="tWdFrom" type="time" value="${wdF}">
+              <span class="time-sep">至</span>
+              <input class="time-input" id="tWdTo" type="time" value="${wdT}">
+            </div>
+          </div>
+          <div class="time-block">
+            <div class="time-block-h">周末（周六、周日）</div>
+            <div class="time-pair">
+              <input class="time-input" id="tWeFrom" type="time" value="${weF}">
+              <span class="time-sep">至</span>
+              <input class="time-input" id="tWeTo" type="time" value="${weT}">
+            </div>
+          </div>
+          <div class="time-hint">时段留空 = 当天不限时间；结束时间小于开始时间按"跨到第二天"算</div>
+        </div>
       </div>
 
-      <div style="font-size:13px;color:var(--text-dim);margin:10px 0 4px">周末（周六、周日）</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input class="lock-input" id="tWeFrom" type="time" value="${weFrom}" style="flex:1;margin:0">
-        <span style="color:var(--text-dim)">至</span>
-        <input class="lock-input" id="tWeTo" type="time" value="${weTo}" style="flex:1;margin:0">
+      <div class="settings-group">
+        <div class="switch-row">
+          <div class="setting-main">
+            <div class="setting-label">限制每天总时长</div>
+            <div class="setting-value" id="tDurHint">按实际收听时长累计，暂停不计时</div>
+          </div>
+          <label class="sa-switch"><input type="checkbox" id="tDurOn" ${durNow ? 'checked' : ''}><i></i></label>
+        </div>
+        <div id="tDurBody" style="${durNow ? '' : 'display:none'}">
+          <div class="time-block">
+            <div class="time-block-h">每天最多听</div>
+            <div class="time-pair">
+              <input class="time-input time-input-num" id="tDaily" type="number" inputmode="numeric"
+                     min="0" max="1440" step="5" value="${dMin || ''}" placeholder="不限">
+              <span class="time-sep">分钟</span>
+            </div>
+          </div>
+          <div class="time-hint">时长用完后当天不能再播，第二天自动恢复</div>
+        </div>
       </div>
-      <div style="font-size:12px;color:var(--text-dim);margin-top:4px">时段留空表示当天不限时间；结束时间小于开始时间会按"跨到第二天"处理</div>
 
-      <div style="font-size:13px;color:var(--text-dim);margin:10px 0 4px">每天最多听</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input class="lock-input" id="tDaily" type="number" inputmode="numeric" min="0" max="480" step="5"
-               value="${dailyMin || ''}" placeholder="不限" style="flex:1;margin:0">
-        <span style="color:var(--text-dim)">分钟</span>
+      <div style="padding:0 18px">
+        <button class="btn block" id="tSave">保存</button>
       </div>
-      <div style="font-size:12px;color:var(--text-dim);margin-top:4px">按实际收听时长累计（暂停不计时），留空或 0 表示不限</div>
+    `
+    document.body.appendChild(page)
 
-      <div class="lock-err" id="tErr"></div>
-      <div class="lock-actions">
-        <button class="btn ghost" id="tCancel">取消</button>
-        <button class="btn" id="tSave">保存</button>
-      </div>
-    </div>`
-    document.body.appendChild(modal)
-    const errEl = modal.querySelector('#tErr')
-    modal.querySelector('#tCancel').onclick = () => modal.remove()
-    modal.querySelector('#tSave').onclick = async () => {
-      const g = id => modal.querySelector('#' + id)
-      const wdF = g('tWdFrom').value, wdT = g('tWdTo').value
-      const weF = g('tWeFrom').value, weT = g('tWeTo').value
-      const daily = Math.max(0, Math.min(480, Number(g('tDaily').value) || 0))
-      // 校验：如果填了一边就必须填另一边（时段要成对）
-      const pairs = [[wdF, wdT, '周一至周五'], [weF, weT, '周末']]
-      for (const [a, b, name] of pairs) {
-        if ((a && !b) || (!a && b)) { errEl.textContent = name + '的开始和结束时间要一起填'; return }
+    const $p = s => page.querySelector(s)
+    $p('#tBack').onclick = () => { haptic.tap(); page.remove() }
+
+    // 开关联动显示对应配置块
+    $p('#tWinOn').onchange = () => { $p('#tWinBody').style.display = $p('#tWinOn').checked ? '' : 'none' }
+    $p('#tDurOn').onchange = () => { $p('#tDurBody').style.display = $p('#tDurOn').checked ? '' : 'none' }
+
+    $p('#tSave').onclick = async () => {
+      const winOn = $p('#tWinOn').checked
+      const durOn = $p('#tDurOn').checked
+      const wdF = $p('#tWdFrom').value, wdT = $p('#tWdTo').value
+      const weF = $p('#tWeFrom').value, weT = $p('#tWeTo').value
+      const daily = Math.max(0, Math.min(1440, Number($p('#tDaily').value) || 0))
+      if (winOn) {
+        // 校验：如果填了一边就必须填另一边（时段要成对）
+        const pairs = [[wdF, wdT, '周一至周五'], [weF, weT, '周末']]
+        for (const [a, b, name] of pairs) {
+          if ((a && !b) || (!a && b)) { toast(name + '的开始和结束时间要一起填'); return }
+        }
+        // ⚠️ 必须校验**表单里的新值**，不能查 store：
+        // store 里还没保存的值是空的，用 hasTimeWindowConfig() 会把
+        // "第一次就填好时段并保存"误判成"没填"而拦下（实测踩到）。
+        const filled = [[wdF, wdT], [weF, weT]].some(([a, b]) => a && b)
+        if (!filled) { toast('开了时段限制就至少要填一个时段'); return }
       }
-      await store.set(CONFIG_KEYS.timeLimitEnabled, g('tEnabled').checked ? '1' : '0')
+      if (durOn && daily <= 0) { toast('开了时长限制就要填每天最多听多少分钟'); return }
+      // 两个限制各自独立开关（老总开关保留兼容读，不再写入）
+      await store.set(CONFIG_KEYS.timeWindowEnabled, winOn ? '1' : '0')
+      await store.set(CONFIG_KEYS.dailyLimitEnabled, durOn ? '1' : '0')
       await store.set(CONFIG_KEYS.timeWeekdayFrom, wdF)
       await store.set(CONFIG_KEYS.timeWeekdayTo, wdT)
       await store.set(CONFIG_KEYS.timeWeekendFrom, weF)
       await store.set(CONFIG_KEYS.timeWeekendTo, weT)
       await store.set(CONFIG_KEYS.timeDailyMinutes, String(daily))
-      modal.remove()
       haptic.success()
       toast('收听时间已保存')
+      page.remove()
       const el = $('#timeVal')
       if (el) el.textContent = await fmtLimit()
     }
-    setTimeout(() => modal.querySelector('#tEnabled').focus(), 100)
   }
 
   function openPinDialog() {

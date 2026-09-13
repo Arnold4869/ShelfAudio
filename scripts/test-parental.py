@@ -51,7 +51,10 @@ export const CONFIG_KEYS = {
   haptics:'haptics', progressScope:'progressScope', hideVoice:'hideVoice',
   listeningLog:'listeningLog',
   quietNotification:'quietNotification', volumeCap:'volumeCap',
-  timeLimitEnabled:'timeLimitEnabled', timeWeekdayFrom:'timeWeekdayFrom',
+  // 2026-09-14：两个限制各自独立开关；timeLimitEnabled 为旧总开关（兼容读）
+  timeLimitEnabled:'timeLimitEnabled', timeWindowEnabled:'timeWindowEnabled',
+  dailyLimitEnabled:'dailyLimitEnabled',
+  timeWeekdayFrom:'timeWeekdayFrom',
   timeWeekdayTo:'timeWeekdayTo', timeWeekendFrom:'timeWeekendFrom',
   timeWeekendTo:'timeWeekendTo', timeDailyMinutes:'timeDailyMinutes',
 }
@@ -87,12 +90,24 @@ const WED10 = new Date(2026, 8, 16, 10, 0)   // 2026-09-13 周三
 const SAT21 = new Date(2026, 8, 19, 21, 0)   // 周六晚 21:00
 const SUN2  = new Date(2026, 8, 20, 2, 0)    // 周日凌晨 2:00（测跨午夜）
 
-// 1) 未开启 → 一律允许
+// 1) 未开启 → 一律允许（新开关此时**未写过**，走老总开关兼容分支）
 store.set(CONFIG_KEYS.timeLimitEnabled, '0')
 ok('未开启 → 任意时间允许', await withinTimeWindow(WED10))
 
-// 2) 工作日 18:00-20:00
+// 1b) 2026-09-14 兼容：新开关没写过时沿用旧总开关（升级不丢配置）
+//     ⚠️ 必须先配好时段：只开开关不配时段 = 不限时段（那是正确行为，测不出兼容性）
+store.set(CONFIG_KEYS.timeWeekdayFrom, '18:00')
+store.set(CONFIG_KEYS.timeWeekdayTo, '20:00')
 store.set(CONFIG_KEYS.timeLimitEnabled, '1')
+ok('新开关未写 + 旧总开关=1 → 时段限制生效（老用户兼容）',
+   !(await withinTimeWindow(WED10)))
+
+// 1c) 反向：新开关写过 '0' → 即使旧总开关是 '1' 也必须关掉（新值优先）
+store.set(CONFIG_KEYS.timeWindowEnabled, '0')
+ok('新开关=0 覆盖旧总开关=1 → 不限制', await withinTimeWindow(WED10))
+
+// 2) 工作日 18:00-20:00（用新独立开关；此后新开关已写过，不再走兼容分支）
+store.set(CONFIG_KEYS.timeWindowEnabled, '1')
 store.set(CONFIG_KEYS.timeWeekdayFrom, '18:00')
 store.set(CONFIG_KEYS.timeWeekdayTo, '20:00')
 ok('工作日 10:00 不在 18-20 → 拒', !(await withinTimeWindow(WED10)))
@@ -109,8 +124,9 @@ ok('周日凌晨 2:00 在跨午夜窗内 → 允', await withinTimeWindow(SUN2))
 const SAT15 = new Date(2026, 8, 19, 15, 0)
 ok('周六 15:00 不在 20-07 → 拒', !(await withinTimeWindow(SAT15)))
 
-// 4) 每日时长
+// 4) 每日时长（2026-09-14：时长限制有独立开关）
 setDay([])                                   // 今天没听
+store.set(CONFIG_KEYS.dailyLimitEnabled, '1')
 store.set(CONFIG_KEYS.timeDailyMinutes, '30')
 let q = await dailyQuota()
 ok('没听 → 剩 30 分钟', q.allowed && q.remainingSec === 1800, JSON.stringify(q))
@@ -124,16 +140,40 @@ store.set(CONFIG_KEYS.timeDailyMinutes, '0')
 q = await dailyQuota()
 ok('时长不限 → Infinity', q.allowed && q.remainingSec === Infinity)
 
+// 4b) 只开时段、不开时长 → 时长维度必须不限制（老板原话：「只要有一个限制，就可以限制」）
+store.set(CONFIG_KEYS.dailyLimitEnabled, '0')
+store.set(CONFIG_KEYS.timeDailyMinutes, '30')
+store.set(CONFIG_KEYS.timeWindowEnabled, '1')
+setDay([{ d:'x', b:'b', t:'t', s: Date.now(), sec: 60*60 }])   // 已听 60 分钟，超了 30
+q = await dailyQuota()
+ok('只开时段限制 → 时长不设控（已听 60 分钟仍 allowed）',
+   q.allowed && q.remainingSec === Infinity, JSON.stringify(q))
+const WED19B = new Date(2026, 8, 16, 19, 0)   // 时段内
+ok('只开时段限制 → 时段内照常可播', (await playbackBlockedReason(WED19B)) === null)
+ok('只开时段限制 → 时段外仍被拦（限制起作用）', !!(await playbackBlockedReason(WED10)))
+
+// 4c) 反向：只开时长、不开时段 → 时段不设控
+store.set(CONFIG_KEYS.timeWindowEnabled, '0')
+store.set(CONFIG_KEYS.dailyLimitEnabled, '1')
+store.set(CONFIG_KEYS.timeDailyMinutes, '30')
+setDay([])   // 今天还没听
+ok('只开时长限制 → 任意时段可播（时段不设控）',
+   (await playbackBlockedReason(WED10)) === null)
+
 // 5) 综合闸门的文案（只留时长限制，避免断言依赖"今天是星期几"）
+store.set(CONFIG_KEYS.timeWindowEnabled, '0')
 store.set(CONFIG_KEYS.timeWeekdayFrom, '')
 store.set(CONFIG_KEYS.timeWeekdayTo, '')
 store.set(CONFIG_KEYS.timeWeekendFrom, '')
 store.set(CONFIG_KEYS.timeWeekendTo, '')
+store.set(CONFIG_KEYS.dailyLimitEnabled, '1')
 store.set(CONFIG_KEYS.timeDailyMinutes, '30')
 setDay([{ d:'x', b:'b', t:'t', s: Date.now(), sec: 40*60 }])
 const reason = await playbackBlockedReason()
 ok('超时给出友好文案', reason && reason.includes('用完'), reason)
 store.set(CONFIG_KEYS.timeDailyMinutes, '0')
+store.set(CONFIG_KEYS.dailyLimitEnabled, '0')
+store.set(CONFIG_KEYS.timeWindowEnabled, '1')
 store.set(CONFIG_KEYS.timeWeekendFrom, '20:00')   // 周六 15:00 在窗外（测试日 2026-09-19 是周六）
 store.set(CONFIG_KEYS.timeWeekendTo, '07:00')
 const reason2 = await playbackBlockedReason(new Date(2026, 8, 19, 15, 0))
@@ -214,51 +254,93 @@ with sync_playwright() as pw:
     lockShown = pg.evaluate("!document.querySelector('#lock')?.classList.contains('hidden')")
     ok('未设密码时进家长设置不弹密码框（引导设置）', not lockShown)
 
-    # 3) 家长页三行存在（先设密码走 UI）
+    # 3) 家长页各行存在（先设密码走 UI）
     pg.evaluate("document.querySelector('#rowParent')?.click()")
     pg.wait_for_timeout(1200)
     ok('进入家长设置页', pg.evaluate("document.body.dataset.view") == 'parents')
-    for rid, name in [('rowNotif','播放通知'), ('rowCap','音量上限'), ('rowTime','收听时间')]:
+    for rid, name in [('rowNotif','播放通知'), ('rowTime','收听时间'), ('rowVoice','语音搜索按钮')]:
         ok(f'家长页有「{name}」行', pg.evaluate(f"!!document.querySelector('#{rid}')"))
 
-    # 4) 通知开关切换
+    # 3b) 语音按钮设置已从普通设置页挪走（老板 2026-09-14 第 4 点）
+    pg.evaluate("document.querySelector('#btnBack')?.click()")
+    pg.wait_for_timeout(900)
+    ok('普通设置页已无语音按钮行', pg.evaluate("!document.querySelector('#rowVoice')"))
+    pg.evaluate("document.querySelector('#rowParent')?.click()")
+    pg.wait_for_timeout(1000)
+
+    # 4) 播放通知开关切换
     v0 = pg.evaluate("document.querySelector('#notifVal')?.textContent")
     pg.evaluate("document.querySelector('#rowNotif')?.click()")
     pg.wait_for_timeout(400)
     v1 = pg.evaluate("document.querySelector('#notifVal')?.textContent")
     ok('通知开关可切换', v0 != v1, f'{v0!r} → {v1!r}')
 
-    # 5) 音量上限三档循环
-    c0 = pg.evaluate("document.querySelector('#capVal')?.textContent")
-    pg.evaluate("document.querySelector('#rowCap')?.click()")
-    pg.wait_for_timeout(300)
-    c1 = pg.evaluate("document.querySelector('#capVal')?.textContent")
-    pg.evaluate("document.querySelector('#rowCap')?.click()")
-    pg.wait_for_timeout(300)
-    c2 = pg.evaluate("document.querySelector('#capVal')?.textContent")
-    pg.evaluate("document.querySelector('#rowCap')?.click()")
-    pg.wait_for_timeout(300)
-    c3 = pg.evaluate("document.querySelector('#capVal')?.textContent")
-    ok('音量上限三档循环（100→60→80→100）', c0 != c1 and c2 != c1 and c3 == c0,
-       f'{c0}→{c1}→{c2}→{c3}')
+    # 5) 音量上限：滑杆精细调节（5% 步进），松手落盘并立即作用到播放器
+    ok('音量滑杆存在（不再三档循环）',
+       pg.evaluate("!!document.querySelector('#capSlider')"))
+    ok('滑杆步进为 5%', pg.evaluate("document.querySelector('#capSlider')?.step") == '5')
+    pg.evaluate("""() => {
+      const s = document.querySelector('#capSlider')
+      s.value = 65
+      s.dispatchEvent(new Event('input'))
+      s.dispatchEvent(new Event('change'))
+    }""")
+    pg.wait_for_timeout(400)
+    ok('滑到 65% → 显示「最高 65%」',
+       pg.evaluate("document.querySelector('#capVal')?.textContent") == '最高 65%',
+       pg.evaluate("document.querySelector('#capVal')?.textContent"))
+    ok('滑杆值已落盘 0.65',
+       pg.evaluate("localStorage.getItem('shelfaudio.volumeCap')") == '0.65',
+       pg.evaluate("localStorage.getItem('shelfaudio.volumeCap')"))
 
-    # 6) 时间弹窗能开能关，保存生效
+    # 6) 收听时间：全屏子页（不再是弹窗），有返回键；两个限制独立开关
     pg.evaluate("document.querySelector('#rowTime')?.click()")
     pg.wait_for_timeout(400)
-    ok('时间设置弹窗打开', pg.evaluate("!!document.querySelector('#tWdFrom')"))
+    ok('收听时间是全屏子页（有返回键）',
+       pg.evaluate("!!document.querySelector('.subpage #tBack')"))
+    ok('有「限制收听时段」独立开关', pg.evaluate("!!document.querySelector('#tWinOn')"))
+    ok('有「限制每天总时长」独立开关', pg.evaluate("!!document.querySelector('#tDurOn')"))
+    # time 输入框不再被 .lock-input 大字距样式污染
+    tin = pg.evaluate("""(() => {
+      const el = document.querySelector('#tWdFrom'); if (!el) return null
+      el.closest('[style*="display:none"]')?.style.removeProperty('display')   // 开关关着时 body 隐藏，展开后再量
+      const cs = getComputedStyle(el)
+      return {font: cs.fontSize, ls: cs.letterSpacing, w: Math.round(el.getBoundingClientRect().width)}
+    })()""")
+    ok('time 输入框用正常字号（不是密码框的 26px）',
+       tin and tin['font'] in ('16px',) and tin['ls'] in ('normal', '0px'),
+       str(tin))
+    ok('time 输入框足够宽（≥120px，内容显示得全）', tin and tin['w'] >= 120, str(tin))
+
+    # 只开时段 + 填好时段 → 保存成功
     pg.evaluate("""() => {
-      document.querySelector('#tEnabled').checked = true
+      const on = document.querySelector('#tWinOn')
+      on.checked = true
+      on.dispatchEvent(new Event('change'))
       document.querySelector('#tWdFrom').value = '18:00'
       document.querySelector('#tWdTo').value = '20:00'
-      document.querySelector('#tWeFrom').value = '09:00'
-      document.querySelector('#tWeTo').value = '21:00'
-      document.querySelector('#tDaily').value = '30'
       document.querySelector('#tSave').click()
     }""")
     pg.wait_for_timeout(500)
-    tval = pg.evaluate("document.querySelector('#timeVal')?.textContent")
-    ok('保存后摘要正确', tval and '18:00' in tval and '30 分钟' in tval, tval)
-    ok('开关状态已存', pg.evaluate("localStorage.getItem('cap_pref_timeLimitEnabled')") in (None, '1'))
+    ok('只开时段（时长开关关着）也能保存',
+       '18:00' in (pg.evaluate("document.querySelector('#timeVal')?.textContent") or ''),
+       pg.evaluate("document.querySelector('#timeVal')?.textContent"))
+    ok('时段开关已存', pg.evaluate("localStorage.getItem('shelfaudio.timeWindowEnabled')") == '1')
+    ok('时长开关未存/为 0',
+       pg.evaluate("localStorage.getItem('shelfaudio.dailyLimitEnabled')") in (None, '0'))
+    # 时段限制开着但一个时段没填 → 保存被拦下（子页还在）
+    pg.evaluate("document.querySelector('#rowTime')?.click()")
+    pg.wait_for_timeout(300)
+    pg.evaluate("""() => {
+      document.querySelector('#tWdFrom').value = ''
+      document.querySelector('#tWdTo').value = ''
+      document.querySelector('#tWdFrom') && document.querySelector('#tSave').click()
+    }""")
+    pg.wait_for_timeout(400)
+    ok('开了时段但没填时段 → 保存被拦（toast 提示，子页不关）',
+       pg.evaluate("!!document.querySelector('.subpage')"))
+    pg.evaluate("document.querySelector('#tBack')?.click()")
+    pg.wait_for_timeout(300)
     ok('无 JS 报错', not errs, str(errs[:2]))
     br.close()
 

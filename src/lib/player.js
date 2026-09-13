@@ -66,6 +66,7 @@ export class BookPlayer {
     this._endedFired = false
     this.notification = null    // { title, artist, album, artworkUrl }
     this._volume = 1
+    this._volumeCap = 1         // 家长音量上限（load 时读一次，之后每次装轨都再套一遍）
     this._nativeTicker = null   // 原生兜底心跳（保证进度写回 ABS）
     this._playingAssetIdx = null // 原生层当前真正在播的 asset 下标（换轨时据此清理旧音轨）
     this._loadedIdx = new Set()  // 原生层当前已 preload 的音轨下标（保证同一时刻只留一条）
@@ -179,6 +180,18 @@ export class BookPlayer {
     this._endedFired = false
     this._timeListened = 0
     this._lastSyncAt = Date.now()
+
+    // 家长音量上限（老板 2026-09-14 报「音量限制这个功能你检查下生效没」）：
+    // 原实现只在 setVolume() 里封顶，而装书/开播**从不主动设音量** ——
+    // _volume 初始 1、原生播放器默认 100%，所以只要孩子不碰音量条，
+    // 上限就完全没作用。这里在 load 时读一次上限并立刻应用。
+    // 注意：只写 _volumeCap，**不动 _volume** —— 用户想要的音量与家长上限是
+    // 两个独立值，封顶在 _effectiveVolume() 里做（否则家长取消上限后音量回不来）。
+    this._volumeCap = 1
+    try {
+      const { volumeCap } = await import('./parental.js')
+      this._volumeCap = (await volumeCap()) || 1
+    } catch (_) { this._volumeCap = 1 }
 
     // 审计加固（2026-09-13）：恢复落点合法性校验，必须在 _trackIndexForBookTime 之前做 ——
     // 它遇到 NaN 会一路 false 走到末轨、遇到越界进度会返回不存在的位置。
@@ -421,22 +434,54 @@ export class BookPlayer {
     }
   }
 
+  /**
+   * 实际生效的音量 = min(用户设定的音量, 家长上限)。
+   * 所有真正下发到原生层/HTMLAudio 的地方都必须用它，不要直接用 _volume。
+   */
+  _effectiveVolume() {
+    const cap = Number.isFinite(this._volumeCap) ? this._volumeCap : 1
+    const v = Number.isFinite(this._volume) ? this._volume : 1
+    return Math.max(0.01, Math.min(v, cap))
+  }
+
   /** 音量增减（语音“大声点/小声点”用），0.1~1.0 */
   async setVolume(v, { enforceCap = true } = {}) {
     // 家长音量上限（老板 2026-09-13）：设置过 volumeCap 后，App 内任何音量调整
     // （语音"大声点"、UI）都不会超过上限。系统音量不归我们管。
+    //
+    // ⚠️ 只刷新上限值、**不把上限写进 _volume**（2026-09-14 修）：
+    // 老写法 `v = Math.min(v, cap)` 会把"用户想要的音量"永久限制在上限内，
+    // 家长之后取消/调高上限时音量也回不来（实测：设过 0.6 后取消上限仍是 0.6）。
+    // 正确做法：_volume = 用户意图，_effectiveVolume() = min(意图, 上限)。
     if (enforceCap) {
       try {
         const { volumeCap } = await import('./parental.js')
-        const cap = await volumeCap()
-        v = Math.min(v, cap)
+        this._volumeCap = await volumeCap()
       } catch (_) {}
     }
-    this._volume = Math.max(0.1, Math.min(1, v))
+    this._volume = Math.max(0.1, Math.min(1, Number(v) || 0))
+    const eff = this._effectiveVolume()
     if (this.isNativeEngine) {
-      try { await NativeAudio.setVolume({ assetId: this._assetId(this.trackIndex), volume: this._volume }) } catch (_) {}
+      try { await NativeAudio.setVolume({ assetId: this._assetId(this.trackIndex), volume: eff }) } catch (_) {}
     } else if (this._audio) {
-      this._audio.volume = this._volume
+      this._audio.volume = eff
+    }
+  }
+
+  /**
+   * 家长改了音量上限后立即生效（不改变用户设定的音量，只重新套一次封顶）。
+   */
+  async reapplyVolumeCap() {
+    try {
+      const { volumeCap } = await import('./parental.js')
+      this._volumeCap = await volumeCap()
+    } catch (_) { return }
+    const eff = this._effectiveVolume()
+    if (this.isNativeEngine) {
+      if (!this._loadedIdx.has(this.trackIndex) && this._playingAssetIdx == null) return
+      try { await NativeAudio.setVolume({ assetId: this._assetId(this.trackIndex), volume: eff }) } catch (_) {}
+    } else if (this._audio) {
+      this._audio.volume = eff
     }
   }
 
@@ -610,6 +655,12 @@ export class BookPlayer {
     if (fileTime > 0.5) {
       try { await NativeAudio.setCurrentTime({ assetId, time: fileTime }) } catch (_) {}
     }
+    // ⚠️ 插件的音量是 per-asset 的：新 preload 的 asset 音量是默认 100%，
+    // 不在这里重新套上限/当前音量，每次切集/换书音量都会弹回 100%
+    // —— 这正是「音量上限不生效」的另一半根因（2026-09-14）。
+    if (this._volume < 1 || this._volumeCap < 1) {
+      try { await NativeAudio.setVolume({ assetId, volume: this._effectiveVolume() }) } catch (_) {}
+    }
   }
 
   _onNativeTime(ev) {
@@ -745,6 +796,8 @@ export class BookPlayer {
     }
     this._audio.src = t.url
     this._audio.playbackRate = this.rate
+    // 家长音量上限：web 回退引擎同样每次装轨都套（见 _nativeLoadTrack 同款修复）
+    this._audio.volume = this._effectiveVolume()
     this._setupMediaSession()
     await new Promise(res => {
       const done = () => res()

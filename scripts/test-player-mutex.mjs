@@ -52,7 +52,8 @@ const FakeAudio = {
   async stop({ assetId }) { state.calls.push(['stop', assetId]); const a = state.assets.get(assetId); if (a) a.playing = false },
   async unload({ assetId }) { state.calls.push(['unload', assetId]); state.assets.delete(assetId) },
   async setCurrentTime({ assetId, time }) { const a = state.assets.get(assetId); if (a) a.time = time; state.calls.push(['setTime', assetId, time]) },
-  async setRate() {}, async setVolume() {},
+  async setRate() {},
+  async setVolume({ assetId, volume }) { state.calls.push(['setVolume', assetId, volume]); const a = state.assets.get(assetId); if (a) a.volume = volume },
   async getCurrentTime({ assetId }) { return { currentTime: state.assets.get(assetId)?.time ?? 0 } },
   async clearCache() { state.calls.push(['clearCache']); state.cacheCleared = true },
 }
@@ -63,7 +64,38 @@ let code = SRC
   .replace(/import \{ NativeAudio \} from '@capgo\/capacitor-native-audio'/, 'const NativeAudio = globalThis.__FAKE_AUDIO__')
   .replace(/import \{ registerPlugin \} from '@capacitor\/core'/, 'const registerPlugin = () => ({ start: async () => {}, stop: async () => {} })')
   .replace(/import \{ abs \} from '\.\/api\.js'/, 'const abs = globalThis.__FAKE_ABS__')
+  // 家长音量上限是动态 import('./parental.js')（懒加载），替身也换成可控桩
+  .replace(/import\('\.\/parental\.js'\)/g, 'import(globalThis.__PARENTAL_URL__)')
 fs.writeFileSync(stubPath, code)
+
+// parental.js 桩：store 由内存 Map 代替，cap 可在用例里现场改
+{
+  const mem = new Map()
+  globalThis.__SA_TEST_STORE__ = mem
+  const stub = `
+const mem = globalThis.__SA_TEST_STORE__
+export const store = {
+  async get(k, d = '') { return mem.has(k) ? mem.get(k) : d },
+  async set(k, v) { mem.set(k, String(v)) },
+}
+export const CONFIG_KEYS = { volumeCap: 'volumeCap' }
+export async function volumeCap() {
+  const v = Number(mem.get('volumeCap') ?? '1')
+  return Number.isFinite(v) && v >= 0.1 && v <= 1 ? v : 1
+}
+export function volumeCapLabel(cap) {
+  const pct = Math.round((Number.isFinite(cap) ? cap : 1) * 100)
+  return pct >= 100 ? '不限制' : '最高 ' + pct + '%'
+}
+export const VOLUME_CAP_MIN = 0.1, VOLUME_CAP_MAX = 1
+export async function timeWindowEnabled() { return false }
+export async function dailyLimitEnabled() { return false }
+export async function hasTimeWindowConfig() { return false }
+`
+  const p = path.join(ROOT, '.tmp-parental-stub.mjs')
+  fs.writeFileSync(p, stub)
+  globalThis.__PARENTAL_URL__ = pathToFileURL(p).href
+}
 
 globalThis.__FAKE_AUDIO__ = FakeAudio
 globalThis.__FAKE_ABS__ = null
@@ -372,7 +404,50 @@ console.log('\n=== 13. stop() 只卸载装载过的 asset（不随轨数线性�
   await p.stop({ silent: true })
 }
 
+console.log('\n=== 14. 家长音量上限（2026-09-14 修复：上限必须真正生效）===')
+{
+  const store = globalThis.__SA_TEST_STORE__
+  state.assets.clear(); state.calls.length = 0
+  // 场景 A：上限 60%，孩子从不碰音量 → 装轨后原生层音量必须是 0.6（旧版是 1.0，bug）
+  store.set('volumeCap', '0.6')
+  const p = new BookPlayer({})
+  await p.init()
+  await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  await p.play()
+  ok('load 时读了家长上限', p._volumeCap === 0.6, `cap=${p._volumeCap}`)
+  ok('当前 asset 音量被压到 0.6（旧 bug：开播不设音量=100%）',
+     state.assets.get('sa-0')?.volume === 0.6, `v=${state.assets.get('sa-0')?.volume}`)
+
+  // 场景 B：切集（自动下一集）后，新 asset 音量也必须是 0.6
+  //   （插件音量 per-asset，新 preload 的 asset 默认 100%）
+  state.calls.length = 0
+  await p._onTrackEnd({ assetId: 'sa-0' })   // 播完第1集 → 自动进第2集
+  ok('切集后新 asset 音量仍是 0.6（per-asset 不继承）',
+     state.assets.get('sa-1')?.volume === 0.6, `v=${state.assets.get('sa-1')?.volume}`)
+
+  // 场景 C：语音"大声点"也不能越过上限（_volume 保留用户意图，下发值必须封顶）
+  await p.setVolume(1.0)
+  ok('setVolume(1.0) 下发值被封顶到 0.6', state.assets.get('sa-1')?.volume === 0.6,
+     `_volume=${p._volume} native=${state.assets.get('sa-1')?.volume}`)
+  ok('用户意图音量仍记为 1.0（不写坏，家长取消上限后能回满）',
+     Math.abs(p._volume - 1) < 1e-9, `_volume=${p._volume}`)
+
+  // 场景 D：家长中途调低上限 → reapply 立即生效
+  store.set('volumeCap', '0.3')
+  await p.reapplyVolumeCap()
+  ok('reapplyVolumeCap 后生效 0.3', state.assets.get('sa-1')?.volume === 0.3,
+     `native=${state.assets.get('sa-1')?.volume}`)
+
+  // 场景 E：上限取消（1.0）→ 回满
+  store.set('volumeCap', '1')
+  await p.reapplyVolumeCap()
+  ok('上限取消后恢复 1.0', state.assets.get('sa-1')?.volume === 1,
+     `native=${state.assets.get('sa-1')?.volume}`)
+  await p.stop()
+}
+
 try { fs.unlinkSync(stubPath) } catch (_) {}
+try { fs.unlinkSync(path.join(ROOT, '.tmp-parental-stub.mjs')) } catch (_) {}
 
 console.log('\n==============================================')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)

@@ -650,14 +650,62 @@ body.kid .sheet-body .chapter-item { height: 76px; }
 .sheet-body .chapter-item:active { background: rgba(255,255,255,.05); }
 .sheet-body .chapter-item.active { background: rgba(124,92,255,.18); }
 
-/* ---------- 统计页 ---------- */
-.day-switch { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 14px; scrollbar-width: none; }
-.day-switch::-webkit-scrollbar { display: none; }
-.day-chip {
-  flex: 0 0 auto; padding: 7px 14px; border-radius: 999px; border: none;
-  background: var(--card); color: var(--text-dim); font-size: 13px; cursor: pointer;
+/* ---------- 统计页：日期导航（前后箭头 + 可展开的月历，2026-09-14 改版） ---------- */
+.day-nav {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
 }
-.day-chip.active { background: var(--accent); color: #fff; font-weight: 700; }
+.day-arrow {
+  flex: 0 0 44px; height: 44px; border-radius: 50%; border: none;
+  background: var(--card); color: var(--text); cursor: pointer;
+  display: grid; place-items: center;
+}
+.day-arrow:active { background: var(--card-2); }
+.day-arrow.is-disabled { opacity: .35; pointer-events: none; }
+.day-cur {
+  flex: 1; min-width: 0; border: none; cursor: pointer;
+  background: var(--card); border-radius: var(--radius-sm);
+  padding: 8px 14px; text-align: center; color: var(--text);
+}
+.day-cur.open { background: var(--card-2); }
+.day-cur-main { display: block; font-size: 15.5px; font-weight: 700; }
+.day-cur-sub { display: block; font-size: 11.5px; color: var(--text-dim); margin-top: 2px; }
+
+/* 月历 */
+.cal {
+  background: var(--bg-2); border-radius: var(--radius);
+  padding: 12px 10px 10px; margin-bottom: 14px;
+}
+.cal-head { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 8px; }
+.cal-title { font-size: 15px; font-weight: 700; }
+.cal-m-arrow {
+  width: 40px; height: 40px; border-radius: 50%; border: none;
+  background: none; color: var(--text-dim); cursor: pointer;
+  display: grid; place-items: center;
+}
+.cal-m-arrow:active { background: rgba(255,255,255,.06); color: var(--text); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.cal-wd { margin-bottom: 2px; }
+.cal-wd-h { text-align: center; font-size: 11.5px; color: var(--text-dim); padding: 4px 0; }
+.cal-cell {
+  position: relative; border: none; background: none; color: var(--text);
+  height: 42px; border-radius: 10px; cursor: pointer;
+  display: grid; place-items: center; font-size: 14.5px; font-variant-numeric: tabular-nums;
+}
+.cal-cell:active { background: rgba(255,255,255,.07); }
+.cal-cell.out { color: var(--text-dim); opacity: .45; }
+.cal-cell.dis { opacity: .28; pointer-events: none; }
+.cal-cell.sel { background: var(--accent); color: #fff; font-weight: 800; }
+.cal-dot {
+  position: absolute; bottom: 5px; left: 50%; transform: translateX(-50%);
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent-2);
+}
+.cal-cell.sel .cal-dot { background: #fff; }
+.cal-foot { text-align: center; padding-top: 6px; }
+.cal-today {
+  border: none; background: none; color: var(--accent); font-size: 13.5px;
+  font-weight: 600; cursor: pointer; padding: 8px 16px;
+}
+.cal-today:active { opacity: .7; }
 
 .stat-hero { text-align: center; padding: 22px 0 24px; }
 .stat-total { font-size: 40px; font-weight: 800; letter-spacing: -.5px; }
@@ -677,7 +725,6 @@ body.kid .sheet-body .chapter-item { height: 76px; }
 .stat-book-total { font-size: 14px; font-weight: 700; color: var(--accent); flex: 0 0 auto; }
 .stat-session { display: flex; gap: 10px; font-size: 12.5px; color: var(--text-dim); margin-top: 7px; }
 .stat-session-time { flex: 0 0 46px; }
-.stat-session-period { flex: 0 0 34px; }
 .stat-session-dur { flex: 1; }
 
 /* ---------- 缓存页 ---------- */
@@ -717,6 +764,88 @@ body.kid .sheet-body .chapter-item { height: 76px; }
 .kid-chapters .chapter-title { font-size: 17px; font-weight: 600; }
 .kid-chapters .chapter-dur { font-size: 13px; }
 .kid-chapters .chapter-item:active { transform: scale(.985); }
+
+/* ---------- 家长设置：音量上限滑杆（滚轮式精细调节，2026-09-14） ---------- */
+.cap-group { padding: 16px 18px 14px; }
+.cap-head { display: flex; align-items: center; gap: 14px; }
+.cap-pct {
+  flex: 0 0 auto; font-size: 17px; font-weight: 800; color: var(--accent);
+  font-variant-numeric: tabular-nums; min-width: 54px; text-align: right;
+}
+.cap-slider-row { padding: 14px 0 2px; }
+.cap-slider-row input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 34px; background: transparent; cursor: pointer;
+  /* 命中区 34px（手指友好），视觉轨道由下方 ::-webkit-slider-runnable-track 画 */
+}
+.cap-slider-row input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px; border-radius: 4px; background: rgba(255,255,255,.14);
+}
+.cap-slider-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 28px; height: 28px; border-radius: 50%; background: var(--accent);
+  border: 3px solid var(--bg-2); margin-top: -10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.35);
+}
+.cap-slider-row input[type="range"]::-moz-range-track {
+  height: 8px; border-radius: 4px; background: rgba(255,255,255,.14);
+}
+.cap-slider-row input[type="range"]::-moz-range-thumb {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--accent); border: 3px solid var(--bg-2);
+}
+.cap-scale {
+  display: flex; justify-content: space-between;
+  font-size: 11.5px; color: var(--text-dim); padding: 0 2px;
+}
+
+/* ---------- 开关（iOS 风格，纯 CSS） ---------- */
+.switch-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 15px 18px; border-bottom: 1px solid rgba(255,255,255,.05);
+}
+.switch-row:last-child { border-bottom: none; }
+.sa-switch { flex: 0 0 auto; position: relative; display: inline-flex; cursor: pointer; }
+.sa-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; }
+.sa-switch i {
+  display: block; width: 52px; height: 31px; border-radius: 999px;
+  background: rgba(255,255,255,.16); transition: background .18s;
+  position: relative;
+}
+.sa-switch i::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 25px; height: 25px; border-radius: 50%; background: #fff;
+  transition: transform .18s;
+}
+.sa-switch input:checked + i { background: var(--accent); }
+.sa-switch input:checked + i::after { transform: translateX(21px); }
+
+/* ---------- 全屏子页（收听时间等，替代旧弹窗） ---------- */
+.subpage {
+  position: fixed; inset: 0; z-index: 260;
+  background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: max(12px, var(--safe-top)) 0 calc(var(--safe-bottom) + 28px);
+}
+.subpage .section-h { margin-left: 18px; margin-right: 18px; }
+
+/* 时间类输入框：绝不能用 .lock-input（那是密码框：26px 字号 + 10px 字距，
+   时间串会被挤得显示不全 —— 老板 2026-09-14 报的"显示不全"就是这个） */
+.time-input {
+  flex: 1; min-width: 0;
+  font-size: 16px; letter-spacing: normal; text-align: center;
+  padding: 11px 8px; border: 1.5px solid rgba(255,255,255,.12);
+  border-radius: var(--radius-sm); background: var(--card); color: var(--text);
+  outline: none; font-variant-numeric: tabular-nums;
+}
+.time-input:focus { border-color: var(--accent); }
+/* iOS Safari 对 date/time 控件有额外的内部宽度需求，给它一点余地 */
+.time-input::-webkit-date-and-time-value { text-align: center; }
+.time-input-num { letter-spacing: normal; }
+.time-block { padding: 12px 18px 0; }
+.time-block + .time-block { padding-top: 14px; }
+.time-block-h { font-size: 13px; color: var(--text-dim); margin-bottom: 8px; }
+.time-pair { display: flex; gap: 8px; align-items: center; }
+.time-sep { color: var(--text-dim); font-size: 13px; flex: 0 0 auto; }
+.time-hint { font-size: 12px; color: var(--text-dim); padding: 8px 18px 16px; line-height: 1.5; }
 
 /* ---------- 横屏 / 平板 ---------- */
 @media (orientation: landscape) and (max-height: 520px) {

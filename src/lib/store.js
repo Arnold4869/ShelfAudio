@@ -66,7 +66,9 @@ export const CONFIG_KEYS = {
   // ---- 老板 2026-09-13 ----
   quietNotification: 'quietNotification', // 静默「普通通知」'1'|'0'（锁屏控制保留）
   volumeCap: 'volumeCap',                 // 全局音量上限 0.1~1（'1'=不限制）
-  timeLimitEnabled: 'timeLimitEnabled',   // 使用时间管控开关 '1'|'0'
+  timeLimitEnabled: 'timeLimitEnabled',   // [旧] 使用时间管控总开关（兼容读，不再写入）
+  timeWindowEnabled: 'timeWindowEnabled', // 时段限制开关 '1'|'0'（老板 2026-09-14：两个限制各自独立）
+  dailyLimitEnabled: 'dailyLimitEnabled', // 每日时长限制开关 '1'|'0'
   timeWeekdayFrom: 'timeWeekdayFrom',     // 工作日允许开始时间 'HH:MM'
   timeWeekdayTo: 'timeWeekdayTo',         // 工作日允许结束时间
   timeWeekendFrom: 'timeWeekendFrom',     // 周末允许开始时间
