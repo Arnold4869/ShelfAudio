@@ -1,6 +1,6 @@
 /** 语音浮层 UI —— 书架页和搜索页共用 */
 import { icon } from './icons.js'
-import { listen, finishListening, currentText, forceStopCurrent, parseCommand, voiceSupported } from './voice.js'
+import { listen, finishListening, currentText, forceStopCurrent, parseCommand, voiceSupported, voiceServiceAvailable } from './voice.js'
 import { checkVoicePermission, requestVoicePermission, openSystemSettings } from './permissions.js'
 import { state, toast } from '../app.js'
 
@@ -123,6 +123,20 @@ export function openVoiceOverlay({ onSearch } = {}) {
 
   // ---------- 启动 ----------
   ;(async () => {
+    // 0) 系统里有没有语音识别服务？没有就别白折腾权限了 ——
+    // 小米 8SE 这类老机型常见：权限给了、也能收音，但识别服务缺失，
+    // 结果永远是空，用户看到的就是"能听到声音却不转文字"。
+    const svcOk = await voiceServiceAvailable()
+    if (svcOk === false) {
+      mic.classList.remove('listening')
+      stat.textContent = '这台手机没有可用的语音识别服务'
+      heard.textContent = ''
+      hints.innerHTML = ''
+      actions.innerHTML = `<button class="btn ghost" id="vClose" style="flex:1">知道了</button>`
+      actions.querySelector('#vClose').onclick = () => close()
+      return
+    }
+
     const perm = await checkVoicePermission()
     if (!perm.granted) {
       if (perm.canAsk) {

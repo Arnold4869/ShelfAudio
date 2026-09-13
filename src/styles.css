@@ -20,7 +20,12 @@
   --radius-sm: 14px;
   /* iOS：env() 由系统提供；Android（Capacitor 8 SystemBars）：native 把 insets 置 0（WebView 全屏），
      真实值注入 CSS 变量 --safe-area-inset-*。env() 在 Android WebView 上恒 0，
-     所以取 max(env, var) 两边都覆盖 —— 不然 Android 上底栏吃不到手势条高度，内容与系统导航条错位。 */
+     所以取 max(env, var) 两边都覆盖 —— 不然 Android 上底栏吃不到手势条高度，内容与系统导航条错位。
+
+     注意：不要再加「screen.height - innerHeight」这类 JS 实测兜底：它无法区分
+     底部导航条高度与「顶部状态栏 + 底部导航条」，在 WebView 非全屏的机型上会把
+     dock 底部凭空撑高几十像素。底部那点视觉空白改由系统导航条着色解决
+     （android/navigationBarColor = dock 底色，见 values/styles.xml）。 */
   --safe-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
   --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
   /* 迷你条高度（.mini 的 height 必须与它一致） */
@@ -35,6 +40,23 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+/* Android WebView：点击任意 <button> 后浏览器会给它 :focus，并画一圈系统焦点框
+   （小米 8SE 上是**橙色/土黄**的 132×132 空心方框，罩在播放键上，正是老板截图里那个框）。
+   -webkit-tap-highlight-color 只消掉"按下瞬间的高亮块"，**管不了这个描边**。
+
+   所以显式清掉触摸态的焦点框；同时保留 :focus-visible —— 只有键盘/遥控器等
+   非触摸方式聚焦时才出现，不牺牲可访问性。别只写 `outline:none` 到全局，
+   那样键盘用户就完全看不到焦点了。 */
+button:focus,
+a:focus,
+[role="button"]:focus,
+.kid-tab:focus,
+.setting-row:focus { outline: none; }
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+.kid-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 html, body {
   margin: 0; padding: 0; height: 100%;

@@ -146,7 +146,9 @@ export async function renderPlayer(root) {
   }
   function paintState() {
     // 必须用 innerHTML：textContent 会把上面注入的 SVG 抹掉，播放键会变空白
-    $('#btnPlay').innerHTML = icon(p.playing ? 'pause' : 'play', 46)
+    // 缓冲中显示 loader（自带 .spin 旋转），比"暂停图标"诚实 —— 不然用户
+    // 以为"点了没反应"再点一次（小米 8SE 冷启动缓冲要几秒）。
+    $('#btnPlay').innerHTML = p.buffering ? icon('loader', 46, 'spin') : icon(p.playing ? 'pause' : 'play', 46)
     $('#btnRate').textContent = (p.rate || 1).toFixed(1).replace(/\.0$/, '.0') + '×'
   }
 

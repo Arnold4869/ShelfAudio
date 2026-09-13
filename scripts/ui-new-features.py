@@ -257,6 +257,55 @@ with sync_playwright() as pw:
     ok("收藏页无 JS 报错", not errs, str(errs[:2]))
     ctx.close()
 
+    print("\n=== I. 设置页扁平化 + 关于置底（老板 2026-09-13）===")
+    ctx, pg, errs = mk(br, 'kid')
+    pg.evaluate("document.querySelector('[data-nav=\"settings\"]')?.click()")
+    pg.wait_for_timeout(900)
+    pg.evaluate("document.querySelector('#lockPin').value='1234';document.querySelector('#lockOk').click()")
+    pg.wait_for_timeout(1200)
+    heads = pg.evaluate("[...document.querySelectorAll('#view .section-h')].map(e=>e.textContent.trim())")
+    ok("设置页没有大分类标题（我的收藏/离线缓存/关于/家长）", len(heads) == 0, f"实际={heads}")
+    labels = pg.evaluate("[...document.querySelectorAll('#view .setting-row .setting-label')].map(e=>e.textContent.trim())")
+    ok("四个菜单行都在", all(k in labels for k in ['收藏的书', '缓存管理', '家长设置', '关于']), f"{labels}")
+    ok("不再出现「关于听书」字样", not any('关于听书' in (l or '') for l in labels), f"{labels}")
+    # 关于必须是最后一个菜单行
+    last = labels[-1] if labels else None
+    ok("「关于」排在最后", last == '关于', f"最后一个={last}")
+    about_sub = pg.evaluate("""(() => {
+      const r = document.querySelector('#rowAbout');
+      return r ? (r.querySelector('.setting-value')?.textContent || '') : null;
+    })()""")
+    ok("「关于」行没有副行文字（版本·权限已去掉）", about_sub == '', f"副行={about_sub!r}")
+    ok("设置页无 JS 报错", not errs, str(errs[:2]))
+    ctx.close()
+
+    print("\n=== J. 登录页输入框不再预填 / 无提示行（老板 2026-09-13）===")
+    ctx = br.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2,
+                         is_mobile=True, has_touch=True)
+    pg = ctx.new_page()
+    errs2 = []
+    pg.on('pageerror', lambda e: errs2.append(str(e)[:200]))
+    # 故意预先写入"上次保存的服务器/用户名"，验证登录页不会再回填
+    pg.add_init_script("""
+      localStorage.setItem('shelfaudio.server','http://内网IP:端口');
+      localStorage.setItem('shelfaudio.username','Bin');
+    """)
+    pg.goto('http://127.0.0.1:8899/index.html')
+    pg.wait_for_timeout(2000)
+    vals = pg.evaluate("""({
+      server: document.querySelector('#fServer')?.value,
+      user: document.querySelector('#fUser')?.value,
+      pass: document.querySelector('#fPass')?.value,
+    })""")
+    ok("服务器地址框空白（不回填上次的值）", vals.get('server') == '', f"value={vals.get('server')!r}")
+    ok("用户名框空白", vals.get('user') == '', f"value={vals.get('user')!r}")
+    ok("密码框空白", vals.get('pass') == '', f"value={vals.get('pass')!r}")
+    ph = pg.evaluate("document.querySelector('#fServer')?.placeholder")
+    ok("placeholder 不再是示例地址", ph != 'http://内网IP:端口', f"placeholder={ph!r}")
+    ok("登录页没有底部提示行", pg.evaluate("document.querySelectorAll('.login-wrap .hint').length") == 0)
+    ok("登录页无 JS 报错", not errs2, str(errs2[:2]))
+    ctx.close()
+
     br.close()
 
 print(f"\n{'=' * 46}\n结果：{PASS} 通过 / {FAIL} 失败")

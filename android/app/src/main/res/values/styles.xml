@@ -13,8 +13,13 @@
         <item name="android:windowBackground">@color/appBackground</item>
         <!-- 状态栏/导航栏透明，内容延伸到边缘；安全区由 CSS env() 处理 -->
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- 导航栏不再透明：透明时 WebView 之下的窗口区域透出来，
+             老机型上该区域没有内容 → 视觉上就是 dock 底下一条"没填充"的暗带
+             （小米 8SE 实测）。直接涂成 dock 底色 #171436，上下连成一整块。
+             手势条本身是系统画的，在深色导航栏上自动反白，仍清晰可见。 -->
+        <item name="android:navigationBarColor">@color/navBar</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
@@ -22,8 +27,9 @@
         <item name="windowNoTitle">true</item>
         <item name="android:windowBackground">@color/appBackground</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/navBar</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">

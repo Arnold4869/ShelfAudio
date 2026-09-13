@@ -69,6 +69,25 @@ export class BookPlayer {
     this._nativeTicker = null   // 原生兜底心跳（保证进度写回 ABS）
     this._playingAssetIdx = null // 原生层当前真正在播的 asset 下标（换轨时据此清理旧音轨）
     this._loadedIdx = new Set()  // 原生层当前已 preload 的音轨下标（保证同一时刻只留一条）
+    // ---- 播放健壮性状态（"点了播不出来 / 点几下卡卡的"根因治理，见 play()）----
+    this._wantPlaying = false    // 用户意图（连点时以它为准，不用可能滞后的 this.playing）
+    this._chain = Promise.resolve() // play/pause 串行队列：原生调用不允许交叉
+    this._starting = false       // 已发出 play、但还没收到 STATE_PLAYING 的窗口
+    this._startDeadline = 0      // 该窗口的截止时间（超过就不再容忍"未播"事件）
+    this.buffering = false       // 正在缓冲（UI 显示加载态，而不是装作在播）
+  }
+
+  /**
+   * 串行化原生调用。
+   *
+   * 为什么必须：连点播放键时，toggle() 里若读可能滞后的 this.playing，
+   * 会交错发出 play/pause/play，原生层按到达顺序执行，
+   * 结果就是"卡卡的、一声一声的"（声音刚起就被下一条 pause 掐掉）。
+   */
+  _enqueue(fn) {
+    const run = this._chain.then(fn, fn)
+    this._chain = run.then(() => {}, () => {})
+    return run
   }
 
   /** 我们的音频会话参数（配置/re配置都用这一份，避免两处不一致） */
@@ -165,38 +184,68 @@ export class BookPlayer {
 
   /** 开始播放（首次由用户手势触发，iOS 才允许出声） */
   async play() {
-    if (this.isNativeEngine) {
-      // iOS：语音识别插件会残留 .playAndRecord + .defaultToSpeaker 会话，
-      // 播放前必须把类别抢回 .playback，否则声音被强制送扬声器（蓝牙耳机失效）。
-      await BookPlayer.reassertSession()
-      // Android：先占住前台服务，否则切后台会被系统掐音频
-      await fgStart(this.notification?.title, this.notification?.artist)
-      // ⚠️ 必须显式传 time！
-      // 插件 play() 的 time 默认是 0（iOS: `call.getDouble(Constant.Time) ?? 0`，
-      // Android: `call.getDouble(TIME, 0.0)`），不传就会把播放位置重置到 0。
-      // 选章节/拖进度条/从暂停恢复都会因此被"弹回开头"——这就是
-      // 「选集点了没用」「历史记录没更新」的共同根因。
-      const fileTime = this._fileTimeFor(this.trackIndex)
-      await NativeAudio.play({ assetId: this._assetId(this.trackIndex), time: fileTime })
-      this._playingAssetIdx = this.trackIndex
-    } else if (this._audio) {
-      await this._audio.play().catch(e => console.warn('play 失败', e))
-    }
-    this.playing = true
-    this.onState({ state: 'playing', isPlaying: true })
-    this._startWebTickerIfNeeded()
-    this._startNativeTicker()
+    return this._enqueue(async () => {
+      this._wantPlaying = true
+      this._starting = true
+      this._startDeadline = Date.now() + 15000   // 容忍窗口：远程音频冷启动 + 弱网缓冲
+      try {
+        if (this.isNativeEngine) {
+          // iOS：语音识别插件会残留 .playAndRecord + .defaultToSpeaker 会话，
+          // 播放前必须把类别抢回 .playback，否则声音被强制送扬声器（蓝牙耳机失效）。
+          await BookPlayer.reassertSession()
+          // Android：先占住前台服务，否则切后台会被系统掐音频
+          await fgStart(this.notification?.title, this.notification?.artist)
+          // ⚠️ 必须显式传 time！
+          // 插件 play() 的 time 默认是 0（iOS: `call.getDouble(Constant.Time) ?? 0`，
+          // Android: `call.getDouble(TIME, 0.0)`），不传就会把播放位置重置到 0。
+          // 选章节/拖进度条/从暂停恢复都会因此被"弹回开头"——这就是
+          // 「选集点了没用」「历史记录没更新」的共同根因。
+          const fileTime = this._fileTimeFor(this.trackIndex)
+          await NativeAudio.play({ assetId: this._assetId(this.trackIndex), time: fileTime })
+          this._playingAssetIdx = this.trackIndex
+        } else if (this._audio) {
+          await this._audio.play().catch(e => console.warn('play 失败', e))
+        }
+      } catch (e) {
+        // play 调用失败（asset 没装上/被系统打断）：重装一条再试一次。
+        // 之前失败只打日志，用户看到的就是"点了没反应"。
+        console.warn('play 失败，重装音轨重试', e)
+        try {
+          await this._nativeLoadTrack(this.trackIndex, this._fileTimeFor(this.trackIndex))
+          const fileTime2 = this._fileTimeFor(this.trackIndex)
+          await NativeAudio.play({ assetId: this._assetId(this.trackIndex), time: fileTime2 })
+          this._playingAssetIdx = this.trackIndex
+        } catch (e2) {
+          this._starting = false
+          this.buffering = false
+          this.playing = false
+          this.onState({ state: 'error', isPlaying: false, reason: 'play-failed' })
+          throw e2
+        }
+      }
+      // 乐观置位：声音起没起以原生 playbackState 事件为准；
+      // 网络音频冷启动要缓冲几秒，期间 UI 不该显示"已暂停"（那是"没按上"的观感来源）
+      this.playing = true
+      this.onState({ state: 'playing', isPlaying: true })
+      this._startWebTickerIfNeeded()
+      this._startNativeTicker()
+    })
   }
 
   async pause() {
-    if (this.isNativeEngine) await NativeAudio.pause({ assetId: this._assetId(this.trackIndex) })
-    else if (this._audio) this._audio.pause()
-    this.playing = false
-    this.onState({ state: 'paused', isPlaying: false })
-    this._stopWebTicker()
+    return this._enqueue(async () => {
+      this._wantPlaying = false
+      this._starting = false
+      if (this.isNativeEngine) await NativeAudio.pause({ assetId: this._assetId(this.trackIndex) })
+      else if (this._audio) this._audio.pause()
+      this.playing = false
+      this.buffering = false
+      this.onState({ state: 'paused', isPlaying: false })
+      this._stopWebTicker()
+    })
   }
 
-  async toggle() { return this.playing ? this.pause() : this.play() }
+  async toggle() { return this._wantPlaying ? this.pause() : this.play() }
 
   /** 跳到全书某个时间点 */
   async seek(bookTime) {
@@ -294,6 +343,9 @@ export class BookPlayer {
 
   async stop({ silent = false } = {}) {
     this._stopNativeTicker()
+    this._wantPlaying = false
+    this._starting = false
+    this.buffering = false
     await fgStop()
     if (this.isNativeEngine) {
       try { await NativeAudio.stop({ assetId: this._assetId(this.trackIndex) }) } catch (_) {}
@@ -440,7 +492,6 @@ export class BookPlayer {
   _onNativeState(ev) {
     // 远程控制（锁屏/通知栏）也会触发这里，UI 必须跟着变
     const playing = ev?.state === 'playing'
-    this.playing = playing
     if (typeof ev?.currentTime === 'number') {
       const idx = this._indexFromAssetId(ev.assetId)
       if (idx !== null) {
@@ -448,6 +499,22 @@ export class BookPlayer {
         this._emitTime()
       }
     }
+
+    // ⚠️ 冷启动/缓冲期不能信"未在播"事件。
+    // 插件 play() 后立刻 notifyPlaybackState("play")，而它内部取的是 ExoPlayer
+    // 实时状态：远程音频刚 setPlayWhenReady(true) 时还停在 STATE_BUFFERING，
+    // 于是这里收到一个 state=paused/stopped 的事件，把 UI 打回"暂停"——
+    // 用户看到的就是"点了播放，图标还是三角形，像没按上"，于是反复点。
+    // 刚发出 play 的容忍窗口内（_startDeadline 之前）只接"已在播"，
+    // 忽略"未在播"，让 UI 保持用户意图；原因带 buffer 时按缓冲处理。
+    if (!playing && this._wantPlaying && Date.now() < this._startDeadline) {
+      if (!this.buffering) { this.buffering = true; this.onState({ state: 'buffering', isPlaying: true, reason: ev?.reason }) }
+      return
+    }
+
+    this._starting = false
+    this.buffering = false
+    this.playing = playing
     this.onState({ state: ev?.state || (playing ? 'playing' : 'paused'), isPlaying: playing, reason: ev?.reason })
   }
 

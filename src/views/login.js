@@ -5,6 +5,8 @@ import { go, toast, esc, state, initPlayer } from '../app.js'
 import { icon } from '../lib/icons.js'
 
 export async function renderLogin(root) {
+  // 老板 2026-09-13：登录框不要预填（value=）也不要示例 placeholder，
+  // 空白就行。savedServer/savedUser 仅用于判断"有没有存过"（见下方跳转逻辑）。
   const savedServer = (await store.get(CONFIG_KEYS.server, '')) || ''
   const savedUser = (await store.get(CONFIG_KEYS.username, '')) || ''
 
@@ -17,22 +19,19 @@ export async function renderLogin(root) {
         <div class="field">
           <label>服务器地址</label>
           <input id="fServer" type="url" inputmode="url" autocapitalize="off" autocorrect="off"
-                 placeholder="http://内网IP:端口" value="${esc(savedServer)}" />
+                 placeholder="服务器地址" />
         </div>
         <div class="field">
           <label>用户名</label>
           <input id="fUser" type="text" autocapitalize="off" autocorrect="off"
-                 placeholder="user" value="${esc(savedUser)}" />
+                 placeholder="用户名" />
         </div>
         <div class="field">
           <label>密码</label>
-          <input id="fPass" type="password" placeholder="••••••" />
+          <input id="fPass" type="password" placeholder="密码" />
         </div>
         <div class="err" id="err"></div>
         <button class="btn block" id="doLogin">连 接</button>
-      </div>
-      <div class="hint" style="margin-top:18px">
-        局域网填内网地址；外网填反代地址。
       </div>
     </div>
   `

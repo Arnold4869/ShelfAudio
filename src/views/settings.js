@@ -1,12 +1,10 @@
 /**
  * 设置页
  *
- * 只有一种模式了（老板 2026-09-12 要求取消儿童/成人分类）：
- * 以前这里顶上有「儿童模式 / 成人模式」两个互斥选项，切换后整个 App 换一套界面。
- * 现在所有用户都用同一套界面（大卡片书架 + 大字播放页），
- * 需要家长控制的东西收进「家长设置」（要密码）。
- *
- * 本页放的是日常/无害的项：语音权限、收藏、离线缓存。
+ * 布局（老板 2026-09-13 拍板）：
+ * - 不要「我的收藏 / 离线缓存 / 关于 / 家长」这些大分类标题，只保留菜单行
+ * - 「关于」放最下面，名字就叫「关于」，不带副行（版本/权限等说明）
+ * - 首次登录的引导块保留（那是新用户唯一的教学时机）
  */
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { state, go, toast, esc, requireParentPin, updateMini } from '../app.js'
@@ -34,20 +32,14 @@ export async function renderSettings(root, { firstRun = false } = {}) {
       </div>
     </div>` : ''}
 
-    <div class="section-h">我的收藏</div>
     <div class="settings-group">
       <div class="setting-row" id="rowFav">
         <div class="setting-ic">${icon('heart', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">收藏的书</div>
-
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
-    </div>
-
-    <div class="section-h">离线缓存</div>
-    <div class="settings-group">
       <div class="setting-row" id="rowCache">
         <div class="setting-ic">${icon('download', 22)}</div>
         <div class="setting-main">
@@ -56,27 +48,21 @@ export async function renderSettings(root, { firstRun = false } = {}) {
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
-    </div>
-
-    <div class="section-h">关于</div>
-    <div class="settings-group">
-      <div class="setting-row" id="rowAbout">
-        <div class="setting-ic">${icon('info', 22)}</div>
-        <div class="setting-main">
-          <div class="setting-label">关于听书</div>
-          <div class="setting-value">版本 · 权限</div>
-        </div>
-        <div class="setting-arrow">${icon('forward', 20)}</div>
-      </div>
-    </div>
-
-    <div class="section-h">家长</div>
-    <div class="settings-group">
       <div class="setting-row" id="rowParent">
         <div class="setting-ic">${icon('lock', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">家长设置</div>
           <div class="setting-value">${state.kidPin ? '需输入密码' : '未设置密码'}</div>
+        </div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
+      </div>
+    </div>
+
+    <div class="settings-group" id="groupAbout">
+      <div class="setting-row" id="rowAbout">
+        <div class="setting-ic">${icon('info', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">关于</div>
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>

@@ -9,7 +9,7 @@ import { store, CONFIG_KEYS } from '../lib/store.js'
 import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
 import { checkVoicePermission, requestVoicePermission, openSystemSettings, onAppResume } from '../lib/permissions.js'
-import { voiceSupported } from '../lib/voice.js'
+import { voiceSupported, voiceServiceAvailable } from '../lib/voice.js'
 import { checkUpdate, currentVersion, updateSupported } from '../lib/updater.js'
 import { Browser } from '@capacitor/browser'
 
@@ -91,7 +91,14 @@ export async function renderAbout(root) {
     try {
       const p = await checkVoicePermission()
       curState = p.state
-      micState.textContent = descMap[p.state] || p.state
+      let text = descMap[p.state] || p.state
+      // 权限没问题、但系统缺语音识别服务（老机型常见）→ 说清楚，
+      // 否则用户看到「已开启」却永远识别不出字，只会怪 App。
+      if (p.state === 'granted') {
+        const svc = await voiceServiceAvailable()
+        if (svc === false) text = '已开启 · 系统缺少识别服务'
+      }
+      micState.textContent = text
       // 被拒时才显示箭头（去系统设置的入口藏在被拒状态里）
       $('#micArrow').style.display = (p.state === 'denied') ? '' : 'none'
     } catch (_) { micState.textContent = '查询失败' }

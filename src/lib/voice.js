@@ -67,6 +67,31 @@ export function voiceSupported() {
 }
 
 /**
+ * 设备是否真的"有可用的语音识别服务"。
+ *
+ * 为什么不能只看 isNativePlatform：Android 的 SpeechRecognizer 需要系统里
+ * 装了 RecognitionService（Google 语音服务 / 厂商语音助手）。小米 8SE 这类
+ * 老机型常见「系统没有识别服务」——权限给了、麦克风也收音，但识别结果永远为空，
+ * 用户看到的就是"能听到声音却不转文字"。
+ * 插件提供 available() 就是给这个用的；查完把结果缓存，避免每次点麦克风都查。
+ *
+ * 返回 { available:boolean, checked:boolean }
+ */
+let _availCache = null
+export async function voiceServiceAvailable() {
+  if (_availCache !== null) return _availCache
+  if (!voiceSupported()) { _availCache = false; return false }
+  try {
+    const r = await SpeechRecognition.available()
+    _availCache = !!(r?.available)
+  } catch (_) {
+    // 查询本身失败：不武断判"不可用"，交给后续 start() 报错（避免误伤可用设备）
+    return { available: true, unknown: true }
+  }
+  return _availCache
+}
+
+/**
  * 确保有权限。
  * ⚠️ 插件只返回 speechRecognition 字段，没有 microphone 字段
  * （Android 该 alias 底层就是 RECORD_AUDIO；iOS 的 requestPermissions 会连着申请麦克风）。

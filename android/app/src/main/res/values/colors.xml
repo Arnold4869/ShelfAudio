@@ -5,4 +5,7 @@
     <color name="colorAccent">#FF7AC6</color>
     <!-- 页面底色：#0F0D20。窗口/状态栏/导航栏都跟着它，避免安全区露白 -->
     <color name="appBackground">#0F0D20</color>
+    <!-- Android 系统导航条（手势条）底色 = dock 底色，dock 与系统条连成一整块，
+         老机型（如小米 8SE）WebView 未覆盖的底部区域不再露出"没填充"的暗带 -->
+    <color name="navBar">#171436</color>
 </resources>
