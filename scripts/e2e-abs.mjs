@@ -8,10 +8,15 @@
 import { AbsApi } from '../src/lib/api.js'
 import { parseCommand } from '../src/lib/voice.js'
 
-// 默认指向本机；账号必须显式传入，避免把具体环境写进公开仓库
-const BASE = process.argv[2] || 'http://127.0.0.1:18080'
+// 端到端联调用例：服务器地址必须显式传入（第 2 个参数）。
+// 仓库是公开的，不写死任何具体环境地址（连端口也不写），避免暴露部署信息。
+const BASE = process.argv[2] || ''
 const USER = process.argv[3] || ''
 const PASS = process.argv[4] || ''
+if (!BASE || !USER) {
+  console.error('用法: node scripts/e2e-abs.mjs <服务器地址> <用户名> <密码>')
+  process.exit(2)
+}
 
 let pass = 0, fail = 0
 const ok = (name, cond, extra = '') => {
