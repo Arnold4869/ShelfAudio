@@ -316,6 +316,32 @@ console.log('\n=== 10. 恢复落点合法性（播放路径审计加固）===')
      `idx=${p.trackIndex} t=${p.currentBookTime}`)
 }
 
+console.log('\n=== 12. 选集后自动播放（老板 2026-09-15：点选一集不自动播）===')
+{
+  state.assets.clear(); state.calls.length = 0
+  const p = new BookPlayer({})
+  await p.init()
+  await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+
+  // 场景 1：正在播放时选另一集 → 应继续播放
+  await p.play()
+  // 选集弹窗的真实调用：p.seek(start, { autoPlay: true })（见 views/player.js）
+  await p.seek(600, { autoPlay: true })   // 跳到第 3 集
+  ok('播放中选集 → 继续播放', p.playing === true)
+
+  // 场景 2：暂停状态选另一集 → 应自动开始播放（这次要修的行为）
+  await p.pause()
+  ok('已暂停（前置条件）', p.playing === false)
+  await p.seek(0, { autoPlay: true })      // 跳回第 1 集
+  ok('暂停态选集 → 自动开播', p.playing === true)
+
+  // 场景 3：进度条拖拽（不传 autoPlay）→ 暂停态拖拽仍保持暂停
+  await p.pause()
+  await p.seek(300)
+  ok('暂停态拖进度条 → 仍暂停（不误伤）', p.playing === false)
+  await p.stop()
+}
+
 try { fs.unlinkSync(stubPath) } catch (_) {}
 
 console.log('\n==============================================')

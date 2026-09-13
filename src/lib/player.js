@@ -330,10 +330,19 @@ export class BookPlayer {
   async toggle() { return this._wantPlaying ? this.pause() : this.play() }
 
   /** 跳到全书某个时间点 */
-  async seek(bookTime) {
+  /**
+   * 跳转到 bookTime。
+   * @param {number} bookTime 整本书的时间位置（秒）
+   * @param {object} [opts]
+   * @param {boolean} [opts.autoPlay=false] 跳完强制开播。
+   *   选集走 true（老板 2026-09-15：「点选一集之后不自动播放」—— 之前语义是
+   *   「跟随当前状态」，暂停态点选集就停在暂停，看起来像点了没反应）；
+   *   进度条拖拽/±15s 保持默认 false（用户拖到某处不一定要立刻响）。
+   */
+  async seek(bookTime, opts = {}) {
     const t = Math.max(0, Math.min(bookTime, this.duration || 0))
     const idx = this._trackIndexForBookTime(t)
-    const wasPlaying = this.playing
+    const wasPlaying = this.playing || opts.autoPlay === true
 
     if (idx !== this.trackIndex || !this.isNativeEngine) {
       // 换轨（或浏览器版直接换 src）

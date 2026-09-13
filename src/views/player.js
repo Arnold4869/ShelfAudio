@@ -562,8 +562,9 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
       haptic.select()
       const i = parseInt(el.dataset.ch, 10)
       close()
-      // 正在播时换集：播放器内部会停旧音轨再播新的（见 _keepOnly）
-      await p.seek(chapters[i].start || 0)
+      // autoPlay：选集是"我要听这一集"的明确意图，暂停态点也要响
+      //（老板 2026-09-15：点选一集后不自动播放）。换集时播放器内部会先停旧音轨。
+      await p.seek(chapters[i].start || 0, { autoPlay: true })
     })
   }
   /** 把播放区滚回视野中央：选完章节后用户应看到封面+播放按钮，而不是页面底部的列表 */
