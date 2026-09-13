@@ -38,6 +38,12 @@ jobs:
       - name: Android XML checks
         run: python3 scripts/check-xml.py
 
+      - name: CSS new-unit fallback check (dvh needs vh fallback)
+        run: python3 scripts/check-css-units.py
+
+      - name: Old WebView layout regression (dvh dropped = must still fill)
+        run: python3 scripts/test-old-webview.py
+
       - name: Verify imports resolve
         run: node scripts/check-imports.mjs
 
@@ -150,6 +156,12 @@ jobs:
 
       - name: Android XML checks
         run: python3 scripts/check-xml.py
+
+      - name: CSS new-unit fallback check (dvh needs vh fallback)
+        run: python3 scripts/check-css-units.py
+
+      - name: Old WebView layout regression (dvh dropped = must still fill)
+        run: python3 scripts/test-old-webview.py
 
       - name: Verify imports resolve
         run: node scripts/check-imports.mjs

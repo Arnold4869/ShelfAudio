@@ -328,8 +328,15 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 body[data-view="player"] #view {
   padding-bottom: calc(max(var(--dock-h), var(--safe-bottom)) + 20px);
   display: flex; flex-direction: column;
+  /* 兜底链：老 WebView（Chrome <108，如小米 8SE）不认 dvh 单位，
+     不认的声明整条被丢弃 → 页面塌成内容高度（约 2/3 屏，下半空白）。
+     注意：构建器（esbuild）会把 100vh 当成被 100dvh 覆盖的冗余声明删掉，
+     所以兜底必须放在**另一条规则**里（见下面紧随的一行），
+     同块内写两行会被压缩器合并丢弃、老内核就没了兜底。 */
   min-height: 100dvh;
 }
+/* 老内核兜底：独立规则，防止被构建器当作冗余合并删除（见上注释） */
+body[data-view="player"] #view { min-height: 100vh; }
 body[data-view="player"] .player-page { flex: 1; display: flex; flex-direction: column; }
 body[data-view="player"] .player-cover-wrap { margin-top: auto; }
 body[data-view="player"] #extra { margin-bottom: auto; }
@@ -352,7 +359,8 @@ body[data-view="player"] #extra { margin-bottom: auto; }
    宽度方向仍有 72vw 兜底，横竖屏/平板都稳。 */
 .player-cover-wrap .cover-slot,
 .player-cover {
-  width: min(72vw, 46dvh, 290px);
+  width: min(72vw, 290px);          /* 老内核兜底：Chrome<108 不认 dvh，整条 min() 会被丢弃 */
+  width: min(72vw, 46dvh, 290px);   /* 新内核：按屏高收缩，小屏不撑爆 */
   aspect-ratio: 1 / 1;
 }
 .player-cover {
