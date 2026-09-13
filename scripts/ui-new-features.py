@@ -124,7 +124,7 @@ with sync_playwright() as pw:
       const me = %s;
       const mp = {};
       (me.mediaProgress||[]).forEach(p => { mp[p.libraryItemId||p.mediaItemId] = p; });
-      return [...document.querySelectorAll('.continue-card')].map(el => {
+      return [...document.querySelectorAll('.continue-item')].map(el => {
         const p = mp[el.dataset.id];
         return { id: el.dataset.id, ts: (p&&p.lastUpdate)||0 };
       });
@@ -353,6 +353,20 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(1500)
     ok("点章节后弹窗自动关闭", not pg.evaluate("!!document.querySelector('.sheet-full')"))
     ok("播放页无 JS 报错", not errs, str(errs[:3]))
+    ctx.close()
+
+    print("\n=== L. 继续听：列表样式 + 本地补记排最前（老板 2026-09-14）===")
+    ctx, pg, errs = mk(br, 'kid')
+    # 样式：应为 .list-item 列表行，且不再有横排卡片
+    n_card = pg.evaluate("document.querySelectorAll('.continue-card').length")
+    n_item = pg.evaluate("document.querySelectorAll('.continue-item').length")
+    ok("继续听已改列表行（无横排卡片）", n_card == 0 and n_item > 0,
+       f"cards={n_card} items={n_item}")
+    # 列表行高度一致性：取前两个条目比较高度
+    hs = pg.evaluate("[...document.querySelectorAll('.continue-item')].slice(0,3).map(e=>Math.round(e.getBoundingClientRect().height))")
+    ok("列表行高统一", len(set(hs)) <= 1, str(hs))
+    # 「我的收藏」入口是列表行
+    ok("收藏入口为列表行", pg.evaluate("!!document.querySelector('.fav-entry-row.list-item')"))
     ctx.close()
 
     br.close()

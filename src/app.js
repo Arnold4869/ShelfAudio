@@ -17,6 +17,7 @@ import { renderAbout } from './views/about.js'
 import { openVoiceOverlay } from './lib/voice-ui.js'
 import { startListening, stopListening } from './lib/stats.js'
 import { localTrackMap } from './lib/offline.js'
+import { recordContinue, removeContinueLocal } from './lib/continue-local.js'
 import { initHaptics } from './lib/haptics.js'
 import { syncToServer } from './lib/favs.js'
 
@@ -250,6 +251,18 @@ export async function playItem(item, { startTime } = {}) {
   let localMap = {}
   try { localMap = await localTrackMap(item.id) } catch (_) {}
 
+  // 第一时间补记「继续听」（老板 2026-09-14：播放就该立刻出现在列表最上面，
+  // 不能等服务端 items-in-progress 慢慢更新）。
+  // 放在 load 之前记，load 失败时在下面 catch 里撤销 —— 只留真正播起来的。
+  try {
+    await recordContinue({
+      id: item.id,
+      title,
+      author: meta.authorName || meta.author || '',
+      duration: item.media?.duration || duration || 0,
+    })
+  } catch (_) {}
+
   try {
     await player.load({
       itemId: item.id,
@@ -271,6 +284,7 @@ export async function playItem(item, { startTime } = {}) {
     // 把状态复位，给出可见的错误提示（"继续听第一本加载不出来"的可见兜底）。
     console.warn('播放加载失败', e)
     try { await player.stop({ silent: true }) } catch (_) {}
+    try { await removeContinueLocal(item.id) } catch (_) {}   // 撤回补记，别留假记录
     state.current = null
     updateMini()
     throw new Error('加载失败，请再点一次试试')

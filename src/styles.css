@@ -270,38 +270,26 @@ input, textarea { user-select: text; -webkit-user-select: text; }
   display: flex; align-items: baseline; gap: 8px;
 }
 .section-h small { font-weight: 500; color: var(--text-dim); font-size: 13px; }
-.continue-row {
-  display: flex; gap: 14px; overflow-x: auto;
-  padding-bottom: 10px; margin-bottom: 22px;
-  scrollbar-width: none;
-}
-.continue-row::-webkit-scrollbar { display: none; }
-.continue-card {
-  flex: 0 0 min(46vw, 180px); background: var(--card);
-  border-radius: var(--radius); overflow: hidden; cursor: pointer;
-  position: relative;
-}
-/* 首页继续听行尾的「收藏」入口卡：与继续听卡片同尺寸并排（老板 2026-09-12 布局） */
-.fav-entry-card {
-  flex: 0 0 min(46vw, 180px); background: var(--card);
-  border-radius: var(--radius); overflow: hidden; cursor: pointer;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 10px; color: var(--text-dim); min-height: 148px;
-}
-.fav-entry-card .ic { color: var(--accent); }
-.fav-entry-card:active { transform: scale(.97); }
+/* 继续听：列表形式（老板 2026-09-14 拍板，替代原横排卡片 ——
+   卡片因封面比例不一而高矮不齐、观感乱；列表行高统一、与收藏/缓存页一致）。
+   行结构直接复用通用 .list-item，这里只补少量差异。 */
+.continue-list { margin-bottom: 22px; }
+.continue-item { margin-bottom: 10px; }
 /* 长按删除：按住时轻微下沉，给个明确反馈 */
-.continue-card.longpress { transform: scale(.96); }
-.continue-card:active { transform: scale(.97); }
-.continue-cover { width: 100%; height: 120px; object-fit: cover; }
-.continue-meta { padding: 10px 12px 12px; }
-.continue-title {
-  font-size: 14px; font-weight: 700;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.continue-item.longpress { transform: scale(.96); }
+.continue-item:active { transform: scale(.985); }
+/* 「我的收藏」入口行：与继续听条目同款列表行，只是图标替代封面 */
+.fav-entry-row {
+  width: 100%; text-align: left;
+  border: none; font-family: inherit; color: var(--text);
 }
-.continue-bar { height: 4px; background: rgba(255,255,255,.14); border-radius: 3px; margin-top: 8px; }
-.continue-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
-.continue-pct { font-size: 11px; color: var(--text-dim); margin-top: 5px; }
+.fav-entry-ic {
+  width: 58px; height: 58px; flex: 0 0 58px; border-radius: 10px;
+  display: grid; place-items: center;
+  background: rgba(255,122,198,.14); color: var(--accent);
+}
+.fav-entry-row .list-main { display: block; }
+.fav-entry-row .list-sub { display: none; }
 
 /* ---------- 底部 dock：迷你播放条 + 儿童底栏融合成一整块 ---------- */
 .dock {

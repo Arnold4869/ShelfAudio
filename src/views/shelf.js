@@ -3,6 +3,7 @@ import { abs } from '../lib/api.js'
 import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini } from '../app.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
+import { listContinueLocal, removeContinueLocal } from '../lib/continue-local.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 import { haptic } from '../lib/haptics.js'
@@ -60,6 +61,10 @@ export async function renderShelf(root) {
       if (id) progressMapEarly[id] = mp
     }
   } catch (_) { }
+  // 本地补记：playItem 起播瞬间就写入（服务端 items-in-progress 要等会话同步才出现，
+  // 老板 2026-09-14 要求"第一时间播放就出现在最上面"）。本地记录排最前，去重按 id。
+  const localCont = await listContinueLocal()
+  const serverIds = new Set()
   try {
     const raw = await abs.itemsInProgress()
     inProgress = (raw || [])
@@ -71,7 +76,11 @@ export async function renderShelf(root) {
       .sort((a, b) => b.ts - a.ts)      // 最近听的排最前
       .map(x => x.it)
       .slice(0, 8)
+    for (const it of inProgress) serverIds.add(it.id)
   } catch (_) { }
+  const localOnly = localCont.filter(x => !serverIds.has(x.id))
+    .map(x => ({ id: x.id, media: { metadata: { title: x.title, authorName: x.author }, duration: x.duration } }))
+  inProgress = [...localOnly, ...inProgress]
 
   const progressMap = progressMapEarly
 
@@ -103,33 +112,40 @@ export async function renderShelf(root) {
          <div class="page-title">我的书架</div>
        </div>`
 
-  const favCardHTML = `<button class="fav-entry-card" id="favEntryCard" aria-label="我的收藏">
-        ${icon('heart', 30)}<span>我的收藏</span>
+  // 收藏入口：做成列表末行（跟继续听条目同款），不再用独立的方形大卡
+  const favCardHTML = `<button class="list-item fav-entry-row" id="favEntryCard" aria-label="我的收藏">
+        <span class="fav-entry-ic">${icon('heart', 24)}</span>
+        <span class="list-main"><span class="list-title">我的收藏</span></span>
+        <span class="setting-arrow">${icon('forward', 18)}</span>
       </button>`
-  const continueHTML = inProgress.length ? `
+  // 继续听：**列表形式**（老板 2026-09-14 拍板）。
+  // 之前是横排卡片，问题：不同书封面比例不一 → 卡片一高一矮；
+  // 无封面的书只显示占位图的一小截，带图标的又不一样，观感很乱。
+  // 沿用 App 里通用的 .list-item 列表样式（与收藏/缓存/搜索结果一致），
+  // 高度统一、信息一行一列，不依赖封面比例。
+  const continueHTML = `
     <div class="section-h">继续听 <small>长按移除</small></div>
-    <div class="continue-row">
+    <div class="continue-list">
       ${inProgress.map(it => {
         const m = it.media?.metadata || {}
         const libItemId = it.id
         const prog = progressMap[libItemId]
         const pct = prog && prog.duration ? Math.round((prog.currentTime || 0) / prog.duration * 100) : 0
-        return `<div class="continue-card" data-id="${libItemId}" data-continue="1">
+        const shown = prog?.isFinished ? '已听完' : (pct > 0 ? `已听 ${pct}%` : '未开始')
+        return `<div class="list-item continue-item" data-id="${libItemId}" data-continue="1">
           <div class="cover-slot">
-            ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-continue' })}
-            <img class="continue-cover" data-cover src="${abs.coverUrl(libItemId, { width: 300 })}" alt="">
+            ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
+            <img class="list-cover" data-cover src="${abs.coverUrl(libItemId, { width: 160 })}" alt="" loading="lazy">
           </div>
-          <div class="continue-meta">
-            <div class="continue-title">${esc(m.title || '')}</div>
-            <div class="continue-bar"><i style="width:${Math.max(pct, 2)}%"></i></div>
-            <div class="continue-pct">已听 ${pct}%</div>
+          <div class="list-main">
+            <div class="list-title">${esc(m.title || '未命名')}</div>
+            <div class="list-sub">${esc(m.authorName || m.narratorName || '')}</div>
           </div>
+          <div class="list-pct">${shown}</div>
         </div>`
       }).join('')}
       ${favCardHTML}
-    </div>` : `
-    <div class="section-h">继续听</div>
-    <div class="continue-row">${favCardHTML}</div>`
+    </div>`
 
   // （原来这里有一套"成人模式紧凑列表"分支，随模式分类一起移除了）
   const rowHTML = (it) => {
@@ -246,6 +262,8 @@ async function confirmRemoveFromContinue(itemId) {
   modal.querySelector('#rmOk').onclick = async () => {
     modal.remove()
     try {
+      // 本地补记也要一起删，否则重新渲染时它会从本地列表里冒出来（假复活）
+      try { await removeContinueLocal(itemId) } catch (_) {}
       await abs.removeFromContinue(itemId)
       haptic.success()
       toast('已从继续听移除')
