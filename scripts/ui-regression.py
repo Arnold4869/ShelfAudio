@@ -89,9 +89,9 @@ def newpg(br, mode, vp={'width': 390, 'height': 844}):
     ctx = br.new_context(viewport=vp, device_scale_factor=2, is_mobile=True, has_touch=True)
     pg = ctx.new_page(); routes(pg)
     pg.add_init_script(f"""
-      localStorage.setItem('shelfaudio.server','http://内网IP:端口');
+      localStorage.setItem('shelfaudio.server','http://127.0.0.1:18080');
       localStorage.setItem('shelfaudio.token','{TOKEN}');
-      localStorage.setItem('shelfaudio.username','Bin');
+      localStorage.setItem('shelfaudio.username','user');
       localStorage.setItem('shelfaudio.mode','{mode}');
       localStorage.setItem('shelfaudio.kidPin','1234');
     """)

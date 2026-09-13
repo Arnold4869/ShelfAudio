@@ -3,7 +3,7 @@
 import json, pathlib, re, sys
 from playwright.sync_api import sync_playwright
 
-FX = json.loads(pathlib.Path('/path/to/ShelfAudio/scripts/ui-fixtures.json').read_text())
+FX = json.loads((pathlib.Path(__file__).parent / 'ui-fixtures.json').read_text())
 PNG = bytes.fromhex('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082')
 MULTI = FX.get('__multiId')
 PASS = FAIL = 0
@@ -65,9 +65,9 @@ def mk(br, mode='kid'):
 
     pg.route('**/api/**', h)
     pg.add_init_script("""
-      localStorage.setItem('shelfaudio.server','http://内网IP:端口');
+      localStorage.setItem('shelfaudio.server','http://127.0.0.1:18080');
       localStorage.setItem('shelfaudio.token','t');
-      localStorage.setItem('shelfaudio.username','Bin');
+      localStorage.setItem('shelfaudio.username','user');
       localStorage.setItem('shelfaudio.mode','%s');
       localStorage.setItem('shelfaudio.kidPin','1234');
     """ % mode)
@@ -287,8 +287,8 @@ with sync_playwright() as pw:
     pg.on('pageerror', lambda e: errs2.append(str(e)[:200]))
     # 故意预先写入"上次保存的服务器/用户名"，验证登录页不会再回填
     pg.add_init_script("""
-      localStorage.setItem('shelfaudio.server','http://内网IP:端口');
-      localStorage.setItem('shelfaudio.username','Bin');
+      localStorage.setItem('shelfaudio.server','http://127.0.0.1:18080');
+      localStorage.setItem('shelfaudio.username','user');
     """)
     pg.goto('http://127.0.0.1:8899/index.html')
     pg.wait_for_timeout(2000)
@@ -301,7 +301,7 @@ with sync_playwright() as pw:
     ok("用户名框空白", vals.get('user') == '', f"value={vals.get('user')!r}")
     ok("密码框空白", vals.get('pass') == '', f"value={vals.get('pass')!r}")
     ph = pg.evaluate("document.querySelector('#fServer')?.placeholder")
-    ok("placeholder 不再是示例地址", ph != 'http://内网IP:端口', f"placeholder={ph!r}")
+    ok("placeholder 不再是示例地址", ph != 'http://127.0.0.1:18080', f"placeholder={ph!r}")
     ok("登录页没有底部提示行", pg.evaluate("document.querySelectorAll('.login-wrap .hint').length") == 0)
     ok("登录页无 JS 报错", not errs2, str(errs2[:2]))
     ctx.close()

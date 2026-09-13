@@ -1,7 +1,7 @@
 /**
  * 本机收藏（服务器写入被拒时的兜底）
  *
- * 背景：ABS 里**改收藏夹需要 update 权限**。实测用户账号 user 的
+ * 背景：ABS 里**改收藏夹需要 update 权限**。实测普通用户账号的
  * permissions.update = false，调 POST /api/collections/<id>/book 直接返回 403
  * （纯 "Forbidden"，没有任何细节）。老板点收藏就报 403 —— 功能等于不可用。
  *

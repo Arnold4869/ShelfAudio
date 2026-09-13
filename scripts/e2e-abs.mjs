@@ -8,9 +8,10 @@
 import { AbsApi } from '../src/lib/api.js'
 import { parseCommand } from '../src/lib/voice.js'
 
+// 默认指向本机；账号必须显式传入，避免把具体环境写进公开仓库
 const BASE = process.argv[2] || 'http://127.0.0.1:18080'
-const USER = process.argv[3] || 'user'
-const PASS = process.argv[4] || 'password'
+const USER = process.argv[3] || ''
+const PASS = process.argv[4] || ''
 
 let pass = 0, fail = 0
 const ok = (name, cond, extra = '') => {
