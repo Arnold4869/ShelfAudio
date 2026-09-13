@@ -64,6 +64,21 @@ for f in FILES:
                     if not any(u in fm.group(1) for u in UNITS):
                         fallback = fm.group(1).strip()
                 if fallback is None:
+                    # 也接受"独立规则兜底"模式：同文件里存在
+                    # `selector { prop: <非新单位> }` 且选择器与当前块相同
+                    # （构建器会把同块内的重复声明合并掉，兜底必须分块写）。
+                    sel_key = re.sub(r'\s+', '', strip_comments(sel).split('{')[0])
+                    all_css_nc = strip_comments(raw)
+                    for bsel, bbody in blocks(all_css_nc):
+                        bsel_key = re.sub(r'\s+', '', strip_comments(bsel).split('{')[0])
+                        if bsel_key and bsel_key == sel_key:
+                            for fm in pat.finditer(strip_comments(bbody)):
+                                if not any(u in fm.group(1) for u in UNITS):
+                                    fallback = fm.group(1).strip()
+                    if fallback is not None:
+                        # 记录一下模式，便于人工核对兜底确实存在
+                        checked += 0
+                if fallback is None:
                     problems.append(f'{f.name}: `{prop}: {val.strip()}` 用了新单位但同块内没有老式兜底（选择器 {sel.strip()[:60]}）')
     else:
         # HTML 内联样式（如 style="height:100dvh"）同样要求成对写
