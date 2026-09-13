@@ -429,6 +429,13 @@ route('favorites', async (root) => {
   await renderFavorites(root)
 })
 
+// 历史记录（完整收听历史；首页只露 3 条预览，入口按钮进来）
+route('history', async (root) => {
+  document.body.dataset.view = 'history'
+  const { renderHistory } = await import('./views/history.js')
+  await renderHistory(root)
+})
+
 // 离线缓存管理
 route('cache', async (root) => {
   document.body.dataset.view = 'cache'

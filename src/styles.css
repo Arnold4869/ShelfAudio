@@ -175,6 +175,13 @@ input, textarea { user-select: text; -webkit-user-select: text; }
      靠圆角和间距跟背景区分就够了 */
   transition: transform .14s ease;
   position: relative;
+  /* 卡片高度统一（老板 2026-09-14：「有的卡片比别的小」）：
+     之前高度由内容撑开 —— 标题 1 行 vs 2 行、有无「听 N%」徽标/进度条，
+     实测同一屏出现 237/251/258/272 四种高度，看着参差。
+     改成内部网格：封面 1fr（正方形由 cover-slot 保底）+ 文字区固定高度。 */
+  display: grid;
+  grid-template-rows: auto 1fr;
+  align-content: start;
 }
 .book-card:active { transform: scale(.965); }
 .book-cover {
@@ -245,13 +252,21 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .cover-ph-list .cover-ph-sub { display: none; }
 .cover-ph-list { padding: 8%; gap: 0; }
 .cover-ph-list .cover-ph-title { letter-spacing: 0; line-height: 1.15; }
-.book-meta { padding: 11px 12px 13px; }
+.book-meta {
+  padding: 11px 12px 13px;
+  /* 固定高度：一行标题与两行标题的卡片对外观一致（含 sub 行与进度条位）。
+     20.25px = 15px 字号 × 1.35 行高。 */
+  height: 84px; box-sizing: border-box; overflow: hidden;
+}
 .book-title {
   font-size: 15px; font-weight: 700; line-height: 1.35;
+  /* 固定两行高度：单行标题的卡片也占两行，卡片之间才齐 */
+  height: 40.5px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.book-sub { font-size: 12px; color: var(--text-dim); margin-top: 5px; }
+.book-sub { font-size: 12px; color: var(--text-dim); margin-top: 5px; line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .book-progress {
   position: absolute; left: 0; right: 0; bottom: 0; height: 5px;
   background: rgba(0,0,0,.35);
@@ -278,18 +293,23 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 /* 长按删除：按住时轻微下沉，给个明确反馈 */
 .continue-item.longpress { transform: scale(.96); }
 .continue-item:active { transform: scale(.985); }
-/* 「我的收藏」入口行：与继续听条目同款列表行，只是图标替代封面 */
-.fav-entry-row {
-  width: 100%; text-align: left;
-  border: none; font-family: inherit; color: var(--text);
+/* 顶部两个入口按钮：「历史记录」「我的收藏」，等大并排（老板 2026-09-14）。
+   用 grid 1fr 1fr 保证无论文字长短都一样宽 —— 之前一个用卡片一个用列表行，
+   两者尺寸不同，看着不齐。 */
+.entry-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  margin: 2px 0 20px;
 }
-.fav-entry-ic {
-  width: 58px; height: 58px; flex: 0 0 58px; border-radius: 10px;
-  display: grid; place-items: center;
-  background: rgba(255,122,198,.14); color: var(--accent);
+.entry-btn {
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  min-height: 62px; padding: 0 14px;
+  background: var(--bg-2); border: none; border-radius: var(--radius-sm);
+  color: var(--text); font-family: inherit; font-size: 15px; font-weight: 700;
+  cursor: pointer;
 }
-.fav-entry-row .list-main { display: block; }
-.fav-entry-row .list-sub { display: none; }
+.entry-btn:active { background: var(--card); transform: scale(.985); }
+.entry-ic { display: grid; place-items: center; color: var(--accent); }
+.entry-label { white-space: nowrap; }
 
 /* ---------- 底部 dock：迷你播放条 + 儿童底栏融合成一整块 ---------- */
 .dock {

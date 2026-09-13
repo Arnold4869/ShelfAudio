@@ -290,6 +290,32 @@ console.log('\n=== 11. 看门狗不误伤：正常播放（有 currentTime 事�
   await p.stop()
 }
 
+console.log('\n=== 10. 恢复落点合法性（播放路径审计加固）===')
+{
+  state.assets.clear(); state.calls.length = 0
+  const p = new BookPlayer({})
+  // 场景 A：进度等于总时长 900（坏数据）→ 应归零从头播
+  await p.load({ itemId: 'x', tracks, sessionId: 's', startBookTime: 900 })
+  ok('进度=总时长 → 归零', p.trackIndex === 0 && p.currentBookTime === 0,
+     `idx=${p.trackIndex} t=${p.currentBookTime}`)
+  // 场景 B：进度超总时长
+  await p.load({ itemId: 'x', tracks, sessionId: 's', startBookTime: 99999 })
+  ok('进度≫总时长 → 归零', p.trackIndex === 0 && p.currentBookTime === 0)
+  // 场景 C：NaN
+  await p.load({ itemId: 'x', tracks, sessionId: 's', startBookTime: NaN })
+  ok('NaN 进度 → 归零', p.trackIndex === 0 && p.currentBookTime === 0)
+  // 场景 D：负数
+  await p.load({ itemId: 'x', tracks, sessionId: 's', startBookTime: -50 })
+  ok('负数进度 → 归零', p.trackIndex === 0 && p.currentBookTime === 0)
+  // 场景 E：正常中间进度不受影响
+  await p.load({ itemId: 'x', tracks, sessionId: 's', startBookTime: 350 })
+  ok('正常进度 350s → 轨2中部', p.trackIndex === 1, `idx=${p.trackIndex} t=${p.currentBookTime}`)
+  // 场景 F：落在轨尾 5s 内仍有下一轨 → 贴齐下一集（回归）
+  await p.load({ itemId: 'x', tracks, sessionId: 's', startBookTime: 597 })
+  ok('轨尾5s内 → 贴齐下一集开头', p.trackIndex === 2 && p.currentBookTime === 600,
+     `idx=${p.trackIndex} t=${p.currentBookTime}`)
+}
+
 try { fs.unlinkSync(stubPath) } catch (_) {}
 
 console.log('\n==============================================')

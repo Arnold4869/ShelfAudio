@@ -78,7 +78,19 @@ export async function renderShelf(root) {
       .slice(0, 8)
     for (const it of inProgress) serverIds.add(it.id)
   } catch (_) { }
-  const localOnly = localCont.filter(x => !serverIds.has(x.id))
+  // 本地补记里，已被用户在服务端隐藏的书也不再显示（否则「删了又回来」）
+  const hiddenIds = new Set(
+    Object.values(progressMapEarly)
+      .filter(mp => mp.hideFromContinueListening)
+      .map(mp => mp.libraryItemId || mp.mediaItemId)
+      .filter(Boolean)
+  )
+  // ⚠️ 审计发现（2026-09-14，真实服务器实测）：ABS 的 /api/me/items-in-progress
+  // **会返回已标记 hideFromContinueListening 的书**（实测「示例故事乙1」「示例科普」
+  // 两本 hide=true 却仍在列表里）。所以「长按删除」看着没生效 —— 服务端确实记了隐藏，
+  // 但列表接口照样把它吐回来。必须客户端自己按 mediaProgress 过滤。
+  inProgress = inProgress.filter(it => !hiddenIds.has(it.id))
+  const localOnly = localCont.filter(x => !serverIds.has(x.id) && !hiddenIds.has(x.id))
     .map(x => ({ id: x.id, media: { metadata: { title: x.title, authorName: x.author }, duration: x.duration } }))
   inProgress = [...localOnly, ...inProgress]
 
@@ -112,21 +124,27 @@ export async function renderShelf(root) {
          <div class="page-title">我的书架</div>
        </div>`
 
-  // 收藏入口：做成列表末行（跟继续听条目同款），不再用独立的方形大卡
-  const favCardHTML = `<button class="list-item fav-entry-row" id="favEntryCard" aria-label="我的收藏">
-        <span class="fav-entry-ic">${icon('heart', 24)}</span>
-        <span class="list-main"><span class="list-title">我的收藏</span></span>
-        <span class="setting-arrow">${icon('forward', 18)}</span>
+  // 两个入口按钮并排等大（老板 2026-09-14）：「历史记录」「我的收藏」
+  const entBtn = (id, ico, label) => `<button class="entry-btn" id="${id}" aria-label="${label}">
+        <span class="entry-ic">${icon(ico, 22)}</span><span class="entry-label">${label}</span>
       </button>`
+  const entryHTML = `<div class="entry-row">
+      ${entBtn('historyEntryCard', 'list', '历史记录')}
+      ${entBtn('favEntryCard', 'heart', '我的收藏')}
+    </div>`
   // 继续听：**列表形式**（老板 2026-09-14 拍板）。
   // 之前是横排卡片，问题：不同书封面比例不一 → 卡片一高一矮；
   // 无封面的书只显示占位图的一小截，带图标的又不一样，观感很乱。
   // 沿用 App 里通用的 .list-item 列表样式（与收藏/缓存/搜索结果一致），
   // 高度统一、信息一行一列，不依赖封面比例。
-  const continueHTML = `
-    <div class="section-h">继续听 <small>长按移除</small></div>
+  // 历史记录（原「继续听」）：列表里只露最近 3 条（老板 2026-09-14「不要都显示出来」），
+  // 完整列表点上方「历史记录」入口看。入口与「我的收藏」等大并排在最上方。
+  const PREVIEW = 3
+  const historyPreview = inProgress.slice(0, PREVIEW)
+  const continueHTML = entryHTML + `
+    <div class="section-h">历史记录 <small>长按移除</small></div>
     <div class="continue-list">
-      ${inProgress.map(it => {
+      ${historyPreview.map(it => {
         const m = it.media?.metadata || {}
         const libItemId = it.id
         const prog = progressMap[libItemId]
@@ -144,7 +162,6 @@ export async function renderShelf(root) {
           <div class="list-pct">${shown}</div>
         </div>`
       }).join('')}
-      ${favCardHTML}
     </div>`
 
   // （原来这里有一套"成人模式紧凑列表"分支，随模式分类一起移除了）
@@ -181,6 +198,7 @@ export async function renderShelf(root) {
 
   // 收藏入口（首页直达）
   root.querySelector('#favEntryCard')?.addEventListener('click', () => { haptic.tap(); go('favorites') })
+  root.querySelector('#historyEntryCard')?.addEventListener('click', () => { haptic.tap(); go('history') })
 
   // 无封面的书用占位封面兜底
   wireCoverFallback(root)

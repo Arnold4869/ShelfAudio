@@ -177,7 +177,16 @@ export class BookPlayer {
     this._timeListened = 0
     this._lastSyncAt = Date.now()
 
-    const idx = this._trackIndexForBookTime(startBookTime)
+    // 审计加固（2026-09-14）：恢复落点合法性校验，必须在 _trackIndexForBookTime 之前做 ——
+    // 它遇到 NaN 会一路 false 走到末轨、遇到越界进度会返回不存在的位置。
+    // 服务器进度可能越界（currentTime ≥ 总时长：清数据残留 / 上次进度写坏），
+    // 越界的表现就是"加载后一动不动"或瞬间 complete。非法落点 → 归零从头播。
+    const total = this.tracks.reduce((s2, t2) => s2 + (t2.duration || 0), 0)
+    if (!(typeof startBookTime === 'number' && Number.isFinite(startBookTime)
+          && startBookTime > 0 && startBookTime < total)) {
+      startBookTime = 0
+    }
+    let idx = this._trackIndexForBookTime(startBookTime)
     // 恢复位置的"结尾贴齐"：如果落点在这一集最后 5 秒内、且还有下一集，
     // 直接对齐到下一集开头。
     // 为什么：进度回写最多滞后 ~10 秒（心跳 3s + 节流 10s），在某一集临近结尾时
@@ -192,6 +201,8 @@ export class BookPlayer {
       loadIdx = idx + 1
       loadFileTime = 0
     }
+    // 落点所在音轨必须真实存在（防御 idx 越界）
+    if (loadIdx < 0 || loadIdx >= this.tracks.length) { loadIdx = 0; loadFileTime = 0 }
     this.trackIndex = loadIdx
     this.currentBookTime = (this.tracks[loadIdx]?.startOffset || 0) + loadFileTime
 

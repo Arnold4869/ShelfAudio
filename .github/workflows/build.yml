@@ -35,6 +35,10 @@ jobs:
       - name: No emoji in UI (icons must be hand-drawn SVG)
         run: python3 scripts/check-emoji.py
 
+      - name: Card size consistency (Playwright)
+        run: python3 scripts/test-card-size.py
+      - name: Old WebView compat (Playwright)
+        run: python3 scripts/test-old-webview.py
       - name: Android XML checks
         run: python3 scripts/check-xml.py
 
@@ -154,6 +158,10 @@ jobs:
       - name: No emoji in UI (icons must be hand-drawn SVG)
         run: python3 scripts/check-emoji.py
 
+      - name: Card size consistency (Playwright)
+        run: python3 scripts/test-card-size.py
+      - name: Old WebView compat (Playwright)
+        run: python3 scripts/test-old-webview.py
       - name: Android XML checks
         run: python3 scripts/check-xml.py
 

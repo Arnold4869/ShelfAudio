@@ -365,8 +365,42 @@ with sync_playwright() as pw:
     # 列表行高度一致性：取前两个条目比较高度
     hs = pg.evaluate("[...document.querySelectorAll('.continue-item')].slice(0,3).map(e=>Math.round(e.getBoundingClientRect().height))")
     ok("列表行高统一", len(set(hs)) <= 1, str(hs))
-    # 「我的收藏」入口是列表行
-    ok("收藏入口为列表行", pg.evaluate("!!document.querySelector('.fav-entry-row.list-item')"))
+    # 入口区（老板 2026-09-14 定稿）：「历史记录」「我的收藏」等大并排两枚按钮
+    ok("历史记录+我的收藏入口并排", pg.evaluate(
+        "!!document.querySelector('.entry-row .entry-btn#historyEntryCard') && !!document.querySelector('.entry-row .entry-btn#favEntryCard')"))
+    # 等大：两个按钮宽度一致
+    w = pg.evaluate("[document.querySelector('#historyEntryCard'), document.querySelector('#favEntryCard')].map(e=>Math.round(e.getBoundingClientRect().width))")
+    ok("两入口按钮等宽", len(w) == 2 and w[0] == w[1], str(w))
+    # 列表预览只显示 3 条（完整列表进历史页）
+    n = pg.evaluate("document.querySelectorAll('.continue-item').length")
+    ok("首页历史预览只显示 3 条", n == 3, f"n={n}")
+    ok("分区标题已改名「历史记录」", '历史记录' in (pg.evaluate("document.querySelector('.section-h')?.textContent") or ''))
+    ctx.close()
+
+    print("\n=== M. 历史记录页（老板 2026-09-14）===")
+    ctx, pg, errs = mk(br, 'kid')
+    # 点入口进历史页
+    pg.evaluate("document.querySelector('#historyEntryCard').click()")
+    pg.wait_for_timeout(1500)
+    ok("从首页入口能进历史记录页", pg.evaluate("document.body.dataset.view") == 'history',
+       pg.evaluate("document.body.dataset.view"))
+    ok("历史页有列表", pg.evaluate("document.querySelectorAll('[data-hist]').length") > 0)
+    ok("历史页无 JS 报错", not errs, str(errs[:2]))
+    # 隐藏的书不出现（审计实锤：ABS 会返回 hide=true 的书）
+    titles = pg.evaluate("[...document.querySelectorAll('[data-hist] .list-title')].map(e=>e.textContent)")
+    print("     历史页书名:", titles)
+    # 长按删除：确认移除弹窗能出来。
+    # ⚠️ 不能用 document.querySelector('.lock') —— index.html 里本来就有一个隐藏的
+    # 全局「家长确认」弹窗（也是 .lock），会先被选中导致误判。用 #rmOk 精确定位。
+    pg.evaluate("document.querySelector('[data-hist]').dispatchEvent(new Event('touchstart',{bubbles:true}))")
+    pg.wait_for_timeout(900)
+    ok("长按弹出移除确认框", pg.evaluate("!!document.querySelector('#rmOk')"))
+    if pg.evaluate("!!document.querySelector('#rmOk')"):
+        txt = pg.evaluate("[...document.querySelectorAll('.lock')].find(l=>l.querySelector('#rmOk'))?.querySelector('.lock-title')?.textContent")
+        ok("确认框文案正确", '历史记录' in (txt or '') or '移除' in (txt or ''), txt)
+        pg.evaluate("document.querySelector('#rmCancel')?.click()")
+        pg.wait_for_timeout(400)
+        ok("确认框能取消", not pg.evaluate("!!document.querySelector('#rmOk')"))
     ctx.close()
 
     br.close()
