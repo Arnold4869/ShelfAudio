@@ -67,6 +67,9 @@ jobs:
       - name: Multi-source hub (ABS/ND isolation)
         run: node scripts/test-multisource.mjs
 
+      - name: Round-2 UI (back stack, terms, grouped search, album detail)
+        run: python3 scripts/ui-round2.py
+
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs
       - name: 播放键状态一致性
@@ -202,6 +205,9 @@ jobs:
 
       - name: Multi-source hub (ABS/ND isolation)
         run: node scripts/test-multisource.mjs
+
+      - name: Round-2 UI (back stack, terms, grouped search, album detail)
+        run: python3 scripts/ui-round2.py
 
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs
