@@ -126,7 +126,7 @@ export async function cacheSize() {
 export async function downloadBook(book, onProgress = () => {}) {
   if (!native()) throw new Error('离线下载只在手机 App 里可用')
   const tracks = book.tracks || []
-  if (!tracks.length) throw new Error('这本书没有音轨')
+  if (!tracks.length) throw new Error(t('noAudio'))
 
   const dir = bookDir(book.id)
   // 建目录（已存在会抛，忽略）

@@ -53,7 +53,7 @@ export async function renderShelf(root) {
     if (cache.libraryId === cacheKey && Date.now() - cache.at < 60000 && cache.items.length) {
       items = cache.items
     } else {
-      const d = await abs.getLibraryItems(state.libraryId, { limit: 200, sort: 'media.metadata.title' })
+      const d = await abs.getLibraryItems(state.libraryId, { limit: 2000, sort: 'media.metadata.title' })
       items = d?.results || []
       cache = { items, at: Date.now(), libraryId: cacheKey }
     }
@@ -154,9 +154,10 @@ export async function renderShelf(root) {
   const entBtn = (id, ico, label) => `<button class="entry-btn" id="${id}" aria-label="${label}">
         <span class="entry-ic">${icon(ico, 22)}</span><span class="entry-label">${label}</span>
       </button>`
-  const entryHTML = `<div class="entry-row">
+  const entryHTML = `<div class="entry-row ${hub.active === 'nd' ? 'three' : ''}">
       ${entBtn('historyEntryCard', 'list', '历史记录')}
       ${entBtn('favEntryCard', 'heart', '我的收藏')}
+      ${hub.active === 'nd' ? entBtn('plEntryCard', 'playlist', '歌单') : ''}
     </div>`
   // 继续听：**列表形式**（老板 2026-09-13 拍板）。
   // 之前是横排卡片，问题：不同书封面比例不一 → 卡片一高一矮；
@@ -215,6 +216,8 @@ export async function renderShelf(root) {
   // 收藏入口（首页直达）
   root.querySelector('#favEntryCard')?.addEventListener('click', () => { haptic.tap(); go('favorites') })
   root.querySelector('#historyEntryCard')?.addEventListener('click', () => { haptic.tap(); go('history') })
+  // 歌单入口（仅 ND 渲染；老板 2026-09-14 方案 A：首页三入口）
+  root.querySelector('#plEntryCard')?.addEventListener('click', () => { haptic.tap(); go('playlists') })
 
   // 无封面的书用占位封面兜底
   wireCoverFallback(root)

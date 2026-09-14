@@ -1,6 +1,6 @@
 {
   "appId": "com.arnold.shelfaudio",
-  "appName": "听书",
+  "appName": "悦耳",
   "webDir": "dist",
   "server": {
     "androidScheme": "https",

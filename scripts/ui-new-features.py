@@ -277,7 +277,7 @@ with sync_playwright() as pw:
     ok("设置页没有大分类标题（我的收藏/离线缓存/关于/家长）", len(heads) == 0, f"实际={heads}")
     labels = pg.evaluate("[...document.querySelectorAll('#view .setting-row .setting-label')].map(e=>e.textContent.trim())")
     ok("四个菜单行都在", all(k in labels for k in ['收藏的书', '缓存管理', '家长设置', '关于']), f"{labels}")
-    ok("不再出现「关于听书」字样", not any('关于听书' in (l or '') for l in labels), f"{labels}")
+    ok("不再出现「关于悦耳」字样", not any('关于悦耳' in (l or '') for l in labels), f"{labels}")
     # 关于必须是最后一个菜单行
     last = labels[-1] if labels else None
     ok("「关于」排在最后", last == '关于', f"最后一个={last}")

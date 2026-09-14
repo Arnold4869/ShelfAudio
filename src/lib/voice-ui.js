@@ -3,6 +3,7 @@ import { icon } from './icons.js'
 import { listen, finishListening, currentText, forceStopCurrent, parseCommand, voiceSupported, voiceServiceAvailable } from './voice.js'
 import { checkVoicePermission, requestVoicePermission, openSystemSettings } from './permissions.js'
 import { state, toast } from '../app.js'
+import { t } from './terms.js'
 
 export function openVoiceOverlay({ onSearch } = {}) {
   if (!voiceSupported()) { toast('这台设备不支持语音识别'); return }
@@ -84,7 +85,7 @@ export function openVoiceOverlay({ onSearch } = {}) {
     const sb = actions.querySelector('#vSettings')
     if (sb) sb.onclick = async () => {
       const ok = await openSystemSettings()
-      if (!ok) toast('打不开系统设置，请手动到「设置 → 听书」里开启麦克风')
+      if (!ok) toast('打不开系统设置，请手动到「设置 → 悦耳」里开启麦克风')
       else stat.textContent = '请在设置里打开「麦克风」和「语音识别」，然后回来重试'
     }
     actions.querySelector('#vClose').onclick = () => close()
@@ -102,7 +103,7 @@ export function openVoiceOverlay({ onSearch } = {}) {
     switch (cmd.intent) {
       case 'pause': await p?.pause(); toast('已暂停'); close(); return
       case 'play':
-        if (state.current) { await p?.play(); toast('继续播放') } else toast('还没有在播放的书')
+        if (state.current) { await p?.play(); toast('继续播放') } else toast(t('notPlaying'))
         close(); return
       case 'next': await p?.nextTrack(); toast('下一集'); close(); return
       case 'prev': await p?.prevTrack(); toast('上一集'); close(); return

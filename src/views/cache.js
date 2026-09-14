@@ -32,7 +32,7 @@ export async function renderCache(root) {
         state.libraries = libs
         state.libraryId = libs[0]?.id
       }
-      all = (await abs.getLibraryItems(state.libraryId, { limit: 300 }))?.results || []
+      all = (await abs.getLibraryItems(state.libraryId, { limit: 2000 }))?.results || []
       state.items = all
     } catch (_) { }
   }

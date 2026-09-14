@@ -29,7 +29,7 @@ export async function renderAbout(root) {
         <div class="setting-ic">${icon('info', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">版本</div>
-          <div class="setting-value">听书 v${currentVersion()}</div>
+          <div class="setting-value">悦耳 v${currentVersion()}</div>
         </div>
       </div>
       ${updateSupported() ? `<div class="setting-row" id="rowCheck">

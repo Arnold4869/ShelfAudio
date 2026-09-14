@@ -29,6 +29,12 @@ const WORDS = {
     history: '开始听一本书，这里就会留下记录',
     // 章节/集
     chapter: '章节', chapters: '章节',
+    finished: '这本听完啦',
+    // 歌单（ABS 没有歌单概念；仅 ND 暴露入口，词放这里兜底）
+    playlist: '歌单', playlists: '歌单',
+    playlistEmpty: '还没有歌单',
+    song: '歌曲', songs: '首',
+    addToPlaylist: '添加到歌单', newPlaylist: '新建歌单',
   },
   nd: {
     book: '专辑', books: '张',            // ND 里一张专辑 = ABS 里的一本书
@@ -46,6 +52,12 @@ const WORDS = {
     cacheEmpty: '还没有缓存的专辑',
     history: '开始听一首歌，这里就会留下记录',
     chapter: '歌曲', chapters: '歌曲',
+    finished: '这张专辑听完啦',
+    // 歌单（老板 2026-09-14）
+    playlist: '歌单', playlists: '歌单',
+    playlistEmpty: '还没有歌单，在播放页或搜索页可以把歌加进来',
+    song: '歌曲', songs: '首',
+    addToPlaylist: '添加到歌单', newPlaylist: '新建歌单',
   },
 }
 

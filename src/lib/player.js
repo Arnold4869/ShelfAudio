@@ -28,7 +28,7 @@ function platform() {
 /** 起/停前台服务（Android 专用；iOS 靠 UIBackgroundModes=audio，无需此步） */
 async function fgStart(title, text) {
   if (platform() !== 'android') return
-  try { await ForegroundService.start({ title: title || '听书', text: text || '正在播放' }) } catch (e) { console.warn('前台服务启动失败', e) }
+  try { await ForegroundService.start({ title: title || '悦耳', text: text || '正在播放' }) } catch (e) { console.warn('前台服务启动失败', e) }
 }
 async function fgStop() {
   if (platform() !== 'android') return
@@ -67,6 +67,12 @@ export class BookPlayer {
     this.notification = null    // { title, artist, album, artworkUrl }
     this._volume = 1
     this._volumeCap = 1         // 家长音量上限（load 时读一次，之后每次装轨都再套一遍）
+    // 播放模式（老板 2026-09-14：「单曲循环、顺序播放、乱序播放」）
+    //   'order'  顺序播放（默认，播完一集接下一集，最后一集结束）
+    //   'repeat' 单曲循环（当前这一首/集反复）
+    //   'shuffle' 乱序播放（自动接下一首时随机选一首，避开当前这首）
+    // 只对 ND 暴露 UI，ABS 保持原有的顺序行为（默认值即 'order'）。
+    this.playMode = 'order'
     this._nativeTicker = null   // 原生兜底心跳（保证进度写回 ABS）
     this._playingAssetIdx = null // 原生层当前真正在播的 asset 下标（换轨时据此清理旧音轨）
     this._loadedIdx = new Set()  // 原生层当前已 preload 的音轨下标（保证同一时刻只留一条）
@@ -391,8 +397,30 @@ export class BookPlayer {
 
   /** 上一集 / 下一集（章节=音轨） */
   async nextTrack() {
+    // 乱序模式：「下一首」= 随机另一首（否则按钮在乱序下会表现得很"顺序"，很怪）
+    if (this.playMode === 'shuffle' && this.tracks.length > 1) {
+      await this._gotoTrack(this._randomOtherIndex())
+      return
+    }
     if (this.trackIndex >= this.tracks.length - 1) return
     await this._gotoTrack(this.trackIndex + 1)
+  }
+
+  /** 乱序：随机取一个与当前不同的音轨下标（轨数 ≥2 时保证一定不同） */
+  _randomOtherIndex() {
+    const n = this.tracks.length
+    if (n <= 1) return this.trackIndex
+    let i = this.trackIndex
+    // 最多试 12 次，避免极端运气下一直转到自己
+    for (let k = 0; k < 12 && i === this.trackIndex; k++) i = Math.floor(Math.random() * n)
+    if (i === this.trackIndex) i = (this.trackIndex + 1) % n
+    return i
+  }
+
+  /** 设置播放模式：'order' | 'repeat' | 'shuffle' */
+  setPlayMode(mode) {
+    this.playMode = ['order', 'repeat', 'shuffle'].includes(mode) ? mode : 'order'
+    return this.playMode
   }
 
   async prevTrack() {
@@ -756,6 +784,18 @@ export class BookPlayer {
     if (ev && ev.assetId) {
       const idx = this._indexFromAssetId(ev.assetId)
       if (idx !== null && idx !== this.trackIndex) return
+    }
+    // 单曲循环（老板 2026-09-14）：本轨播完从头再来这一轨。
+    // 注意 seek 用本轨起点（startOffset），autoPlay=true 保证循环不断声。
+    if (this.playMode === 'repeat') {
+      await this.seek(this.tracks[this.trackIndex]?.startOffset || 0, { autoPlay: true })
+      return
+    }
+    // 乱序播放：自动接续时随机跳一首（手动 nextTrack 同逻辑）。
+    // _gotoTrack 内部已按"当前是否在播"决定要不要接着播，这里不要再 play 一次。
+    if (this.playMode === 'shuffle' && this.tracks.length > 1) {
+      await this._gotoTrack(this._randomOtherIndex())
+      return
     }
     // 单条音轨播完 → 自动下一集；最后一集 → 结束
     if (this.trackIndex < this.tracks.length - 1) {

@@ -70,6 +70,9 @@ jobs:
       - name: Round-2 UI (back stack, terms, grouped search, album detail)
         run: python3 scripts/ui-round2.py
 
+      - name: Round-3 UI (ND player buttons, loop modes, lyrics, playlists)
+        run: python3 scripts/ui-round3.py
+
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs
       - name: 播放键状态一致性
@@ -208,6 +211,9 @@ jobs:
 
       - name: Round-2 UI (back stack, terms, grouped search, album detail)
         run: python3 scripts/ui-round2.py
+
+      - name: Round-3 UI (ND player buttons, loop modes, lyrics, playlists)
+        run: python3 scripts/ui-round3.py
 
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs

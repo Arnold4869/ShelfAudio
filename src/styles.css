@@ -937,3 +937,83 @@ body.kid .sheet-body .chapter-item { height: 76px; }
   .shelf-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
   #view { padding-left: 26px; padding-right: 26px; }
 }
+
+/* ---------- 歌单入口（首页三入口，老板 2026-09-14 方案 A） ---------- */
+/* 三入口时挤成一排会太窄，改成 1fr 1fr 1fr 并把字号/图标缩一点 */
+.entry-row.three { grid-template-columns: 1fr 1fr 1fr; gap: 9px; }
+.entry-row.three .entry-btn { padding: 0 8px; font-size: 14px; gap: 7px; min-height: 58px; }
+
+/* ---------- 播放模式按钮（顺序 / 单曲循环 / 乱序） ---------- */
+.ctrl.side.on { color: var(--accent); }
+
+/* 点封面切歌词：给封面一个明确的"可点"暗示（仅 ND） */
+.player-cover-wrap.tappable { cursor: pointer; }
+.player-cover-wrap.tappable:active { transform: scale(.985); }
+
+/* ---------- 歌词页（老板 2026-09-14） ---------- */
+.lyrics-lock { align-items: stretch; padding: 0; }
+.lyrics-page {
+  display: flex; flex-direction: column;
+  width: 100%; height: 100vh; height: 100dvh;
+  padding: calc(var(--safe-top) + 4px) 0 0;
+  background: var(--bg);
+}
+.lyrics-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px 10px;
+}
+.lyrics-title {
+  flex: 1; text-align: center; font-size: 15px; font-weight: 700;
+  color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lyrics-body {
+  flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 40vh 22px calc(var(--safe-bottom) + 90px);
+  text-align: center;
+  scroll-behavior: smooth;
+}
+.lyrics-line {
+  font-size: 19px; line-height: 1.5; font-weight: 600;
+  color: var(--text-dim); opacity: .48;
+  padding: 9px 0;
+  transition: color .22s ease, opacity .22s ease, transform .22s ease;
+}
+/* 当前行：亮起 + 放大（常见音乐播放器的歌词页观感） */
+.lyrics-line.on {
+  color: var(--accent); opacity: 1;
+  transform: scale(1.06);
+}
+/* 无时间轴的纯文本歌词：不高亮，铺开可读 */
+.lyrics-body.nonsync .lyrics-line { opacity: .85; font-size: 17px; padding: 6px 0; }
+.lyrics-loading, .lyrics-empty {
+  display: grid; place-items: center; gap: 12px;
+  padding-top: 40vh; color: var(--text-dim); font-size: 15px;
+}
+.lyrics-loading .glyph, .lyrics-empty .glyph { color: var(--text-dim); opacity: .7; }
+
+/* ---------- 搜索结果多选（勾选 / 全选 → 添加到歌单） ---------- */
+.section-h .pick-toggle {
+  margin-left: auto; border: none; background: none;
+  color: var(--accent); font-family: inherit; font-size: 14px; font-weight: 700;
+  padding: 6px 2px; cursor: pointer; min-height: 32px;
+}
+.pick-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 2px 10px;
+  color: var(--text-dim); font-size: 13px;
+}
+.pick-bar .pick-all {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: none; background: none; color: var(--text-dim);
+  font-family: inherit; font-size: 13px; font-weight: 700;
+  cursor: pointer; padding: 6px 2px; min-height: 36px;
+}
+.pick-bar .pick-all.on { color: var(--accent); }
+.pick-bar .btn { margin-left: auto; }
+/* 勾选框：放在行首 */
+.list-item .pick-box { display: grid; place-items: center; color: var(--text-dim); flex: 0 0 auto; margin-right: 2px; }
+.list-item.picked .pick-box { color: var(--accent); }
+.list-item.picked { background: rgba(255,122,198,.10); }
+/* 选择态下点行 = 勾选，不再跳播放，给个轻微反馈 */
+.list-item.pickable:active { transform: scale(.99); }

@@ -35,7 +35,7 @@ export async function renderLogin(root) {
         <button class="back-btn" id="loginBack" aria-label="返回">${icon('back', 22)}</button>
       </div>` : ''}
       <div class="login-logo">${icon('headphones', 64)}</div>
-      <h1 class="login-h">听书</h1>
+      <h1 class="login-h">悦耳</h1>
       <div class="login-sub">连接你的有声书 / 音乐服务器</div>
 
       <!-- ---------- Audiobookshelf ---------- -->
@@ -101,7 +101,7 @@ export async function renderLogin(root) {
       </div>
 
       ${(hasAbs || hasNd) ? `<div style="padding:0 4px 20px">
-        <button class="btn block" id="gotoApp">进入听书</button>
+        <button class="btn block" id="gotoApp">进入悦耳</button>
       </div>` : ''}
     </div>
   `

@@ -264,7 +264,7 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(1200)
     pg.evaluate("(()=>{const e=document.querySelector('#rowAbout'); if(e) e.click()})()")
     pg.wait_for_timeout(900)
-    ver = pg.evaluate("(document.body.innerText.match(/听书 v([\\d.]+)/)||[])[1] || null")
+    ver = pg.evaluate("(document.body.innerText.match(/悦耳 v([\\d.]+)/)||[])[1] || null")
     ok("关于页显示真实版本（非写死的 0.1.0）", bool(ver) and ver != '0.1.0', f"ver={ver}")
     ents = pg.evaluate("document.querySelectorAll('.setting-row').length")
     ok("设置页渲染出行项", ents > 0, f"{ents} 行")

@@ -60,6 +60,19 @@ const SUBSONIC_ERR = {
   50: '当前账号没有这个操作的权限',
 }
 
+/** 专辑去重（按 id，保持首次出现顺序）—— 翻页聚合的兜底，防服务器忽略 offset */
+function dedupe(albums) {
+  const seen = new Set()
+  const out = []
+  for (const a of albums) {
+    const id = a?.id
+    if (id == null || seen.has(id)) continue
+    seen.add(id)
+    out.push(a)
+  }
+  return out
+}
+
 export class NavidromeApi {
   constructor() {
     this.baseUrl = ''
@@ -99,9 +112,21 @@ export class NavidromeApi {
   /** Subsonic 请求：剥 subsonic-response 壳、翻译错误码 */
   async _sub(path, params = {}, opts = {}) {
     if (!this.baseUrl) throw new Error('未配置 Navidrome 服务器地址')
+    let url = this.url(path, params)
+    // 重复参数（歌单接口专用）：createPlaylist 的 songId、updatePlaylist 的
+    // songIdToAdd/songIndexToRemove 都是「同名参数出现多次」的 Subsonic 惯例，
+    // 普通 object 序列化表达不了 → 用 opts._repeat = { key: [v1, v2...] } 附加。
+    const rep = opts._repeat
+    if (rep) {
+      const extra = new URLSearchParams()
+      for (const [k, vals] of Object.entries(rep)) {
+        for (const v of (Array.isArray(vals) ? vals : [vals])) extra.append(k, String(v))
+      }
+      url += (url.includes('?') ? '&' : '?') + extra.toString()
+    }
     let res
     try {
-      res = await rawRequest(this.url(path, params), opts)
+      res = await rawRequest(url, opts)
     } catch (e) { throw friendlyNetError(e) }
     if (res.status === 0) throw new Error('网络不可达，检查网络或被代理拦截')
     const body = res.data
@@ -159,19 +184,58 @@ export class NavidromeApi {
     }))
   }
 
-  /** 专辑列表 → 对齐 ABS 的 getLibraryItems().results 形状 */
+  /** 专辑列表 → 对齐 ABS 的 getLibraryItems().results 形状
+   *  翻页聚合（老板 2026-09-14 报「全 953 张只显示 200 张」）：
+   *  getAlbumList2 单次上限 500，limit>500 或超过一页时自动翻页拉全。
+   *  ABS 端 getLibraryItems 本来就一次返回全量，这里对齐"给多少 limit 就尽量给全"的语义。 */
   async getLibraryItems(libraryId, { limit = 200, page = 0, sort = 'name', desc = false } = {}) {
     const type = sort === 'recent' ? 'recent' : 'alphabeticalByName'
-    const sr = await this._sub('/rest/getAlbumList2', {
+    const baseParams = {
       type,
-      size: Math.min(limit, 500),
-      offset: page * limit,
       ...(libraryId ? { musicFolderId: libraryId } : {}),
-    })
-    const albums = sr?.albumList2?.album || []
+    }
+    // 显式指定 page 时保持旧语义（取单页，向后兼容）
+    if (page > 0) {
+      const sr = await this._sub('/rest/getAlbumList2', {
+        ...baseParams,
+        size: Math.min(limit, 500),
+        offset: page * limit,
+      })
+      const albums = sr?.albumList2?.album || []
+      return { results: albums.map(a => this._albumToItem(a)), total: albums.length }
+    }
+    // page=0（默认）：翻页拉全，直到拿满 limit 或服务器返回空页。
+    // ⚠️ 终止条件只能是「空页」或「拿满」——**不能**用「返回条数 < 请求条数」
+    // 来判断到底（有服务器会把单次返回上限压到比请求值小，比如请求 500 只给 200，
+    // 那样会误判成到底、把剩下的全丢掉 —— 正是"只显示一部分"这类 bug 的来源）。
+    const want = Math.max(1, limit)
+    const all = []
+    const PAGE = 500
+    let offset = 0
+    let guard = 0
+    while (all.length < want && guard++ < 100) {
+      const size = Math.min(PAGE, want - all.length)
+      const sr = await this._sub('/rest/getAlbumList2', {
+        ...baseParams,
+        size,
+        offset,
+      })
+      const albums = sr?.albumList2?.album || []
+      if (!albums.length) break            // 到底了
+      all.push(...albums)
+      offset += albums.length
+      if (albums.length < size) {
+        // 服务器给不满：可能是它自己的返回上限（继续翻页才对），
+        // 也可能是真的到底（下一页返回空 → 上面 break）。
+        // 所以这里**不 break**，靠空页兜底；再多拉一页的成本远低于丢数据。
+        continue
+      }
+    }
     return {
-      results: albums.map(a => this._albumToItem(a)),
-      total: albums.length,
+      // 去重：极端情况下服务器忽略 offset（一直返回同一页）会造成重复条目，
+      // 界面上就是"同一张专辑刷了一屏"。按 id 去重兜住。
+      results: dedupe(all).slice(0, want).map(a => this._albumToItem(a)),
+      total: all.length,
     }
   }
 
@@ -433,6 +497,9 @@ export class NavidromeApi {
         contentUrl: `/rest/stream?id=${encodeURIComponent(song.id)}`,
         title: ch.title || `第 ${i + 1} 首`,
         mimeType: 'audio/mpeg',
+        // 带 songId：播放页「添加到歌单」需要拿当前这首歌的 ND songId
+        // （老板 2026-09-14）。albumId 一并带上，便于跨专辑按专辑播。
+        _nd: { songId: song.id, albumId: item._nd?.albumId || String(ndItemId).replace(/^nd:/, '') },
       }
     })
     return {
@@ -470,6 +537,127 @@ export class NavidromeApi {
       if (bookTime >= (chapters[i].start || 0) - 0.001) return item._ndSongs?.[i]?.id || null
     }
     return item._ndSongs?.[0]?.id || null
+  }
+
+  // ---- 歌单（老板 2026-09-14：「现在没歌单功能」+ 歌曲内加歌单 / 搜索多选全选加歌单）----
+  /**
+   * 歌单列表。Subsonic getPlaylists 返回的 playlist 是「歌单头」，不含曲目。
+   * 形状：{ id, name, songCount, duration, owner, public, changed }
+   */
+  async getPlaylists() {
+    const sr = await this._sub('/rest/getPlaylists')
+    const raw = sr?.playlists?.playlist || []
+    const list = Array.isArray(raw) ? raw : [raw]
+    return list.map(p => ({
+      id: 'ndpl:' + p.id,
+      _ndPlaylistId: p.id,
+      name: p.name || '未命名歌单',
+      songCount: Number(p.songCount) || 0,
+      duration: Number(p.duration) || 0,
+      owner: p.owner || '',
+      public: !!p.public,
+      changed: p.changed || p.created || '',
+    }))
+  }
+
+  /** 歌单详情（含曲目）→ { id, name, songs: [ABS 歌曲形状] } */
+  async getPlaylist(ndPlaylistId) {
+    const pid = String(ndPlaylistId).replace(/^ndpl:/, '')
+    const sr = await this._sub('/rest/getPlaylist', { id: pid })
+    const p = sr?.playlist
+    if (!p) throw new Error('找不到这个歌单')
+    const entries = p.entry || []
+    const list = Array.isArray(entries) ? entries : [entries]
+    return {
+      id: 'ndpl:' + (p.id || pid),
+      _ndPlaylistId: p.id || pid,
+      name: p.name || '未命名歌单',
+      songCount: Number(p.songCount) || list.length,
+      duration: Number(p.duration) || 0,
+      songs: list.map(s => ({
+        id: 'nd:' + s.id,
+        songId: s.id,
+        albumId: s.albumId ? 'nd:' + s.albumId : '',
+        album: s.album || '',
+        title: s.title || '',
+        artist: s.artist || '',
+        duration: s.duration || 0,
+        coverArt: s.coverArt || s.albumId || s.id,
+        // 歌单里的曲目可能来自不同专辑，播放时按 albumId 定位（见 playPlaylist）
+      })),
+    }
+  }
+
+  /** 新建歌单。songIds 可一次带上初始曲目（Subsonic createPlaylist 允许重复 songId 参数） */
+  async createPlaylist(name, songIds = []) {
+    const params = { name: name || '新歌单' }
+    const sr = await this._sub('/rest/createPlaylist', params, {
+      // songId 要重复出现 → 不能走普通 object 序列化，这里用 URL 直接拼（见 _subRaw）
+      _repeat: { songId: songIds },
+    })
+    const p = sr?.playlist
+    return p ? { id: 'ndpl:' + p.id, _ndPlaylistId: p.id, name: p.name || name, songCount: Number(p.songCount) || songIds.length } : null
+  }
+
+  /** 往歌单加歌（updatePlaylist 的 songIdToAdd 支持重复参数） */
+  async addSongsToPlaylist(ndPlaylistId, songIds = []) {
+    const pid = String(ndPlaylistId).replace(/^ndpl:/, '')
+    if (!pid || !songIds.length) return null
+    await this._sub('/rest/updatePlaylist', { playlistId: pid }, { _repeat: { songIdToAdd: songIds } })
+    return true
+  }
+
+  /** 从歌单移除歌：songIndexToRemove 是「下标」，必须先把歌单拉出来查位置 */
+  async removeSongsFromPlaylist(ndPlaylistId, songIds = []) {
+    const pl = await this.getPlaylist(ndPlaylistId)
+    const want = new Set(songIds.map(x => String(x).replace(/^nd:/, '')))
+    const idxs = []
+    pl.songs.forEach((s, i) => { if (want.has(String(s.songId))) idxs.push(i) })
+    if (!idxs.length) return false
+    await this._sub('/rest/updatePlaylist', { playlistId: String(ndPlaylistId).replace(/^ndpl:/, '') },
+      { _repeat: { songIndexToRemove: idxs } })
+    return true
+  }
+
+  async deletePlaylist(ndPlaylistId) {
+    const pid = String(ndPlaylistId).replace(/^ndpl:/, '')
+    await this._sub('/rest/deletePlaylist', { id: pid })
+    return true
+  }
+
+  /**
+   * 歌词（老板 2026-09-14：「点封面切换到歌词界面…随着歌声一直动态显示当前歌词」）。
+   * OpenSubsonic 的 getLyricsBySongId 返回结构化歌词：
+   *   { lyricsList: { structuredLyrics: [{ synced, line: [{ start(ms), value }] }] } }
+   * 库里 3932 首全部有内嵌歌词（media_file.lyrics 存的就是这个结构）。
+   * 返回 { synced, lines: [{ start(秒), value }] }；没有歌词返回 null。
+   */
+  async getLyrics(songId) {
+    const sid = String(songId).replace(/^nd:/, '')
+    if (!sid) return null
+    try {
+      const sr = await this._sub('/rest/getLyricsBySongId', { id: sid })
+      return this._parseLyrics(sr?.lyricsList)
+    } catch (_) {
+      return null
+    }
+  }
+
+  /** 把 OpenSubsonic structuredLyrics 归一成 [{start(秒), value}]，按时间排序 */
+  _parseLyrics(lyricsList) {
+    const structs = lyricsList?.structuredLyrics || []
+    const arr = Array.isArray(structs) ? structs : [structs]
+    if (!arr.length) return null
+    // 优先取带时间轴的那一份（synced=true）
+    const pick = arr.find(s => s?.synced) || arr[0]
+    const lines = (pick?.line || []).map(l => ({
+      // 服务端给的是毫秒，App 内部统一用秒
+      start: (Number(l.start) || 0) / 1000,
+      value: String(l.value == null ? '' : l.value),
+    }))
+    if (!lines.length) return null
+    lines.sort((a, b) => a.start - b.start)
+    return { synced: !!pick?.synced, lines }
   }
 
   // ---- 封面 / 流 ----

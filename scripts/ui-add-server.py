@@ -90,7 +90,7 @@ with sync_playwright() as pw:
     ok('ABS 块显示已连接', pg.evaluate("!!document.querySelector('#absOut')"))
     ok('ND 块可填（输入框在）', pg.evaluate("!!document.querySelector('#nServer') && !!document.querySelector('#nUser') && !!document.querySelector('#nPass')"))
     ok('有返回键', pg.evaluate("!!document.querySelector('#loginBack')"))
-    ok('有「进入听书」按钮', pg.evaluate("!!document.querySelector('#gotoApp')"))
+    ok('有「进入悦耳」按钮', pg.evaluate("!!document.querySelector('#gotoApp')"))
 
     print('=== 3. 填 ND 账号连接 → 进主界面 ===')
     pg.fill('#nServer','http://127.0.0.1:4533'); pg.fill('#nUser','nduser'); pg.fill('#nPass','pw')

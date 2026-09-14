@@ -38,8 +38,14 @@ function makeServer() {
     songCount: 3, duration: songs.filter(s => s.albumId === `alb${a}`).reduce((x, y) => x + y.duration, 0),
     coverArt: `alb-${a}`, created: '2026-01-01T00:00:00Z',
   }))
-  const state = { bookmarks: {}, starred: new Set() }
+  // 翻页测试数据：35 张专辑（一页 500 拉不完，要翻页/单页不满即止）
+  const manyAlbums = []
+  for (let i = 1; i <= 35; i++) {
+    manyAlbums.push({ id: `many${i}`, name: `批量专辑${String(i).padStart(2, '0')}`, artist: `群星`, songCount: 1, duration: 60, coverArt: `many${i}` })
+  }
+  const state = { bookmarks: {}, starred: new Set(), playlists: { pl1: { id: 'pl1', name: '我的最爱', songIds: ['song-a1-1', 'song-a1-2'] } } }
 
+  let listCalls = 0
   function handle(url) {
     const u = new URL(url, 'http://x')
     const p = u.pathname, q = u.searchParams
@@ -55,8 +61,13 @@ function makeServer() {
       case '/rest/getUser': return ok({ user: { username: 'bin', adminRole: true } })
       case '/rest/getMusicFolders': return ok({ musicFolders: { musicFolder: [{ id: 'lib1', name: '音乐' }] } })
       case '/rest/getAlbumList2': {
+        listCalls++
         const size = Number(q.get('size') || 10), off = Number(q.get('offset') || 0)
-        return ok({ albumList2: { album: albums.slice(off, off + size) } })
+        // 单次最多 20 条（真实 Navidrome 也有上限，这里刻意压小以便断言"翻了几页"）。
+        // 指定 musicFolderId 时只给那 2 张专辑（老用例语义不变）；
+        // 不指定时给「2 张 + 35 张批量」= 37 张（翻页回归用）。
+        const pool = q.get('musicFolderId') ? albums : [...albums, ...manyAlbums]
+        return ok({ albumList2: { album: pool.slice(off, off + Math.min(size, 20)) } })
       }
       case '/rest/getAlbum': {
         const id = q.get('id')
@@ -94,10 +105,53 @@ function makeServer() {
       }
       case '/rest/deleteBookmark': { delete state.bookmarks[q.get('id')]; return ok({}) }
       case '/rest/scrobble': return ok({})
+      case '/rest/getPlaylists': {
+        const list = Object.values(state.playlists).map(p => ({
+          id: p.id, name: p.name, songCount: p.songIds.length,
+          duration: p.songIds.reduce((n, sid) => n + (songs.find(s => s.id === sid)?.duration || 0), 0),
+          owner: 'bin', public: false, changed: '2026-01-03T00:00:00Z',
+        }))
+        return ok({ playlists: { playlist: list } })
+      }
+      case '/rest/getPlaylist': {
+        const p = state.playlists[q.get('id')]
+        if (!p) return fail(70, 'not found')
+        const entry = p.songIds.map(sid => songs.find(s => s.id === sid)).filter(Boolean)
+        return ok({ playlist: { id: p.id, name: p.name, songCount: entry.length, duration: 0, entry } })
+      }
+      case '/rest/createPlaylist': {
+        const id = 'pl' + (Object.keys(state.playlists).length + 1)
+        const songIds = q.getAll('songId') || []
+        state.playlists[id] = { id, name: q.get('name') || '新歌单', songIds }
+        return ok({ playlist: { id, name: state.playlists[id].name, songCount: songIds.length } })
+      }
+      case '/rest/updatePlaylist': {
+        const p = state.playlists[q.get('playlistId')]
+        if (!p) return fail(70, 'not found')
+        for (const sid of (q.getAll('songIdToAdd') || [])) p.songIds.push(sid)
+        const rm = (q.getAll('songIndexToRemove') || []).map(Number).sort((a, b) => b - a)
+        for (const i of rm) p.songIds.splice(i, 1)
+        return ok({})
+      }
+      case '/rest/deletePlaylist': {
+        delete state.playlists[q.get('id')]
+        return ok({})
+      }
+      case '/rest/getLyricsBySongId': {
+        const sid = q.get('id')
+        if (sid !== 'song-a1-1') return ok({ lyricsList: {} })
+        return ok({ lyricsList: { structuredLyrics: [{
+          lang: 'chi', synced: true, line: [
+            { start: 5000, value: '第一行' },
+            { start: 12000, value: '第二行' },
+            { start: 8000, value: '中间插入（乱序）' },
+          ],
+        }] } })
+      }
       default: return fail(0, 'unknown endpoint ' + p)
     }
   }
-  return { handle, state, songs, albums }
+  return { handle, state, songs, albums, manyAlbums, listCalls: () => listCalls }
 }
 
 // ---------- 加载真代码（替换网络层与平台探测） ----------
@@ -223,6 +277,76 @@ console.log('\n=== 7. 会话兼容（App 播放器无感接入）===')
   // syncSession 兼容层不抛
   await nd.syncSession(s.sessionId, 100, 10, 360)
   ok('syncSession 走通（写了 bookmark）', !!srv.state.bookmarks['song-a1-1'])
+}
+
+console.log('\n=== 8. 翻页拉全量专辑（老板 2026-09-14：953 张只显示 200 张）===')
+{
+  // 假服务器单次最多给 20 条，库里有 37 张 → 必须翻页才能拿全。
+  // 旧代码只发一次请求（size=min(limit,500)）→ 永远拿不到 20 条以上，
+  // 这就是老板报的「953 张只显示 200 张」的同一个 bug。
+  const before = srv.listCalls()
+  const r = await nd.getLibraryItems(null, { limit: 2000 })
+  const calls = srv.listCalls() - before
+  ok('limit=2000 拿全 37 张（跨页聚合）', r.results.length === 37, `实际 ${r.results.length}`)
+  ok('确实翻了页（≥2 次请求）', calls >= 2, `请求 ${calls} 次`)
+  ok('total 反映全部拿到数', r.total === 37, String(r.total))
+  ok('没有重复条目', new Set(r.results.map(x => x.id)).size === 37)
+  // 只请求 15 条时不应多翻页（翻页要按需，别白拉全库）
+  const b2 = srv.listCalls()
+  const r15 = await nd.getLibraryItems(null, { limit: 15 })
+  ok('limit=15 时只发 1 次请求（按需翻页）', srv.listCalls() - b2 === 1, `请求 ${srv.listCalls() - b2} 次`)
+  ok('limit=15 拿 15 条', r15.results.length === 15, String(r15.results.length))
+  // 旧语义保留：显式 page>0 仍取单页
+  const p0 = await nd.getLibraryItems(null, { limit: 10 })
+  const p1 = await nd.getLibraryItems(null, { limit: 10, page: 1 })
+  ok('显式 page>0 仍走单页语义（10 条）', p1.results.length === 10, `实际 ${p1.results.length}`)
+  ok('第二页内容与第一页不同（offset 生效）', p1.results[0].id !== p0.results[0].id, `${p1.results[0].id} vs ${p0.results[0].id}`)
+}
+
+console.log('\n=== 9. 歌单（列表/详情/加歌/新建/删）===')
+{
+  const pls = await nd.getPlaylists()
+  ok('歌单列表非空', pls.length === 1 && pls[0].name === '我的最爱', JSON.stringify(pls))
+  ok('歌单 id 带 ndpl: 前缀（与 album/歌 区分）', String(pls[0].id).startsWith('ndpl:'), pls[0].id)
+  ok('歌曲数为 2', pls[0].songCount === 2, String(pls[0].songCount))
+
+  const pl = await nd.getPlaylist('ndpl:pl1')
+  ok('歌单详情带曲目', pl.songs.length === 2, String(pl.songs.length))
+  ok('曲目 id 带 nd: 前缀、songId 是纯 ND id', pl.songs[0].id === 'nd:song-a1-1' && pl.songs[0].songId === 'song-a1-1')
+  ok('曲目带 albumId（跨专辑播放要它）', pl.songs[0].albumId === 'nd:alb1', pl.songs[0].albumId)
+
+  // 加歌（重复参数 songIdToAdd）
+  await nd.addSongsToPlaylist('ndpl:pl1', ['song-a2-1', 'song-a2-2'])
+  const after = await nd.getPlaylist('ndpl:pl1')
+  ok('加歌生效（2 → 4）', after.songs.length === 4, String(after.songs.length))
+
+  // 移歌（songIndexToRemove 是下标，必须服务端算位置）
+  await nd.removeSongsFromPlaylist('ndpl:pl1', ['song-a1-1'])
+  const after2 = await nd.getPlaylist('ndpl:pl1')
+  ok('移歌生效（4 → 3）', after2.songs.length === 3, String(after2.songs.length))
+  ok('移掉的是指定那首', !after2.songs.some(s => s.songId === 'song-a1-1'))
+
+  // 新建（带初始曲目）
+  const np = await nd.createPlaylist('新歌单', ['song-a1-3'])
+  ok('新建歌单返回 id', !!np?.id, JSON.stringify(np))
+  const npd = await nd.getPlaylist(np.id)
+  ok('新建时带上初始曲目', npd.songs.length === 1, String(npd.songs.length))
+
+  // 删除
+  await nd.deletePlaylist(np.id)
+  const all = await nd.getPlaylists()
+  ok('删除后不在列表', !all.some(p => p.name === '新歌单'))
+}
+
+console.log('\n=== 10. 歌词（结构化 + 毫秒→秒 + 排序）===')
+{
+  const lyr = await nd.getLyrics('song-a1-1')
+  ok('拿到歌词', !!lyr && lyr.lines.length === 3, JSON.stringify(lyr))
+  ok('synced=true 识别', lyr.synced === true)
+  ok('毫秒换算成秒', lyr.lines[0].start === 5, String(lyr.lines[0].start))
+  ok('按时间排序（乱序输入已纠正）', lyr.lines.map(l => l.start).join(',') === '5,8,12', lyr.lines.map(l => l.start).join(','))
+  const none = await nd.getLyrics('song-a2-3')
+  ok('无歌词返回 null', none === null, JSON.stringify(none))
 }
 
 try { fs.unlinkSync(stubPath) } catch (_) {}

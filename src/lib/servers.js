@@ -238,6 +238,51 @@ class ServerHub {
     return this.abs.authHeaders()
   }
 
+  /**
+   * 歌单（老板 2026-09-14）。
+   * ND 有 Subsonic 歌单；ABS 没有"歌单"概念（它的对应物是收藏夹 collections）→
+   * 返回空数组/空实现，视图按 t('playlist') 文案统一显示。
+   */
+  async getPlaylists() {
+    if (this.active !== 'nd') return []
+    return this.nd.getPlaylists().catch(() => [])
+  }
+
+  async getPlaylist(id) {
+    if (this.active !== 'nd') return null
+    return this.nd.getPlaylist(id)
+  }
+
+  async createPlaylist(name, songIds = []) {
+    if (this.active !== 'nd') return null
+    return this.nd.createPlaylist(name, songIds)
+  }
+
+  async addSongsToPlaylist(playlistId, songIds = []) {
+    if (this.active !== 'nd') return null
+    return this.nd.addSongsToPlaylist(playlistId, songIds)
+  }
+
+  async removeSongsFromPlaylist(playlistId, songIds = []) {
+    if (this.active !== 'nd') return false
+    return this.nd.removeSongsFromPlaylist(playlistId, songIds)
+  }
+
+  async deletePlaylist(playlistId) {
+    if (this.active !== 'nd') return false
+    return this.nd.deletePlaylist(playlistId)
+  }
+
+  /**
+   * 歌词（老板 2026-09-14：点封面切歌词页）。
+   * 有歌词即返回 { synced, lines:[{start(秒), value}] }，没有返回 null。
+   * ABS 侧没有歌词接口 → null（歌词页在 ABS 下不渲染入口）。
+   */
+  getLyrics(id) {
+    if (sourceOfId(id) !== 'nd') return Promise.resolve(null)
+    return this.nd.getLyrics(id)
+  }
+
   // ---- 收藏夹（按 id 分派；ND 只有 star，无收藏夹） ----
   getCollection(id) { return this.clientFor(id).getCollection(id) }
   addToCollection(colId, itemId) { return this.clientFor(itemId).addToCollection(colId, itemId) }

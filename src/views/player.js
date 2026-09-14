@@ -1,4 +1,4 @@
-/** 播放页：大圆按钮极简 + 章节/倍速/睡眠定时/收藏；内容操作收在右上角三个点菜单里 */
+/** 播放页：大圆按钮极简 + 收藏；ND 去掉倍速/选集/±15秒（老板 2026-09-14），内容操作收进右上角三个点 */
 import { hub as abs, sourceOfId } from '../lib/servers.js'
 import { goBack, state, go, toast, esc, fmtTime, updateMini } from '../app.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
@@ -8,6 +8,7 @@ import { hasLocal, addLocal, removeLocal } from '../lib/favs.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { icon } from '../lib/icons.js'
 import { t } from '../lib/terms.js'
+import { openLyricsPage } from '../lib/lyrics-ui.js'
 
 let sleepTimer = null
 let sleepAt = 0
@@ -54,9 +55,9 @@ export async function renderPlayer(root) {
   // 之前这里串行等 collections()（网络请求）+ hasLocal + isCached 才画页面，
   // 外网反代下一个来回几百毫秒到几秒，播放页就"卡一下才出来"。
   // 现在页面先渲染，这三个状态查完再补（paintFav / 菜单文案是动态的，不依赖时序）。
+  const isNdItem = sourceOfId(c.item.id) === 'nd'
   let favState = { on: false, local: false, collections: [], itemId: c.item.id }
   let cachedNow = false
-  const isNdItem = sourceOfId(c.item.id) === 'nd'
   Promise.all([
     // ND 的收藏是 star（无收藏夹），ABS 走 collections
     (isNdItem
@@ -107,17 +108,30 @@ export async function renderPlayer(root) {
       </div>
 
       <div class="player-controls">
-        <button class="ctrl side" id="btnR15" aria-label="后退15秒">${icon('back15', 30)}<span class="ctrl-num">15</span></button>
-        <button class="ctrl mid" id="btnPrev" aria-label="上一集">${icon('prev', 34)}</button>
-        <button class="ctrl big" id="btnPlay" aria-label="播放/暂停">${icon('play', 46)}</button>
-        <button class="ctrl mid" id="btnNext" aria-label="下一集">${icon('next', 34)}</button>
-        <button class="ctrl side" id="btnF15" aria-label="前进15秒">${icon('forward15', 30)}<span class="ctrl-num">15</span></button>
+        ${isNdItem
+          /* ND（音乐库，老板 2026-09-14 反馈）：中间两个换成「播放模式 / 歌词」，
+             去掉 ±15 秒；倍速、选集也都不要了（改回专辑页选单曲）。 */
+          ? `<button class="ctrl side" id="btnMode" aria-label="播放模式">${icon('repeat-order', 26)}</button>
+             <button class="ctrl mid" id="btnPrev" aria-label="上一首">${icon('prev', 34)}</button>
+             <button class="ctrl big" id="btnPlay" aria-label="播放/暂停">${icon('play', 46)}</button>
+             <button class="ctrl mid" id="btnNext" aria-label="下一首">${icon('next', 34)}</button>
+             <button class="ctrl side" id="btnLyrics" aria-label="歌词">${icon('lyrics', 26)}</button>`
+          /* ABS（有声书）：保持原样 —— 书是多章节，选集和倍速都是必需的（老板：ABS 先不动） */
+          : `<button class="ctrl side" id="btnR15" aria-label="后退15秒">${icon('back15', 30)}<span class="ctrl-num">15</span></button>
+             <button class="ctrl mid" id="btnPrev" aria-label="上一集">${icon('prev', 34)}</button>
+             <button class="ctrl big" id="btnPlay" aria-label="播放/暂停">${icon('play', 46)}</button>
+             <button class="ctrl mid" id="btnNext" aria-label="下一集">${icon('next', 34)}</button>
+             <button class="ctrl side" id="btnF15" aria-label="前进15秒">${icon('forward15', 30)}<span class="ctrl-num">15</span></button>`}
       </div>
 
       <div class="player-tools">
-        <button class="tool-chip" id="btnRate">1.0×</button>
-        <button class="tool-chip" id="btnSleep">${icon('timer', 18)} 定时</button>
-        <button class="tool-chip" id="btnChapters">${icon('list', 18)} 选集</button>
+        ${isNdItem
+          /* ND：倍速/选集/定时 都不在页面上（定时已收进右上角 ⋯ 菜单，老板 2026-09-14）。
+             整行留空即可 —— 不渲染空行会更好看，所以直接不要这一行。 */
+          ? ''
+          : `<button class="tool-chip" id="btnRate">1.0×</button>
+             <button class="tool-chip" id="btnSleep">${icon('timer', 18)} 定时</button>
+             <button class="tool-chip" id="btnChapters">${icon('list', 18)} 选集</button>`}
       </div>
 
       <div id="extra"></div>
@@ -151,7 +165,9 @@ export async function renderPlayer(root) {
     // 缓冲中显示 loader（自带 .spin 旋转），比"暂停图标"诚实 —— 不然用户
     // 以为"点了没反应"再点一次（小米 8SE 冷启动缓冲要几秒）。
     $('#btnPlay').innerHTML = p.buffering ? icon('loader', 46, 'spin') : icon(p.playing ? 'pause' : 'play', 46)
-    $('#btnRate').textContent = (p.rate || 1).toFixed(1).replace(/\.0$/, '.0') + '×'
+    // ND 下没有倍速按钮（老板 2026-09-14 去掉）→ 判空，别对 null 赋值
+    const rateBtn = $('#btnRate')
+    if (rateBtn) rateBtn.textContent = (p.rate || 1).toFixed(1).replace(/\.0$/, '.0') + '×'
   }
 
   paintProgress(); paintState()
@@ -179,11 +195,10 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
   $('#btnPlay').onclick = () => { haptic.tap(); p.toggle() }
   $('#btnPrev').onclick = () => { haptic.tap(); p.prevTrack() }
   $('#btnNext').onclick = () => { haptic.tap(); p.nextTrack() }
-  $('#btnR15').onclick = () => { haptic.tap(); p.seek(Math.max(0, p.position().currentTime - 15)) }
-  $('#btnF15').onclick = () => { haptic.tap(); p.seek(p.position().currentTime + 15) }
   $('#btnFavTop').onclick = () => { haptic.tap(); toggleFav() }
   //  不要再引用已从模板里删掉的元素：$('#x') 返回 null，给 null 赋 onclick 会抛
   // TypeError，**把它之后的所有初始化全部中断**（三个点菜单就是这么失效的）。
+  // （倍速/选集/±15 秒已按老板 2026-09-14 要求移除；定时收进右上角三个点。）
 
   // 拖动进度条
   let dragging = false
@@ -212,22 +227,55 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
   window.addEventListener('mousemove', moveDrag)
   window.addEventListener('mouseup', endDrag)
 
-  // ---- 倍速 ----
-  const rates = [0.75, 1, 1.25, 1.5, 2]
-  $('#btnRate').onclick = async () => {
-    haptic.select()
-    const cur = p.rate || 1
-    const i = rates.indexOf(cur)
-    const next = rates[(i + 1) % rates.length]
-    await p.setRate(next)
-    $('#btnRate').textContent = next.toFixed(2).replace(/0$/, '') + '×'
-    await store.set(CONFIG_KEYS.playbackRate, String(next))
-    toast('播放速度 ' + next + '×')
+  // ---- 播放模式（老板 2026-09-14：单曲循环 / 顺序播放 / 乱序播放）----
+  // 只在 ND（音乐库）下暴露 —— ABS 是有声书，老板明确「ABS 先不动」。
+  // 三态轮转：顺序 → 单曲循环 → 乱序 → 顺序，模式记忆在本机（换书走同一套）。
+  const MODES = [
+    { key: 'order', icon: 'repeat-order', label: '顺序播放' },
+    { key: 'repeat', icon: 'repeat-one', label: '单曲循环' },
+    { key: 'shuffle', icon: 'shuffle', label: '乱序播放' },
+  ]
+  const btnMode = $('#btnMode')
+  if (btnMode) {
+    const savedMode = await store.get(CONFIG_KEYS.playMode, 'order')
+    p.setPlayMode(savedMode)
+    const paintMode = () => {
+      const m = MODES.find(x => x.key === p.playMode) || MODES[0]
+      // 必须 innerHTML：textContent 会把注入的 SVG 抹掉
+      btnMode.innerHTML = icon(m.icon, 26)
+      btnMode.classList.toggle('on', p.playMode !== 'order')
+      btnMode.setAttribute('aria-label', m.label)
+    }
+    paintMode()
+    btnMode.onclick = async () => {
+      haptic.select()
+      const i = MODES.findIndex(x => x.key === p.playMode)
+      const next = MODES[(i + 1) % MODES.length]
+      p.setPlayMode(next.key)
+      paintMode()
+      await store.set(CONFIG_KEYS.playMode, next.key)
+      toast(next.label)
+    }
   }
 
-  // ---- 睡眠定时 ----
-  $('#btnSleep').onclick = () => {
-    haptic.tap()
+  // ---- 歌词（老板 2026-09-14：点封面切到歌词页，随歌声滚动）----
+  // 仅 ND 有歌词数据（ABS 无歌词接口）。点封面或底部歌词按钮都能进。
+  const btnLyrics = $('#btnLyrics')
+  if (isNdItem) {
+    const openLyr = () => { haptic.tap(); openLyricsPage() }
+    if (btnLyrics) btnLyrics.onclick = openLyr
+    const wrap = root.querySelector('.player-cover-wrap')
+    if (wrap) {
+      wrap.classList.add('tappable')
+      wrap.onclick = openLyr
+    }
+  } else if (btnLyrics) {
+    // ABS：没有歌词数据，按钮隐身（不占位、不误导）
+    btnLyrics.style.display = 'none'
+  }
+
+  // ---- 睡眠定时（已收进右上角 ⋯ 菜单；老板 2026-09-14）----
+  function openSleepDialog() {
     const opts = [15, 30, 45, 60, 0]
     const labels = ['15 分钟', '30 分钟', '45 分钟', '60 分钟', '关闭定时']
     const modal = document.createElement('div')
@@ -249,30 +297,37 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
     })
   }
 
-  // ---- 选集 / 成人附加页 ----
-  // 右上角三个点：打开「当前这一集」的操作菜单。
-  // 之前儿童模式下它直接跳设置页（还得输家长密码），语义完全不对 ——
+  // ---- 右上角三个点：当前内容的操作菜单 ----
   // 三个点在所有播放器里都是"针对当前内容的操作"。
   $('#btnMore').onclick = () => { haptic.tap(); openEpisodeMenu() }
 
-  /** 当前集的操作菜单（老板 2026-09-13：播放页已有的按钮不再重复 ——
-   *  收藏(心形)/选集/倍速/定时 都在页面上，这里只留缓存和书籍信息） */
+  /** 当前集的操作菜单。现有项：缓存 / 定时（老板 2026-09-14 移入）/ 歌单 / 信息 */
   function openEpisodeMenu() {
     const ch = chapters[p.trackIndex]
     const t = c.tracks[p.trackIndex]
     const curCh = ch?.title || t?.title || `第 ${p.trackIndex + 1} 集`
+    // ND（音乐库）用「首」，ABS 有声书用「集」——术语别写死
+    const unitWord = isNdItem ? '首' : '集'
     const modal = document.createElement('div')
     modal.className = 'lock'
     modal.innerHTML = `<div class="lock-card">
       <div class="lock-title">${esc(curCh)}</div>
-      <div class="lock-sub">第 ${p.trackIndex + 1} / ${c.tracks.length} 集${t?.duration ? ' · ' + fmtTime(t.duration) : ''}</div>
+      <div class="lock-sub">第 ${p.trackIndex + 1} / ${c.tracks.length} ${unitWord}${t?.duration ? ' · ' + fmtTime(t.duration) : ''}</div>
+      ${isNdItem ? `<button class="sheet-item" data-act="playlist">
+        <span class="sheet-ic">${icon('playlist', 20)}</span>
+        <span class="sheet-label">添加到歌单</span>
+      </button>` : ''}
+      <button class="sheet-item" data-act="sleep">
+        <span class="sheet-ic">${icon('timer', 20)}</span>
+        <span class="sheet-label">睡眠定时${getSleepRemaining() ? '（剩余 ' + Math.ceil(getSleepRemaining() / 60) + ' 分钟）' : ''}</span>
+      </button>
       <button class="sheet-item" data-act="download">
         <span class="sheet-ic">${icon('download', 20)}</span>
         <span class="sheet-label">${cachedNow ? '已缓存（点击删除）' : '缓存到本机（离线听）'}</span>
       </button>
       <button class="sheet-item" data-act="info">
         <span class="sheet-ic">${icon('info', 20)}</span>
-        <span class="sheet-label">书籍信息</span>
+        <span class="sheet-label">${isNdItem ? '专辑信息' : '书籍信息'}</span>
       </button>
     </div>`
     document.body.appendChild(modal)
@@ -283,8 +338,19 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
       haptic.select()
       modal.remove()
       if (act === 'download') await toggleDownload()
+      else if (act === 'sleep') openSleepDialog()
+      else if (act === 'playlist') await addCurrentToPlaylist()
       else if (act === 'info') openInfoSheet()
     })
+  }
+
+  /** 把「当前正在听的这首歌」加进歌单（老板 2026-09-14） */
+  async function addCurrentToPlaylist() {
+    const tr = c.tracks[p.trackIndex]
+    const songId = tr?._nd?.songId || String(tr?.contentUrl || '').match(/[?&]id=([^&]+)/)?.[1]
+    if (!songId) { haptic.error(); toast('拿不到这首歌的信息'); return }
+    const { openAddToPlaylist } = await import('../lib/playlist-ui.js')
+    await openAddToPlaylist([{ id: 'nd:' + songId, title: tr?.title || '这首歌' }])
   }
 
   /** 书籍信息弹窗（原来塞在播放页底部的 renderExtra，改独立窗口） */

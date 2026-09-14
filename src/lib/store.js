@@ -78,4 +78,5 @@ export const CONFIG_KEYS = {
   timeWeekendFrom: 'timeWeekendFrom',     // 周末允许开始时间
   timeWeekendTo: 'timeWeekendTo',         // 周末允许结束时间
   timeDailyMinutes: 'timeDailyMinutes',   // 每天最多听多少分钟（0=不限）
+  playMode: 'playMode',                   // 播放模式 'order'|'repeat'|'shuffle'（老板 2026-09-14）
 }

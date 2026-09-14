@@ -446,6 +446,95 @@ console.log('\n=== 14. 家长音量上限（2026-09-14 修复：上限必须真�
   await p.stop()
 }
 
+console.log('\n=== 15. 播放模式：顺序 / 单曲循环 / 乱序（老板 2026-09-14）===')
+{
+  state.assets.clear(); state.calls.length = 0
+  const p = new BookPlayer({})
+  await p.init()
+  await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+
+  // 默认顺序播放
+  ok('默认模式 = order（ABS 行为不变）', p.playMode === 'order', p.playMode)
+  ok('非法模式值回退成 order', p.setPlayMode('bogus') === 'order')
+
+  // ---- 顺序：正在播时播完第 1 集 → 进第 2 集并继续播 ----
+  p.setPlayMode('order')
+  await p.play()
+  await p._onTrackEnd({ assetId: 'sa-0' })
+  ok('顺序播放：第1集播完 → 第2集', p.trackIndex === 1, `idx=${p.trackIndex}`)
+  ok('顺序播放：自动接续后仍在播（不断声）', p.playing === true)
+
+  // ---- 顺序：最后一集播完 → 结束（onEnd 回调），不会回绕 ----
+  let ended = 0
+  const p2 = new BookPlayer({ onEnd: () => ended++ })
+  await p2.init()
+  await p2.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 900 })
+  p2.trackIndex = tracks.length - 1
+  p2.currentBookTime = tracks[tracks.length - 1].startOffset
+  await p2._onTrackEnd()
+  ok('顺序播放：最后一集播完 → 触发 onEnd', ended === 1, `ended=${ended}`)
+  await p2.stop({ silent: true })
+
+  // ---- 单曲循环：播完 → 回到本曲开头（不是下一曲）----
+  state.calls.length = 0
+  const p3 = new BookPlayer({})
+  await p3.init()
+  await p3.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 300 })
+  p3.setPlayMode('repeat')
+  const beforeIdx = p3.trackIndex
+  p3.currentBookTime = tracks[beforeIdx].startOffset + tracks[beforeIdx].duration  // 模拟播到本曲末尾
+  await p3._onTrackEnd({ assetId: 'sa-' + beforeIdx })
+  ok('单曲循环：播完仍是同一首', p3.trackIndex === beforeIdx, `${beforeIdx} → ${p3.trackIndex}`)
+  ok('单曲循环：回到本曲开头', Math.abs(p3.currentBookTime - tracks[beforeIdx].startOffset) < 0.01,
+     `t=${p3.currentBookTime} start=${tracks[beforeIdx].startOffset}`)
+  ok('单曲循环：继续播放（不断声）', p3.playing === true)
+  await p3.stop({ silent: true })
+
+  // ---- 乱序：播完 → 随机跳到别的曲目（可能同一首？保证不是）----
+  const p4 = new BookPlayer({})
+  await p4.init()
+  await p4.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  p4.setPlayMode('shuffle')
+  let moved = 0
+  for (let i = 0; i < 24; i++) {
+    p4.trackIndex = 0
+    p4.currentBookTime = 0
+    await p4._onTrackEnd({ assetId: 'sa-0' })
+    if (p4.trackIndex !== 0) moved++
+  }
+  ok('乱序：播完会跳到别的曲目（24 次全部换了）', moved === 24, `moved=${moved}/24`)
+  // 手动「下一首」在乱序下也随机
+  let manualDiff = 0
+  for (let i = 0; i < 24; i++) {
+    p4.trackIndex = 1
+    p4.currentBookTime = tracks[1].startOffset
+    await p4.nextTrack()
+    if (p4.trackIndex !== 1) manualDiff++
+  }
+  ok('乱序：手动下一首也换曲（24 次全部换了）', manualDiff === 24, `diff=${manualDiff}/24`)
+  // 单轨边界：只有一首歌时不能死循环
+  const p5 = new BookPlayer({})
+  await p5.init()
+  await p5.load({ itemId: 'x', tracks: [tracks[0]], sessionId: 's', duration: 300, startBookTime: 0 })
+  p5.setPlayMode('shuffle')
+  await p5.nextTrack()
+  ok('乱序：只有一首歌时点下一首不崩、仍停在原曲', p5.trackIndex === 0)
+  await p5.stop({ silent: true })
+  await p4.stop({ silent: true })
+
+  // ---- 单曲循环 + 乱序 都必须在「暂停态播完」时也不出怪状态 ----
+  const p6 = new BookPlayer({})
+  await p6.init()
+  await p6.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  p6.setPlayMode('repeat')
+  p6.playing = false
+  p6._wantPlaying = false
+  await p6._onTrackEnd({ assetId: 'sa-0' })
+  ok('单曲循环：暂停态收到 complete 不异常（仍定位到本曲开头）', Math.abs(p6.currentBookTime - 0) < 0.01,
+     `t=${p6.currentBookTime}`)
+  await p6.stop({ silent: true })
+}
+
 try { fs.unlinkSync(stubPath) } catch (_) {}
 try { fs.unlinkSync(path.join(ROOT, '.tmp-parental-stub.mjs')) } catch (_) {}
 

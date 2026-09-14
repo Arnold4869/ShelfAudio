@@ -70,6 +70,21 @@ const BODY = {
   bell: '<path d="M18.4 15.6V10a6.4 6.4 0 1 0-12.8 0v5.6l-1.8 2.6h16.4z" fill="none"/><path d="M10 20.6a2.2 2.2 0 0 0 4 0" fill="none"/>',
   clock: '<circle cx="12" cy="12" r="8.6" fill="none"/><path d="M12 7.2V12l3.4 2.2" fill="none"/>',
   download: '<path d="M12 3.8v11.4" fill="none"/><path d="m7.6 11 4.4 4.4 4.4-4.4" fill="none"/><path d="M4.6 18.6a1.6 1.6 0 0 0 1.6 1.6h11.6a1.6 1.6 0 0 0 1.6-1.6" fill="none"/>',
+
+  // ---- 播放模式（老板 2026-09-14：单曲循环 / 顺序播放 / 乱序播放）----
+  // 顺序：两条平行线 + 首尾箭头（标准"列表循环/顺序"符号）
+  'repeat-order': '<path d="M7.4 5.6h9.2l2.6 2.6" fill="none"/><path d="M17.2 3 19.8 5.6 17.2 8.2" fill="none"/><path d="M16.6 18.4H7.4L4.8 15.8" fill="none"/><path d="M6.8 21 4.2 18.4 6.8 15.8" fill="none"/>',
+  // 单曲循环：上面那个 + 中间一个「1」
+  'repeat-one': '<path d="M7.4 5.6h9.2l2.6 2.6" fill="none"/><path d="M17.2 3 19.8 5.6 17.2 8.2" fill="none"/><path d="M16.6 18.4H7.4L4.8 15.8" fill="none"/><path d="M6.8 21 4.2 18.4 6.8 15.8" fill="none"/><path d="M11.4 10.2l1.5-1v5.6" fill="none" stroke-width="2.1"/>',
+  // 乱序：两根交叉箭头
+  shuffle: '<path d="M4.2 6.6h3.4l3 4.2" fill="none"/><path d="M4.2 17.4h3.4l3-4.2" fill="none"/><path d="M13.6 6.6h4l2.2 2.2" fill="none"/><path d="M17.6 4.4 19.8 6.6 17.6 8.8" fill="none"/><path d="M13.6 17.4h4l2.2-2.2" fill="none"/><path d="M17.6 15.2 19.8 17.4 17.6 19.6" fill="none"/>',
+  // 歌词：方形文本块（对齐的几行歌词）
+  lyrics: '<rect x="3.6" y="4.4" width="16.8" height="15.2" rx="2.6" fill="none"/><path d="M7.4 9.4h9.2M7.4 13h6.4M7.4 16.6h4.2" fill="none"/>',
+  // 歌单：三行 + 音符（区别于 list 的圆点）
+  playlist: '<path d="M4.4 6.6h10.8M4.4 11.4h10.8M4.4 16.2h6.4" fill="none"/><circle cx="17.6" cy="16" r="2.6" fill="none"/><path d="M20.2 16V8.6l1.4 1.1" fill="none" stroke-width="1.7"/>',
+  // 勾选（多选加歌单用）：用 evenodd 把对勾挖成透明孔，避免写死底色
+  checked: '<path fill-rule="evenodd" d="M7.2 3.8h9.6a3.4 3.4 0 0 1 3.4 3.4v9.6a3.4 3.4 0 0 1-3.4 3.4H7.2a3.4 3.4 0 0 1-3.4-3.4V7.2a3.4 3.4 0 0 1 3.4-3.4zm9.6 5.6a1 1 0 0 0-1.5-1.3l-4.6 5.1-1.8-1.8a1 1 0 1 0-1.4 1.4l2.6 2.6a1 1 0 0 0 1.44-.05z" fill="currentColor"/>',
+  unchecked: '<rect x="4.4" y="4.4" width="15.2" height="15.2" rx="3" fill="none"/><path d="m8.6 8.6 6.8 6.8M15.4 8.6l-6.8 6.8" fill="none" stroke-width="1.6" opacity="0.55"/>',
 }
 
 // 线描类（fill:none + stroke）；其余为实心填充类
@@ -78,6 +93,7 @@ const STROKE = new Set([
   'timer', 'list', 'heart', 'info', 'check', 'lock', 'person', 'child', 'server',
   'refresh', 'exit', 'warning', 'loader', 'empty',
   'bookmark', 'trash', 'chart', 'download', 'bell', 'clock',
+  'repeat-order', 'repeat-one', 'shuffle', 'lyrics', 'playlist', 'unchecked',
 ])
 
 /**

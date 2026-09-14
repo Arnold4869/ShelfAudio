@@ -22,6 +22,7 @@ import { localTrackUriLazy } from './lib/offline.js'
 import { recordContinue, removeContinueLocal } from './lib/continue-local.js'
 import { initHaptics } from './lib/haptics.js'
 import { syncToServer } from './lib/favs.js'
+import { t } from './lib/terms.js'
 
 window.__abs = hub   // player.js 需要（多源门面，按 sessionId 前缀分派）
 
@@ -268,7 +269,7 @@ export function initPlayer() {
     onTrackChange: (t) => {
       window.dispatchEvent(new CustomEvent('sa:track', { detail: t }))
     },
-    onEnd: () => { toast('这本听完啦'); updateMini() },
+    onEnd: () => { toast(t('finished')); updateMini() },
   })
   state.player = p
   window.__saPlayer = p   // voice.js 在语音结束后需要它恢复播放
@@ -322,7 +323,7 @@ export async function playItem(item, { startTime } = {}) {
   }
 
   const { sessionId, tracks, duration } = await hub.startPlayback(item.id, Math.floor(start))
-  if (!tracks.length) { toast('这本书没有音频文件'); return }
+  if (!tracks.length) { toast(t('noAudio')); return }
 
   // 补上带 token 的直链
   const withUrls = tracks.map(t => ({
@@ -392,7 +393,7 @@ export async function playItem(item, { startTime } = {}) {
       localResolver,
       notification: {
         title,
-        artist: meta.authorName || meta.author || '听书',
+        artist: meta.authorName || meta.author || '悦耳',
         album: meta.seriesName || '',
         artworkUrl: hub.coverUrl(item.id, { width: 400 }),
       },
@@ -603,6 +604,19 @@ route('album', async (root, params) => {
   document.body.dataset.view = 'album'
   const { renderAlbum } = await import('./views/album.js')
   await renderAlbum(root, params)
+})
+
+// 歌单（Navidrome）：列表 + 详情（老板 2026-09-14，方案 A：首页三入口之一）
+route('playlists', async (root) => {
+  document.body.dataset.view = 'playlists'
+  const { renderPlaylists } = await import('./views/playlists.js')
+  await renderPlaylists(root)
+})
+
+route('playlistDetail', async (root, params) => {
+  document.body.dataset.view = 'playlistDetail'
+  const { renderPlaylistDetail } = await import('./views/playlists.js')
+  await renderPlaylistDetail(root, params)
 })
 
 // 历史记录（完整收听历史；首页只露 3 条预览，入口按钮进来）

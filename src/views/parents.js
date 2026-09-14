@@ -20,6 +20,7 @@ import { haptic, setHaptics, hapticsEnabled } from '../lib/haptics.js'
 import { setNotificationMode } from '../lib/notification-prefs.js'
 import { timeWindowEnabled, dailyLimitEnabled, timeWindowLabel, volumeCap, volumeCapLabel } from '../lib/parental.js'
 import { voiceHidden, setVoiceHidden } from '../lib/ui-prefs.js'
+import { t } from '../lib/terms.js'
 
 export async function renderParent(root) {
   const scope = (await store.get(CONFIG_KEYS.progressScope, 'track')) === 'book' ? 'book' : 'track'
@@ -219,7 +220,7 @@ export async function renderParent(root) {
     try {
       state.libraries = await abs.libraries()
       state.libraryId = state.libraries[0]?.id || null
-      toast('书库已刷新')
+      toast(t('library') + '已刷新')
     } catch (e) { toast('刷新失败：' + e.message) }
   }
 

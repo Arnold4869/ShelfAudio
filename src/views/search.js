@@ -88,39 +88,134 @@ export async function renderSearch(root, params = {}) {
       <div class="list-pct">${icon('search', 15)}</div>
     </div>`
 
-  /** 分组渲染：专辑 / 歌手 / 歌曲 各一段（老板要求不要混在一起） */
+  /** 分组渲染：专辑 / 歌手 / 歌曲 各一段（老板要求不要混在一起）
+   *  歌曲组在 ND 下支持多选（勾选 / 全选）→ 添加到歌单（老板 2026-09-14）。 */
   const renderGrouped = (g, q) => {
     const totalN = (g.albums?.length || 0) + (g.artists?.length || 0) + (g.songs?.length || 0)
     if (!totalN) {
       results.innerHTML = `<div class="empty"><div class="glyph">${icon('search', 44)}</div>${t('noResult', q)}</div>`
       return
     }
+    const isNd = hub.active === 'nd'
+    const songs = g.songs || []
     const sec = (title, n, html) => n ? `<div class="section-h">${title} <small>${n}</small></div>
       <div class="settings-group" style="padding:4px 0">${html}</div>` : ''
+    // 歌曲组头部带「选择 / 全选」入口（仅在 ND 且确实有歌曲结果时）
+    const songHead = (isNd && songs.length)
+      ? `<div class="section-h">歌曲 <small>${songs.length}</small>
+           <button class="pick-toggle" id="pickToggle">选择</button>
+         </div>
+         <div class="pick-bar" id="pickBar" hidden>
+           <button class="pick-all" id="pickAll">${icon('checked', 19)} 全选</button>
+           <span id="pickCount">已选 0 首</span>
+           <button class="btn" id="pickAdd" style="padding:8px 14px;font-size:14px">添加到歌单</button>
+         </div>`
+      : `<div class="section-h">歌曲 <small>${songs.length}</small></div>`
     results.innerHTML =
         sec('专辑', g.albums?.length || 0, (g.albums || []).map(albumRow).join(''))
       + sec('歌手', g.artists?.length || 0, (g.artists || []).map(artistRow).join(''))
-      + sec('歌曲', g.songs?.length || 0, (g.songs || []).map(songRow).join(''))
+      + ((songs.length || (isNd && songs.length === 0)) ? songHead : '')
+      + (songs.length ? `<div class="settings-group" style="padding:4px 0">${songs.map(songRow).join('')}</div>` : '')
     wireCoverFallback(results)
 
-    // 专辑：进详情页自己选歌
-    results.querySelectorAll('.list-item[data-id]').forEach(el => {
-      el.onclick = async () => {
-        haptic.tap()
-        const it = (g.albums || []).find(x => x.id === el.dataset.id)
-        if (it) await openOrPlay(it)
+    // ---- 多选模式（老板：搜索结果选中添加到歌单，也能全选添加）----
+    if (isNd && songs.length) {
+      // ⚠️ 专辑行/歌手行的点击**不能**因为歌曲多选而丢：它们不属于多选范围。
+      // （曾经把两组 handler 写进 if/else 分支，导致 ND 有歌曲结果时点专辑没反应。）
+      results.querySelectorAll('.list-item[data-id]').forEach(el => {
+        el.onclick = async () => {
+          haptic.tap()
+          const it = (g.albums || []).find(x => x.id === el.dataset.id)
+          if (it) await openOrPlay(it)
+        }
+      })
+      const picked = new Set()
+      const toggleBtn = results.querySelector('#pickToggle')
+      const bar = results.querySelector('#pickBar')
+      const countEl = results.querySelector('#pickCount')
+      const allBtn = results.querySelector('#pickAll')
+      let picking = false
+
+      const paintPick = () => {
+        results.querySelectorAll('.list-item[data-song]').forEach(el => {
+          const on = picked.has(el.dataset.song)
+          el.classList.toggle('picked', on)
+          const box = el.querySelector('.pick-box')
+          if (box) box.innerHTML = icon(on ? 'checked' : 'unchecked', 21)
+        })
+        countEl.textContent = `已选 ${picked.size} 首`
+        const allOn = picked.size === songs.length && songs.length > 0
+        allBtn.classList.toggle('on', allOn)
       }
-    })
-    // 歌曲：进所在专辑，并从这首开始播（老板「我自己选个单曲播放」）
-    results.querySelectorAll('.list-item[data-song]').forEach(el => {
-      el.onclick = async () => {
-        haptic.tap()
-        const sg = (g.songs || []).find(x => x.id === el.dataset.song)
-        const albumId = sg?.albumId || el.dataset.album
-        if (!albumId) { toast('找不到这首歌所在的专辑'); return }
-        await go('album', { id: albumId, songId: sg?.songId || String(el.dataset.song).replace(/^nd:/, '') })
+      const setPicking = (on) => {
+        picking = on
+        bar.hidden = !on
+        toggleBtn.textContent = on ? '取消' : '选择'
+        results.querySelectorAll('.list-item[data-song]').forEach(el => {
+          el.classList.toggle('pickable', on)
+          let box = el.querySelector('.pick-box')
+          if (on && !box) {
+            el.insertAdjacentHTML('afterbegin', `<div class="pick-box">${icon('unchecked', 21)}</div>`)
+          } else if (!on && box) {
+            box.remove()
+          }
+        })
+        if (!on) { picked.clear() }
+        paintPick()
       }
-    })
+
+      toggleBtn.onclick = () => { haptic.tap(); setPicking(!picking) }
+      allBtn.onclick = () => {
+        haptic.select()
+        if (picked.size === songs.length) picked.clear()
+        else songs.forEach(s => picked.add(s.id))
+        paintPick()
+      }
+      results.querySelector('#pickAdd').onclick = async () => {
+        if (!picked.size) { toast('先选几首'); return }
+        haptic.tap()
+        const list = songs.filter(s => picked.has(s.id)).map(s => ({ id: s.id, title: s.title }))
+        const { openAddToPlaylist } = await import('../lib/playlist-ui.js')
+        await openAddToPlaylist(list)
+      }
+      // 选择态下点整行 = 勾选/取消；非选择态 = 原来的播放行为
+      results.querySelectorAll('.list-item[data-song]').forEach(el => {
+        el.onclick = async e => {
+          if (picking) {
+            e.stopImmediatePropagation?.()
+            haptic.select()
+            const id = el.dataset.song
+            if (picked.has(id)) picked.delete(id); else picked.add(id)
+            paintPick()
+            return
+          }
+          haptic.tap()
+          const sg = songs.find(x => x.id === el.dataset.song)
+          const albumId = sg?.albumId || el.dataset.album
+          if (!albumId) { toast('找不到这首歌所在的专辑'); return }
+          await go('album', { id: albumId, songId: sg?.songId || String(el.dataset.song).replace(/^nd:/, '') })
+        }
+      })
+    } else {
+      // 专辑：进详情页自己选歌
+      results.querySelectorAll('.list-item[data-id]').forEach(el => {
+        el.onclick = async () => {
+          haptic.tap()
+          const it = (g.albums || []).find(x => x.id === el.dataset.id)
+          if (it) await openOrPlay(it)
+        }
+      })
+      // 歌曲：进所在专辑，并从这首开始播（老板「我自己选个单曲播放」）
+      results.querySelectorAll('.list-item[data-song]').forEach(el => {
+        el.onclick = async () => {
+          haptic.tap()
+          const sg = (g.songs || []).find(x => x.id === el.dataset.song)
+          const albumId = sg?.albumId || el.dataset.album
+          if (!albumId) { toast('找不到这首歌所在的专辑'); return }
+          await go('album', { id: albumId, songId: sg?.songId || String(el.dataset.song).replace(/^nd:/, '') })
+        }
+      })
+    }
     // 歌手：以歌手名为关键词再搜一遍（Subsonic 没有"按歌手列出其专辑"的单一接口，
     // getArtist 也能做，但结果形态和这里不一致；搜索更简单可靠）
     results.querySelectorAll('.list-item[data-artist]').forEach(el => {
@@ -162,7 +257,7 @@ export async function renderSearch(root, params = {}) {
   const showBrowse = async () => {
     try {
       let all = state.items.length ? state.items
-        : (await abs.getLibraryItems(state.libraryId, { limit: 300 }))?.results || []
+        : (await abs.getLibraryItems(state.libraryId, { limit: 2000 }))?.results || []
       if (!all.length) return
       results.innerHTML = `<div class="section-h">${t('all')} <small>${countN(all.length)}</small></div>`
         + all.map(it => {
@@ -207,7 +302,7 @@ export async function renderSearch(root, params = {}) {
       let items = await abs.searchAll(state.libraries, q)
       if (!items.length) {
         // 兜底：本地标题子串匹配（ABS 搜索对中文分词有时不给力）
-        const all = state.items.length ? state.items : (await abs.getLibraryItems(state.libraryId, { limit: 300 }))?.results || []
+        const all = state.items.length ? state.items : (await abs.getLibraryItems(state.libraryId, { limit: 2000 }))?.results || []
         items = all.filter(it => (it.media?.metadata?.title || '').toLowerCase().includes(q.toLowerCase()))
       }
       renderList(items, q)

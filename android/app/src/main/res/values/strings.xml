@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">听书</string>
-    <string name="title_activity_main">听书</string>
+    <string name="app_name">悦耳</string>
+    <string name="title_activity_main">悦耳</string>
     <string name="package_name">com.arnold.shelfaudio</string>
     <string name="custom_url_scheme">com.arnold.shelfaudio</string>
 </resources>
