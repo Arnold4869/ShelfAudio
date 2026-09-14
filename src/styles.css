@@ -569,6 +569,13 @@ body[data-tabs="0"] .mini {
 .setting-value { font-size: 13px; color: var(--text-dim); margin-top: 3px; }
 .setting-arrow { color: var(--text-dim); font-size: 18px; }
 
+/* ---------- 登录页返回键（从设置页「服务器」进来时显示） ---------- */
+.login-nav { height: 44px; display: flex; align-items: center; margin-bottom: 4px; }
+.login-nav .back-btn {
+  width: 44px; height: 44px; display: grid; place-items: center;
+  border: none; background: transparent; color: var(--text); cursor: pointer;
+}
+
 /* ---------- 服务器切换器（右上角，两源都登录才出现） ---------- */
 /* 不用 absolute：page-head 是 flex 容器，绝对定位会压在标题上（实测 overlapsTitle=true）。
    直接作为 flex 子项排在标题右侧，标题 flex:1 会自动让位。 */

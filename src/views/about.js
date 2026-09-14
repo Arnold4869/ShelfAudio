@@ -6,6 +6,7 @@
  */
 import { state, go, toast, esc, requireParentPin, stopCurrent } from '../app.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
+import { hub } from '../lib/servers.js'
 import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
 import { checkVoicePermission, requestVoicePermission, openSystemSettings, onAppResume } from '../lib/permissions.js'
@@ -169,11 +170,13 @@ export async function renderAbout(root) {
     }
   }  // end if (updateSupported())
 
-  // 退出登录：需家长密码（防孩子误触），清本机登录信息回登录页
+  // 退出登录：需家长密码（防孩子误触），清本机登录信息回登录页。
+  // 多源（2026-09-14）：两台的登录态都清掉（hub.logout 逐台断开 + 清各自的存储键）。
   $('#rowLogout').onclick = async () => {
     haptic.tap()
     if (state.kidPin) { if (!(await requireParentPin())) return }
     await stopCurrent()
+    for (const s of [...hub.available]) { try { await hub.logout(s) } catch (_) {} }
     await store.remove(CONFIG_KEYS.token)
     await store.remove(CONFIG_KEYS.server)
     await store.remove(CONFIG_KEYS.username)

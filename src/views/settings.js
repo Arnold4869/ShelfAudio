@@ -7,6 +7,7 @@
  * - 首次登录的引导块保留（那是新用户唯一的教学时机）
  */
 import { store, CONFIG_KEYS } from '../lib/store.js'
+import { hub } from '../lib/servers.js'
 import { state, go, toast, esc, requireParentPin, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
@@ -48,6 +49,14 @@ export async function renderSettings(root, { firstRun = false } = {}) {
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>
+      <div class="setting-row" id="rowServers">
+        <div class="setting-ic">${icon('server', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">服务器</div>
+          <div class="setting-value" id="srvVal">…</div>
+        </div>
+        <div class="setting-arrow">${icon('forward', 20)}</div>
+      </div>
       <div class="setting-row" id="rowParent">
         <div class="setting-ic">${icon('lock', 22)}</div>
         <div class="setting-main">
@@ -74,6 +83,22 @@ export async function renderSettings(root, { firstRun = false } = {}) {
   const $ = s => root.querySelector(s)
 
   wireKidTabs(root, { go, requireParentPin })
+
+  // 服务器入口（老板 2026-09-14：连上 ABS 后找不到在哪加 Navidrome 账号）。
+  // 放设置页第一屏 = 一眼能看到；但进登录页要过家长密码（和「退出登录」同口径），
+  // 免得孩子自己把服务器改掉。
+  const srvVal = (() => {
+    const n = []
+    if (hub.loggedIn.abs) n.push('Audiobookshelf')
+    if (hub.loggedIn.nd) n.push('Navidrome')
+    return n.length ? n.join(' + ') : '未连接'
+  })()
+  $('#srvVal').textContent = srvVal
+  $('#rowServers').onclick = async () => {
+    haptic.tap()
+    if (state.kidPin) { if (!(await requireParentPin())) return }
+    await go('login')
+  }
 
   $('#rowAbout').onclick = () => { haptic.tap(); go('about') }
 

@@ -13,6 +13,7 @@ import { hub } from '../lib/servers.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { go, toast, state, initPlayer } from '../app.js'
 import { icon } from '../lib/icons.js'
+import { haptic } from '../lib/haptics.js'
 
 const esc0 = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
@@ -30,6 +31,9 @@ export async function renderLogin(root) {
 
   root.innerHTML = `
     <div class="login-wrap">
+      ${(hasAbs || hasNd) ? `<div class="login-nav">
+        <button class="back-btn" id="loginBack" aria-label="返回">${icon('back', 22)}</button>
+      </div>` : ''}
       <div class="login-logo">${icon('headphones', 64)}</div>
       <h1 class="login-h">听书</h1>
       <div class="login-sub">连接你的有声书 / 音乐服务器</div>
@@ -103,6 +107,20 @@ export async function renderLogin(root) {
   `
 
   const $ = s => root.querySelector(s)
+
+  // 已登录过（从设置页「服务器」进来的）→ 有返回键回设置页；
+  // 冷启动没登录过 → 没有返回键（不能退回一个空 App）。
+  $('#loginBack')?.addEventListener('click', async () => {
+    haptic.tap()
+    const libs = await hub.libraries().catch(() => [])
+    if (libs.length) {
+      state.libraries = libs
+      state.libraryId = libs[0]?.id || null
+      await go('kidhome')
+    } else {
+      toast('先连接一台服务器')
+    }
+  })
 
   /** 登录成功后统一收尾：拉库、落状态、进主界面 */
   const afterLogin = async (who) => {
