@@ -1,5 +1,14 @@
 /** 书架：大卡片网格 + 继续听（只有一种模式，见 2026-09-12 老板要求取消模式分类） */
 import { hub as abs } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
+import { t } from '../lib/terms.js'
+
+/** 点列表条目：ND 专辑进详情页自己选歌；ABS 书保持原行为（直接续听） */
+async function openOrPlay(it, { resumeAt } = {}) {
+  if (String(it.id).startsWith('nd:')) { await go('album', { id: it.id }); return }
+  try { await playItem(it, resumeAt === undefined ? {} : { startTime: resumeAt }) }
+  catch (e) { toast(e.message || t('openFail')) }
+}
+   // 术语：ND 下「书」→「专辑」（老板 2026-09-14）
 import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini, resetForSourceSwitch } from '../app.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
@@ -16,7 +25,7 @@ let cache = { items: [], at: 0, libraryId: null }
 export async function renderShelf(root) {
   // 只有一种模式了（老板要求取消儿童/成人分类）。保留 kid 常量便于阅读，恒为 true。
   const kid = true
-  root.innerHTML = `<div class="empty"><div class="glyph">${icon('loader', 40, 'spin')}</div>正在加载书架…</div>`
+  root.innerHTML = `<div class="empty"><div class="glyph">${icon('loader', 40, 'spin')}</div>${t('shelfLoading')}</div>`
 
   if (!state.libraryId) {
     try {
@@ -26,7 +35,7 @@ export async function renderShelf(root) {
     } catch (e) { }
   }
   if (!state.libraryId) {
-    root.innerHTML = `<div class="empty"><div class="glyph">${icon('books', 44)}</div>这个账号没有可用的书库</div>`
+    root.innerHTML = `<div class="empty"><div class="glyph">${icon('books', 44)}</div>${t('libraryEmpty')}</div>`
     return
   }
 
@@ -55,7 +64,7 @@ export async function renderShelf(root) {
   state.items = items
 
   if (!items.length) {
-    root.innerHTML = `<div class="empty"><div class="glyph">${icon('books', 44)}</div>书架是空的</div>`
+    root.innerHTML = `<div class="empty"><div class="glyph">${icon('books', 44)}</div>${t('shelfEmpty')}</div>`
     return
   }
 
@@ -131,8 +140,13 @@ export async function renderShelf(root) {
   // 设置入口只留底栏那个（右上角不再放齿轮，避免两个入口重复）
   // 页头：标题 + 右上角服务器切换（只有两台都登录时才出现）
   const srcLabel = hub.multi ? ` <small>· ${hub.active === 'nd' ? 'Navidrome' : 'Audiobookshelf'}</small>` : ''
+  // ND 下标题带「音乐库」而不是「首页」（老板 2026-09-14：ND 界面不能说"书"）。
+  // 单源 ND 时用库名更直白；双源时保留"首页"避免标题过长，源名在右上角按钮上。
+  const pageTitle = hub.active === 'nd'
+    ? (hub.multi ? '首页' : t('shelf'))
+    : '首页'
   const head = `<div class="page-head">
-         <div class="page-title">我的书架${srcLabel}</div>
+         <div class="page-title">${pageTitle}${srcLabel}</div>
          ${sourceSwitchHTML('kidhome')}
        </div>`
 
@@ -224,11 +238,11 @@ export async function renderShelf(root) {
       // 有进度就接着听（卡片上有"听 N%"徽标，从头播会丢进度）。
       //  阈值不能是 >5 秒：孩子的书单集很短、随手点开就退出，
       // 听 2~5 秒也是真实进度，归零会"重听一遍"（老板 2026-09-13）。
+      // ND 专辑：进详情页自己选歌（老板 2026-09-14「点进专辑，我自己选个单曲播放」）
+      // ABS 书：保持原有行为（有进度续听）
       const prog = progressMap[it.id]
       const resumeAt = (prog && !prog.isFinished) ? undefined : 0
-      try {
-        await playItem(it, { startTime: resumeAt })
-      } catch (e) { toast(e.message || '打不开这本书') }
+      await openOrPlay(it, { resumeAt })
     })
   })
 

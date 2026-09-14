@@ -4,7 +4,7 @@
  * 老板 2026-09-12：语音麦克风设置收进"关于系统信息"这类菜单；
  * 关于里放系统版本、语音权限有没有开启等。
  */
-import { state, go, toast, esc, requireParentPin, stopCurrent } from '../app.js'
+import { state, go, goBack, toast, esc, requireParentPin, stopCurrent } from '../app.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { hub } from '../lib/servers.js'
 import { icon } from '../lib/icons.js'
@@ -74,7 +74,7 @@ export async function renderAbout(root) {
   `
 
   const $ = s => root.querySelector(s)
-  $('#btnBack').onclick = () => { haptic.tap(); go('settings') }
+  $('#btnBack').onclick = () => { haptic.tap(); goBack('settings') }
 
   const micState = $('#micState')
   const descMap = {

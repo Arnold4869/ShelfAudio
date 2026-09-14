@@ -146,9 +146,38 @@ class ServerHub {
   // ---------------- 门面：与选中源有关的调用 ----------------
   async libraries() { return this.cur.libraries() }
   getLibraryItems(libId, opts) { return this.cur.getLibraryItems(libId, opts) }
-  searchLibrary(libId, q) { return this.cur.searchLibrary(libId, q) }
+  searchLibrary(libraryId, q) { return this.cur.searchLibrary(libraryId, q) }
+
+  /**
+   * 分类搜索（ND 专用；ABS 没有分类 → 回退成"所有结果都在专辑组"）。
+   * 老板 2026-09-14：搜索要分「专辑 / 歌手 / 歌曲」，不要混在一起。
+   */
+  async search3(libraryId, q) {
+    if (this.active === 'nd' && typeof this.nd.search3 === 'function') {
+      return this.nd.search3(libraryId, q)
+    }
+    const items = await this.searchLibrary(libraryId, q).catch(() => [])
+    return { albums: items, artists: [], songs: [] }
+  }
   searchAll(libs, q) { return this.cur.searchAll(libs, q) }
   collections() { return this.cur.collections() }
+
+  /**
+   * 收藏状态查询（ND 的 star / ABS 的收藏夹）。老板 2026-09-14 报的
+   * 「点播放报 x.isStarred is not a function」—— 播放页调了 hub.isStarred，
+   * 但门面忘了透传，只在 clientFor 分派时生效于部分方法。补上。
+   * @param {string} itemId 条目 id（nd: 前缀 = ND 专辑）
+   */
+  isStarred(itemId) {
+    const c = this.clientFor(itemId)
+    if (typeof c.isStarred !== 'function') {
+      // ABS 客户端没有 isStarred —— 用收藏夹列表判断
+      return c.collections().then(cols =>
+        (cols || []).some(col => (col.books || []).some(b => b.id === itemId))
+      ).catch(() => false)
+    }
+    return c.isStarred(itemId)
+  }
 
   /**
    * 继续听：**只看当前激活源**（老板原话「分开显示」+ 右上角切换按钮）。

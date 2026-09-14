@@ -9,8 +9,9 @@
  * 所以这里下过的书，断网也能直接听。
  */
 import { hub as abs, sourceOfId } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
-import { state, go, toast, esc, fmtDur, requireParentPin, updateMini } from '../app.js'
+import { goBack, state, go, toast, esc, fmtDur, requireParentPin, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
+import { t } from '../lib/terms.js'
 import { haptic } from '../lib/haptics.js'
 import {
   cachedBooks, cacheSize, downloadBook, removeBook, clearAll, isCached, fmtBytes,
@@ -44,7 +45,7 @@ export async function renderCache(root) {
 
     <div class="cache-hero">
       <div class="cache-used">${fmtBytes(used)}</div>
-      <div class="cache-used-label">已缓存 ${list.length} 本书</div>
+      <div class="cache-used-label">${t('cached', list.length)}</div>
     </div>
 
     ${list.length ? `
@@ -66,7 +67,7 @@ export async function renderCache(root) {
     ` : `
       <div class="empty" style="margin-top:30px">
         <div class="glyph">${icon('download', 44)}</div>
-        还没有缓存的书<br>
+        ${t('cacheEmpty')}<br>
         <span style="font-size:13px">缓存后在没网的地方也能听</span>
       </div>`}
 
@@ -93,7 +94,7 @@ export async function renderCache(root) {
   `
 
   const $ = s => root.querySelector(s)
-  $('#btnBack').onclick = () => { haptic.tap(); go('settings') }
+  $('#btnBack').onclick = () => { haptic.tap(); goBack('settings') }
 
   // 删除单本
   root.querySelectorAll('[data-del]').forEach(b => {
@@ -187,7 +188,7 @@ async function startDownload(root, item) {
         duration: af.duration || ndCh?.duration || 0,
       }
     })
-    if (!tracks.length) { modal.remove(); haptic.error(); toast('这本书没有音频文件'); return }
+    if (!tracks.length) { modal.remove(); haptic.error(); toast(t('noAudio')); return }
 
     const res = await downloadBook(
       { id: item.id, title: m.title, tracks },

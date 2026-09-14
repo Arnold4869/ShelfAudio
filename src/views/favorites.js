@@ -10,11 +10,12 @@
  * "为什么同一本书出现两次"（实测库里有 2 个都叫「常听」的收藏夹）。
  */
 import { hub, hub as abs } from '../lib/servers.js'   // hub 用于判断当前激活源
-import { state, go, toast, esc, fmtDur, playItem, updateMini } from '../app.js'
+import { state, go, goBack, toast, esc, fmtDur, playItem, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { listLocal, removeLocal } from '../lib/favs.js'
+import { t } from '../lib/terms.js'
 
 export async function renderFavorites(root) {
   root.innerHTML = `<div class="empty"><div class="glyph">${icon('loader', 40, 'spin')}</div>正在读取收藏…</div>`
@@ -70,7 +71,7 @@ export async function renderFavorites(root) {
     </div>
 
     ${total ? groups.map(g => g.books.length ? `
-      <div class="section-h">${esc(g.name)} <small>${g.books.length} 本${g.local ? ' · 只在这台手机' : ''}</small></div>
+      <div class="section-h">${esc(g.name)} <small>${g.books.length} ${t('books')}${g.local ? ' · 只在这台手机' : ''}</small></div>
       <div class="settings-group" style="padding:4px 0">
         ${g.books.map(it => {
           const m = it.media?.metadata || {}
@@ -90,13 +91,13 @@ export async function renderFavorites(root) {
       </div>` : '').join('') : `
       <div class="empty" style="margin-top:40px">
         <div class="glyph">${icon('heart', 44)}</div>
-        还没有收藏的书<br>
+        ${`还没有${t('favorites')}`}<br>
         <span style="font-size:13px">在播放页点心形按钮就能收藏</span>
       </div>`}
   `
 
   const $ = s => root.querySelector(s)
-  $('#btnBack').onclick = () => { haptic.tap(); go('settings') }
+  $('#btnBack').onclick = () => { haptic.tap(); goBack('settings') }
   wireCoverFallback(root)
 
   // 点书 → 播放
@@ -110,7 +111,7 @@ export async function renderFavorites(root) {
       try {
         if (it.media) await playItem(it)
         else await playItem(await abs.getItem(id))
-      } catch (err) { toast(err.message || '打不开这本书') }
+      } catch (err) { toast(err.message || t('openFail')) }
     }
   })
 

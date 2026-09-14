@@ -14,7 +14,7 @@
  */
 import { hub as abs } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
 import { store, CONFIG_KEYS } from '../lib/store.js'
-import { state, go, toast, esc, requireParentPin, updateMini } from '../app.js'
+import { goBack, state, go, toast, esc, requireParentPin, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { haptic, setHaptics, hapticsEnabled } from '../lib/haptics.js'
 import { setNotificationMode } from '../lib/notification-prefs.js'
@@ -143,7 +143,7 @@ export async function renderParent(root) {
   `
 
   const $ = s => root.querySelector(s)
-  $('#btnBack').onclick = () => { haptic.tap(); go('settings') }
+  $('#btnBack').onclick = () => { haptic.tap(); goBack('settings') }
 
   $('#rowScope').onclick = async () => {
     haptic.select()

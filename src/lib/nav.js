@@ -9,8 +9,8 @@ import { icon } from './icons.js'
 import { haptic } from './haptics.js'
 
 const TABS = [
-  { nav: 'kidhome', ic: 'books', label: '书架' },
-  { nav: 'search', ic: 'search', label: '找书' },
+  { nav: 'kidhome', ic: 'books', label: '首页' },
+  { nav: 'search', ic: 'search', label: '搜索' },
   { nav: 'settings', ic: 'cog', label: '设置' },
 ]
 

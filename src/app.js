@@ -74,9 +74,63 @@ export function route(name, fn) { routes[name] = fn }
 
 let currentCleanup = null
 
-export async function go(name, params = {}) {
+// ---------------- 视图历史栈 ----------------
+// 为什么需要（老板 2026-09-14 报「首页进收藏，返回没回首页」）：
+// 之前每个页面的返回键都**硬编码目标**（收藏页写死 go('settings')），
+// 从书架进去也回设置页，从设置进去也回设置页 —— 入口不同、返回不同，写死必错。
+// 现在记录真实的访问顺序，返回 = 回上一页；入口随便变都对。
+const TAB_VIEWS = new Set(['kidhome', 'search', 'settings'])
+let viewStack = []   // [{ name, params }]，栈顶 = 当前页
+
+/** 当前视图名（调试/测试用） */
+export function currentView() {
+  return viewStack.length ? viewStack[viewStack.length - 1].name : ''
+}
+
+/** 历史栈快照（测试断言用，别在业务里依赖） */
+export function viewHistory() {
+  return viewStack.map(v => v.name)
+}
+
+function rememberView(name, params, opts) {
+  if (opts.replace) {
+    // 原地替换（返回时用）：栈深度不变
+    if (viewStack.length) viewStack[viewStack.length - 1] = { name, params }
+    else viewStack = [{ name, params }]
+    return
+  }
+  if (TAB_VIEWS.has(name)) {
+    // 页签是「根」：切页签等于另起一条路径，清空历史
+    viewStack = [{ name, params }]
+    return
+  }
+  const top = viewStack[viewStack.length - 1]
+  if (top && top.name === name) {
+    // 同页换参数（如统计页切日期）不算新页面，否则历史会被灌满
+    viewStack[viewStack.length - 1] = { name, params }
+    return
+  }
+  viewStack.push({ name, params })
+}
+
+/**
+ * 返回上一页。没有历史（或历史只有当前页）时回 fallback。
+ * @param {string} fallback 兜底视图名
+ */
+export async function goBack(fallback = 'kidhome') {
+  if (viewStack.length > 1) {
+    viewStack.pop()
+    const prev = viewStack[viewStack.length - 1]
+    await go(prev.name, prev.params, { replace: true })
+    return
+  }
+  await go(fallback, {}, { replace: true })
+}
+
+export async function go(name, params = {}, opts = {}) {
   const fn = routes[name]
   if (!fn) { console.warn('no route', name); return }
+  rememberView(name, params, opts)
 
   // 卸载上一个视图的监听，否则每次进播放页都会累加 window 事件监听
   if (typeof currentCleanup === 'function') {
@@ -288,7 +342,7 @@ export async function playItem(item, { startTime } = {}) {
   }
   if (!chapters.length) {
     chapters = withUrls.map(t => ({
-      title: t.title || `第 ${t.index} 集`,
+      title: t.title || `第 ${t.index} ${chapterUnit()}`,
       start: t.startOffset || 0,
       end: (t.startOffset || 0) + (t.duration || 0),
     }))
@@ -539,6 +593,13 @@ route('favorites', async (root) => {
   document.body.dataset.view = 'favorites'
   const { renderFavorites } = await import('./views/favorites.js')
   await renderFavorites(root)
+})
+
+// 专辑详情（Navidrome）：点专辑不直接连播，进来看歌曲列表自己选（老板 2026-09-14）
+route('album', async (root, params) => {
+  document.body.dataset.view = 'album'
+  const { renderAlbum } = await import('./views/album.js')
+  await renderAlbum(root, params)
 })
 
 // 历史记录（完整收听历史；首页只露 3 条预览，入口按钮进来）

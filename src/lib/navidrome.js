@@ -233,10 +233,40 @@ export class NavidromeApi {
       start: t.startOffset,
       end: t.startOffset + t.duration,
       duration: t.duration,     // 进度换算要按集时长切片，必须带上
+      _nd: t._nd,               // 歌曲元数据（album 详情页按 songId 定位播放起点用）
     }))
     item.media.duration = acc
     item._ndSongs = songs
     return item
+  }
+
+  /**
+   * 搜索：老板 2026-09-14「分成几个的搜索：专辑、作者、歌曲名或者详情，不要混到一块」。
+   * 返回三组分开的数据（Subsonic search3 一次请求就带三类结果，不用多发）：
+   *   { albums: [书形状], artists: [{id, name}], songs: [{id, albumId, title, artist, duration}] }
+   * 歌曲点进去 → 定位到所在专辑从那首开始播（复用专辑详情页）。
+   */
+  async search3(libraryId, q) {
+    const sr = await this._sub('/rest/search3', {
+      query: q || '',
+      albumCount: 20,
+      artistCount: 15,
+      songCount: 30,
+      ...(libraryId ? { musicFolderId: libraryId } : {}),
+    })
+    const r = sr?.searchResult3 || {}
+    const albums = (r.album || []).map(a => this._albumToItem(a))
+    const artists = (r.artist || []).map(a => ({ id: 'ndart:' + a.id, name: a.name, _ndArtistId: a.id }))
+    const songs = (r.song || []).map(s => ({
+      id: 'nd:' + s.id,
+      songId: s.id,
+      albumId: s.albumId ? 'nd:' + s.albumId : '',
+      album: s.album || '',
+      title: s.title || '',
+      artist: s.artist || '',
+      duration: s.duration || 0,
+    }))
+    return { albums, artists, songs }
   }
 
   async searchLibrary(libraryId, q) {

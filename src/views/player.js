@@ -1,12 +1,13 @@
 /** 播放页：大圆按钮极简 + 章节/倍速/睡眠定时/收藏；内容操作收在右上角三个点菜单里 */
 import { hub as abs, sourceOfId } from '../lib/servers.js'
-import { state, go, toast, esc, fmtTime, updateMini } from '../app.js'
+import { goBack, state, go, toast, esc, fmtTime, updateMini } from '../app.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { haptic } from '../lib/haptics.js'
 import { isCached, downloadBook, removeBook } from '../lib/offline.js'
 import { hasLocal, addLocal, removeLocal } from '../lib/favs.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { icon } from '../lib/icons.js'
+import { t } from '../lib/terms.js'
 
 let sleepTimer = null
 let sleepAt = 0
@@ -36,7 +37,7 @@ export async function renderPlayer(root) {
   const c = state.current
   const p = state.player
   if (!c || !p) {
-    root.innerHTML = `<div class="empty"><div class="glyph">${icon('headphones', 48)}</div>还没有在播放的书<div style="margin-top:18px"><button class="btn" id="toShelf">去书架</button></div></div>`
+    root.innerHTML = `<div class="empty"><div class="glyph">${icon('headphones', 48)}</div>${t('notPlaying')}<div style="margin-top:18px"><button class="btn" id="toShelf">${t('goShelf')}</button></div></div>`
     root.querySelector('#toShelf').onclick = () => go('kidhome')
     return
   }
@@ -174,7 +175,7 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
     window.removeEventListener('mouseup', endDrag)
   }
 
-  $('#btnBack').onclick = () => { haptic.tap(); go('kidhome') }
+  $('#btnBack').onclick = () => { haptic.tap(); goBack('kidhome') }
   $('#btnPlay').onclick = () => { haptic.tap(); p.toggle() }
   $('#btnPrev').onclick = () => { haptic.tap(); p.prevTrack() }
   $('#btnNext').onclick = () => { haptic.tap(); p.nextTrack() }
@@ -472,7 +473,7 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
           : `/api/items/${c.item.id}/file/${af.ino}`,
         duration: af.duration || ndCh[i]?.duration || 0,
       }))
-      if (!tracks.length) { modal.remove(); haptic.error(); toast('这本书没有音频文件'); return }
+      if (!tracks.length) { modal.remove(); haptic.error(); toast(t('noAudio')); return }
 
       const res = await downloadBook(
         { id: c.item.id, title: c.title, tracks },

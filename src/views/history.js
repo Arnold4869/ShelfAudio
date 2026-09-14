@@ -12,13 +12,14 @@
  *  ③ 长按删除：调 ABS 的 remove-from-continue-listening（真删服务端记录），
  *     同时清本地补记，并标记本地隐藏集合，避免用户再次长按前它又冒出来。
  */
-import { state, go, toast, esc, playItem, updateMini, fmtDur } from '../app.js'
-import { hub as abs } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
+import { goBack, state, go, toast, esc, playItem, updateMini, fmtDur } from '../app.js'
+import { hub, hub as abs } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { loadHistory, removeHistoryEntry } from '../lib/history.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 import { requireParentPin } from '../app.js'
+import { t } from '../lib/terms.js'
 import { haptic } from '../lib/haptics.js'
 
 export async function renderHistory(root, params = {}) {
@@ -31,7 +32,7 @@ export async function renderHistory(root, params = {}) {
   `
 
   const $ = s => root.querySelector(s)
-  $('#btnBack').onclick = () => { haptic.tap(); go('kidhome') }
+  $('#btnBack').onclick = () => { haptic.tap(); goBack('kidhome') }
 
   let entries = []
   try {
@@ -46,7 +47,7 @@ export async function renderHistory(root, params = {}) {
       $('#hlist').innerHTML = `<div class="empty" style="margin-top:40px">
         <div class="glyph">${icon('list', 44)}</div>
         还没有收听记录<br>
-        <span style="font-size:13px">开始听一本书，这里就会留下记录</span>
+        <span style="font-size:13px">${t('history')}</span>
       </div>`
       return
     }
@@ -109,7 +110,7 @@ export async function renderHistory(root, params = {}) {
       // 只有「已听完」才显式归零（重听语义）。
       const resumeAt = entry.finished ? 0 : undefined
       await playItem(entry.raw || { id, media: entry.media }, { startTime: resumeAt })
-    } catch (e) { toast(e.message || '打不开这本书') }
+    } catch (e) { toast(e.message || t('openFail')) }
   }
 
   const confirmRemove = async (id) => {
@@ -117,7 +118,7 @@ export async function renderHistory(root, params = {}) {
     modal.className = 'lock'
     modal.innerHTML = `<div class="lock-card">
       <div class="lock-title">从历史记录移除？</div>
-      <div class="lock-sub">这本书的收听进度会被清空，书架里还在。</div>
+      <div class="lock-sub">${hub.active === 'nd' ? '这张专辑的收听进度会被清空，音乐库里还在。' : '这本书的收听进度会被清空，书架里还在。'}</div>
       <div class="lock-actions">
         <button class="btn ghost" id="rmCancel">取消</button>
         <button class="btn danger" id="rmOk">移除</button>

@@ -8,6 +8,7 @@
  */
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { hub } from '../lib/servers.js'
+import { t } from '../lib/terms.js'
 import { state, go, toast, esc, requireParentPin, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
@@ -37,7 +38,7 @@ export async function renderSettings(root, { firstRun = false } = {}) {
       <div class="setting-row" id="rowFav">
         <div class="setting-ic">${icon('heart', 22)}</div>
         <div class="setting-main">
-          <div class="setting-label">收藏的书</div>
+          <div class="setting-label">${t('favorites')}</div>
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>

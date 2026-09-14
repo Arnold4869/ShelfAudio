@@ -11,7 +11,7 @@
  *
  * 数据来自 lib/stats.js（本地记录，不上传服务器）。
  */
-import { state, go, toast, esc, requireParentPin, updateMini } from '../app.js'
+import { goBack, state, go, toast, esc, requireParentPin, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
 import {
@@ -118,7 +118,7 @@ export async function renderStats(root, params = {}) {
   `
 
   const $ = s => root.querySelector(s)
-  $('#btnBack').onclick = () => { haptic.tap(); go('parents') }
+  $('#btnBack').onclick = () => { haptic.tap(); goBack('parents') }
 
   // ---- 日期切换：前 / 后 ±1 天，可连点（老板原话：右边按钮可以连续切换到更往后的日子）----
   // 未来日期允许切换，只是那天还没有记录（页面显示"这天没有收听记录"）。
