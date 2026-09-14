@@ -341,8 +341,11 @@ export async function playItem(item, { startTime } = {}) {
     } catch (_) {}
   }
   if (!chapters.length) {
+    // 章节标题的单位按源取（ND=首，ABS=集）。曾经这里调了一个不存在的
+    // chapterUnit() → ReferenceError → playItem 整个中断（0.7.2 引入，审计抓到）。
+    const unit = (String(item.id || '').startsWith('nd:')) ? '首' : '集'
     chapters = withUrls.map(t => ({
-      title: t.title || `第 ${t.index} ${chapterUnit()}`,
+      title: t.title || `第 ${t.index} ${unit}`,
       start: t.startOffset || 0,
       end: (t.startOffset || 0) + (t.duration || 0),
     }))

@@ -174,6 +174,11 @@ console.log('\n=== 3. 按 id 前缀分派：激活源 ≠ 条目源 也能正确
   const nu = hub.trackUrl('/rest/stream?id=nds1', 'nd:ndalb')
   ok('ABS 音轨 URL 指向 ABS', au.includes(':13378') && au.includes('/api/items/'), au)
   ok('ND 音轨 URL 指向 ND 且带凭据', nu.includes(':4533') && nu.includes('/rest/stream') && /t=[0-9a-f]{32}/.test(nu), nu)
+  // 转码参数（老板 2026-09-14 方案 A）：iOS 原生播放器吃不下 raw FLAC，统一让 ND 转 mp3@320
+  ok('ND 流带服务端转码参数 format=mp3&maxBitRate=320', nu.includes('format=mp3') && nu.includes('maxBitRate=320'), nu)
+  // 下载/缓存走同一 streamUrl，不能漏掉转码参数（否则离线文件也是 raw FLAC → 播不出）
+  const ndl = hub.downloadUrl('nd:ndalb', '/rest/stream?id=nds1')
+  ok('ND 下载直链也带转码参数', ndl.includes('format=mp3') && ndl.includes('maxBitRate=320'), ndl)
 
   // 鉴权头：ABS 要 Bearer，ND 走 URL（空头）
   ok('ABS 带 Bearer 头', !!hub.authHeaders('abs1').Authorization)

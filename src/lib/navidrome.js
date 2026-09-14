@@ -497,12 +497,18 @@ export class NavidromeApi {
     return this.streamUrl(songId)
   }
 
-  /** 流直链（带完整凭据，原生播放器/下载器直接用 URL） */
+  /** 流直链（带完整凭据，原生播放器/下载器直接用 URL）
+   *  转码参数（老板 2026-09-14 拍板方案 A）：iOS 原生播放器对原始 FLAC 流式播放
+   *  解码失败（实锤：CoreMedia 反复 Range 重连 ~30MB 仍无声，ND 日志 transcoding=false
+   *  format=raw），所以统一让 ND 服务端转成 mp3@320kbps 再推。mp3 源转 mp3 等于原样，
+   *  FLAC/opus 等也能兜住。下载（downloadUrl）同走此链路，保证缓存文件可播。
+   */
   streamUrl(songId) {
     const salt = randomSalt()
     const token = md5(this.password + salt)
     const qs = new URLSearchParams({
       id: String(songId || ''), u: this.username, t: token, s: salt, v: API_VER, c: CLIENT,
+      format: 'mp3', maxBitRate: '320',   // 服务端 ffmpeg 转码（ND 自带 transcoding 配置）
     })
     return `${this.baseUrl}/rest/stream?${qs.toString()}`
   }
