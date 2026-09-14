@@ -4,7 +4,8 @@
  * 界面只有一套（2026-09-12 老板要求取消儿童/成人模式分类）：
  *   大卡片书架 + 语音搜索 + 极简大字播放页；家长相关的操控项收在「家长设置」里（要密码）。
  */
-import { abs } from './lib/api.js'
+import { hub, ndId } from './lib/servers.js'
+import { AbsApi } from './lib/api.js'
 import { store, CONFIG_KEYS } from './lib/store.js'
 import { icon } from './lib/icons.js'
 import { fallbackCover } from './lib/cover.js'
@@ -22,7 +23,7 @@ import { recordContinue, removeContinueLocal } from './lib/continue-local.js'
 import { initHaptics } from './lib/haptics.js'
 import { syncToServer } from './lib/favs.js'
 
-window.__abs = abs   // player.js 需要
+window.__abs = hub   // player.js 需要（多源门面，按 sessionId 前缀分派）
 
 // ---------------- 全局状态 ----------------
 export const state = {
@@ -260,20 +261,20 @@ export async function playItem(item, { startTime } = {}) {
   // 进度：优先用传入的，其次 ABS 的上次进度
   let start = startTime
   if (start === undefined) {
-    const prog = await abs.getProgress(item.id)
+    const prog = await hub.getProgress(item.id)
     start = prog?.currentTime || 0
     // 已听完的书从头开始
     if (prog?.isFinished) start = 0
   }
 
-  const { sessionId, tracks, duration } = await abs.startPlayback(item.id, Math.floor(start))
+  const { sessionId, tracks, duration } = await hub.startPlayback(item.id, Math.floor(start))
   if (!tracks.length) { toast('这本书没有音频文件'); return }
 
   // 补上带 token 的直链
   const withUrls = tracks.map(t => ({
     ...t,
-    url: abs.trackUrl(t.contentUrl),
-    headers: abs.authHeaders(),
+    url: hub.trackUrl(t.contentUrl, item.id),
+    headers: hub.authHeaders(item.id),
   }))
 
   // 章节：列表接口不返回 chapters，只有单本详情有。这里先取详情补上，
@@ -281,7 +282,7 @@ export async function playItem(item, { startTime } = {}) {
   let chapters = item.media?.chapters || []
   if (!chapters.length) {
     try {
-      const detail = await abs.getItem(item.id)
+      const detail = await hub.getItem(item.id)
       chapters = detail?.media?.chapters || []
     } catch (_) {}
   }
@@ -301,7 +302,7 @@ export async function playItem(item, { startTime } = {}) {
     chapters,
     duration,
     title,
-    cover: abs.coverUrl(item.id, { width: 400 }),
+    cover: hub.coverUrl(item.id, { width: 400 }),
     author: meta.authorName || meta.author || '',
     startAt: start,
   }
@@ -336,7 +337,7 @@ export async function playItem(item, { startTime } = {}) {
         title,
         artist: meta.authorName || meta.author || '听书',
         album: meta.seriesName || '',
-        artworkUrl: abs.coverUrl(item.id, { width: 400 }),
+        artworkUrl: hub.coverUrl(item.id, { width: 400 }),
       },
     })
     await player.play()
@@ -416,13 +417,26 @@ function updateMini() {
   syncDockHeight()
 }
 
-export { updateMini }
+/**
+ * 切换源后让各页拿到正确的"当前库"。
+ * state.libraryId 是全局单值 —— 切到另一台服务器时必须重置，
+ * 否则书架还拿着上一台的库 id 去请求新服务器（404/空列表）。
+ */
+async function resetForSourceSwitch() {
+  state.libraryId = null
+  state.items = []
+  try {
+    state.libraries = await hub.libraries()
+    state.libraryId = state.libraries[0]?.id || null
+  } catch (_) {
+    state.libraries = []
+  }
+}
+
+export { updateMini, resetForSourceSwitch }
 
 // ---------------- 启动 ----------------
 async function boot() {
-  // 恢复配置
-  const server = await store.get(CONFIG_KEYS.server)
-  const token = await store.get(CONFIG_KEYS.token)
   // 不再分儿童/成人模式（老板要求取消）；state.mode 保留但恒为 'kid'，
   // 老用户本地存的 mode 值不再读取，避免他们被卡在"成人模式"界面。
   state.mode = 'kid'
@@ -438,17 +452,19 @@ async function boot() {
     }
   } catch (_) {}
 
-  if (server && token) {
-    abs.configure(server, token)
+  // 多源恢复（老板 2026-09-14）：ABS / Navidrome 各自独立登录态，
+  // 任何一个登录了就能进主界面；都登录了可以右上角切换。
+  const avail = await hub.restore()
+  if (avail.length) {
     try {
-      const libs = await abs.libraries()
-      state.libraries = libs
-      state.libraryId = libs[0]?.id || null
+      state.libraries = await hub.libraries()
+      state.libraryId = state.libraries[0]?.id || null
+      state.sources = avail
       initPlayer()
       await go('kidhome')
-      // 本机收藏补齐到服务器：用户若在 ABS 后台补了 update 权限，
+      // 本机收藏补齐到 ABS 服务器：用户若在 ABS 后台补了 update 权限，
       // 之前只能存本机的收藏会自动同步过去（失败就算了，不打扰用户）
-      syncToServer(abs).catch(() => {})
+      syncToServer(hub.abs).catch(() => {})
     } catch (e) {
       console.warn('恢复会话失败，回登录页', e)
       await go('login')

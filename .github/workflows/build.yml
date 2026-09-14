@@ -58,6 +58,15 @@ jobs:
       - name: Listening-stats logic
         run: node scripts/test-stats.mjs
 
+      - name: MD5 (Subsonic auth)
+        run: node scripts/test-md5.mjs
+
+      - name: Navidrome adapter
+        run: node scripts/test-navidrome.mjs
+
+      - name: Multi-source hub (ABS/ND isolation)
+        run: node scripts/test-multisource.mjs
+
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs
       - name: 播放键状态一致性
@@ -184,6 +193,15 @@ jobs:
 
       - name: Listening-stats logic
         run: node scripts/test-stats.mjs
+
+      - name: MD5 (Subsonic auth)
+        run: node scripts/test-md5.mjs
+
+      - name: Navidrome adapter
+        run: node scripts/test-navidrome.mjs
+
+      - name: Multi-source hub (ABS/ND isolation)
+        run: node scripts/test-multisource.mjs
 
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs

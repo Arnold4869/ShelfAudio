@@ -7,7 +7,7 @@
  *
  * 产出条目：{ id, media, pct, finished, raw }，raw 保留原 item 供 playItem 用。
  */
-import { abs } from './api.js'
+import { hub as abs } from './servers.js'
 import { listContinueLocal, removeContinueLocal } from './continue-local.js'
 
 export async function loadHistory() {

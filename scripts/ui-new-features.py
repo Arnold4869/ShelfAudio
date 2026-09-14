@@ -303,14 +303,21 @@ with sync_playwright() as pw:
     pg.goto('http://127.0.0.1:8899/index.html')
     pg.wait_for_timeout(2000)
     vals = pg.evaluate("""({
-      server: document.querySelector('#fServer')?.value,
-      user: document.querySelector('#fUser')?.value,
-      pass: document.querySelector('#fPass')?.value,
+      server: document.querySelector('#aServer')?.value,
+      user: document.querySelector('#aUser')?.value,
+      pass: document.querySelector('#aPass')?.value,
+      nServer: document.querySelector('#nServer')?.value,
+      nUser: document.querySelector('#nUser')?.value,
+      nPass: document.querySelector('#nPass')?.value,
     })""")
-    ok("服务器地址框空白（不回填上次的值）", vals.get('server') == '', f"value={vals.get('server')!r}")
-    ok("用户名框空白", vals.get('user') == '', f"value={vals.get('user')!r}")
-    ok("密码框空白", vals.get('pass') == '', f"value={vals.get('pass')!r}")
-    ph = pg.evaluate("document.querySelector('#fServer')?.placeholder")
+    # 2026-09-14：登录页改成两台服务器卡片，输入框 id 前缀 a=ABS / n=Navidrome
+    ok("ABS 服务器地址框空白（不回填上次的值）", vals.get('server') == '', f"value={vals.get('server')!r}")
+    ok("ABS 用户名框空白", vals.get('user') == '', f"value={vals.get('user')!r}")
+    ok("ABS 密码框空白", vals.get('pass') == '', f"value={vals.get('pass')!r}")
+    ok("ND 服务器地址框空白", vals.get('nServer') == '', f"value={vals.get('nServer')!r}")
+    ok("ND 用户名框空白", vals.get('nUser') == '', f"value={vals.get('nUser')!r}")
+    ok("ND 密码框空白", vals.get('nPass') == '', f"value={vals.get('nPass')!r}")
+    ph = pg.evaluate("document.querySelector('#aServer')?.placeholder")
     ok("placeholder 不再是示例地址", ph != 'http://127.0.0.1:18080', f"placeholder={ph!r}")
     ok("登录页没有底部提示行", pg.evaluate("document.querySelectorAll('.login-wrap .hint').length") == 0)
     ok("登录页无 JS 报错", not errs2, str(errs2[:2]))

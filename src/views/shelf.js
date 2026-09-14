@@ -1,6 +1,6 @@
 /** 书架：大卡片网格 + 继续听（只有一种模式，见 2026-09-12 老板要求取消模式分类） */
-import { abs } from '../lib/api.js'
-import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini } from '../app.js'
+import { hub as abs } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
+import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini, resetForSourceSwitch } from '../app.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { listContinueLocal } from '../lib/continue-local.js'
@@ -8,6 +8,8 @@ import { voiceHidden, uiPrefsReady } from '../lib/ui-prefs.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 import { haptic } from '../lib/haptics.js'
+import { sourceSwitchHTML, wireSourceSwitch } from '../lib/source-switch.js'
+import { hub } from '../lib/servers.js'
 
 let cache = { items: [], at: 0, libraryId: null }
 
@@ -28,6 +30,9 @@ export async function renderShelf(root) {
     return
   }
 
+  // 缓存键带源名：切到另一台服务器时不能吃到上一台的缓存
+  const cacheKey = hub.active + ':' + state.libraryId
+
   let items = []
   try {
     // 缓存策略（2026-09-13 性能审计后重定）：
@@ -36,12 +41,12 @@ export async function renderShelf(root) {
     // 方案：列表本体缓存 60 秒（书单很少变），但进度显示一律以随后的
     // me() 实时结果为准（progressMap 每次都新拉，22ms 级），两全。
     // 长按删除等改数据的操作已自带 cache.at = 0 强制失效。
-    if (cache.libraryId === state.libraryId && Date.now() - cache.at < 60000 && cache.items.length) {
+    if (cache.libraryId === cacheKey && Date.now() - cache.at < 60000 && cache.items.length) {
       items = cache.items
     } else {
       const d = await abs.getLibraryItems(state.libraryId, { limit: 200, sort: 'media.metadata.title' })
       items = d?.results || []
-      cache = { items, at: Date.now(), libraryId: state.libraryId }
+      cache = { items, at: Date.now(), libraryId: cacheKey }
     }
   } catch (e) {
     root.innerHTML = `<div class="empty"><div class="glyph">${icon('warning', 44)}</div>${esc(e.message)}</div>`
@@ -90,7 +95,7 @@ export async function renderShelf(root) {
       .map(mp => mp.libraryItemId || mp.mediaItemId)
       .filter(Boolean)
   )
-  // ⚠️ 审计发现（2026-09-13，真实服务器实测）：ABS 的 /api/me/items-in-progress
+  //  审计发现（2026-09-13，真实服务器实测）：ABS 的 /api/me/items-in-progress
   // **会返回已标记 hideFromContinueListening 的书**（实测「示例故事乙1」「示例科普」
   // 两本 hide=true 却仍在列表里）。所以「长按删除」看着没生效 —— 服务端确实记了隐藏，
   // 但列表接口照样把它吐回来。必须客户端自己按 mediaProgress 过滤。
@@ -124,9 +129,11 @@ export async function renderShelf(root) {
   }
 
   // 设置入口只留底栏那个（右上角不再放齿轮，避免两个入口重复）
-  // 页头：标题 + 收藏入口（老板要求收藏在首页有入口）
+  // 页头：标题 + 右上角服务器切换（只有两台都登录时才出现）
+  const srcLabel = hub.multi ? ` <small>· ${hub.active === 'nd' ? 'Navidrome' : 'Audiobookshelf'}</small>` : ''
   const head = `<div class="page-head">
-         <div class="page-title">我的书架</div>
+         <div class="page-title">我的书架${srcLabel}</div>
+         ${sourceSwitchHTML('kidhome')}
        </div>`
 
   // 两个入口按钮并排等大（老板 2026-09-13）：「历史记录」「我的收藏」
@@ -142,7 +149,7 @@ export async function renderShelf(root) {
   // 无封面的书只显示占位图的一小截，带图标的又不一样，观感很乱。
   // 沿用 App 里通用的 .list-item 列表样式（与收藏/缓存/搜索结果一致），
   // 高度统一、信息一行一列，不依赖封面比例。
-  // ⚠️ 首页不再放历史记录预览列表（老板 2026-09-13：「首页现在有两个历史记录，
+  //  首页不再放历史记录预览列表（老板 2026-09-13：「首页现在有两个历史记录，
   // 把第二个那个占用大的历史记录去掉」）。原来这里是「入口按钮 + 小节标题 + 3 条预览」，
   // 等于同一件事出现两次，而且预览列表很占竖向空间。现在只留顶部那两枚入口按钮，
   // 点「历史记录」进完整清单页。
@@ -181,6 +188,15 @@ export async function renderShelf(root) {
     (voiceHidden() ? '' : `<button class="voice-fab" data-voice="1" aria-label="语音搜索">${icon('mic', 28)}</button>`)
     + kidTabsHTML('kidhome'))
   wireKidTabs(root, { go, requireParentPin })
+  // 服务器切换（只有两台都登录时才有这个按钮）。切换后必须重置 libraryId/items，
+  // 否则书架还拿上一台的库 id 去请求新服务器（表现为切过去一片空白 —— 实测踩到）。
+  wireSourceSwitch(root, {
+    go,
+    rerender: async () => {
+      await resetForSourceSwitch()
+      await renderShelf(root)
+    },
+  })
 
   // 收藏入口（首页直达）
   root.querySelector('#favEntryCard')?.addEventListener('click', () => { haptic.tap(); go('favorites') })
@@ -206,7 +222,7 @@ export async function renderShelf(root) {
       const it = state.items.find(x => x.id === id) || inProgress.find(x => x.id === id)
       if (!it) return
       // 有进度就接着听（卡片上有"听 N%"徽标，从头播会丢进度）。
-      // ⚠️ 阈值不能是 >5 秒：孩子的书单集很短、随手点开就退出，
+      //  阈值不能是 >5 秒：孩子的书单集很短、随手点开就退出，
       // 听 2~5 秒也是真实进度，归零会"重听一遍"（老板 2026-09-13）。
       const prog = progressMap[it.id]
       const resumeAt = (prog && !prog.isFinished) ? undefined : 0

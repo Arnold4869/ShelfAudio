@@ -569,6 +569,58 @@ body[data-tabs="0"] .mini {
 .setting-value { font-size: 13px; color: var(--text-dim); margin-top: 3px; }
 .setting-arrow { color: var(--text-dim); font-size: 18px; }
 
+/* ---------- 服务器切换器（右上角，两源都登录才出现） ---------- */
+/* 不用 absolute：page-head 是 flex 容器，绝对定位会压在标题上（实测 overlapsTitle=true）。
+   直接作为 flex 子项排在标题右侧，标题 flex:1 会自动让位。 */
+.src-btn {
+  flex: 0 0 auto; height: 44px; padding: 0 16px;
+  display: inline-flex; align-items: center; gap: 7px;
+  border: none; border-radius: 999px;
+  background: var(--card); color: var(--text);
+  font-size: 13.5px; font-weight: 700; cursor: pointer;
+}
+.src-btn:active { background: var(--card-2); }
+.src-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px;
+}
+.src-dot.src-abs { background: var(--accent); }
+.src-dot.src-nd { background: var(--accent-2); }
+.src-menu {
+  position: fixed; z-index: 320; width: 200px;
+  background: var(--bg-2); border-radius: var(--radius-sm);
+  box-shadow: 0 10px 34px rgba(0,0,0,.5);
+  padding: 6px; overflow: hidden;
+}
+.src-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 13px 12px; border: none; background: none; color: var(--text);
+  font-size: 15px; cursor: pointer; border-radius: 10px; text-align: left;
+}
+.src-item:active { background: rgba(255,255,255,.07); }
+.src-item.on { background: rgba(124,92,255,.16); font-weight: 700; }
+.src-label { flex: 1; }
+.src-check { color: var(--accent); display: grid; place-items: center; }
+
+/* ---------- 登录页：两台服务器卡片 ---------- */
+.srv-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px;
+}
+.srv-name { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 800; }
+.srv-tag {
+  font-size: 11.5px; color: var(--text-dim);
+  border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 3px 10px;
+}
+.srv-ok { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--ok); font-weight: 700; }
+.srv-connected {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.srv-url {
+  flex: 1; min-width: 0; font-size: 13px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.login-card + .login-card { margin-top: 14px; }
+
 /* ---------- 成人模式列表 ---------- */
 .list-item {
   display: flex; gap: 13px; align-items: center;

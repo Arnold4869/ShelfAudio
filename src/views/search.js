@@ -1,5 +1,5 @@
 /** 搜索页：文字 + 语音（语音走同一入口，识别结果可当指令也可当关键词） */
-import { abs } from '../lib/api.js'
+import { hub as abs } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
 import { voiceHidden, uiPrefsReady } from '../lib/ui-prefs.js'
 import { state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini } from '../app.js'
 import { voiceSupported } from '../lib/voice.js'

@@ -9,7 +9,7 @@
  * 所以这里按收藏夹分组显示，而不是合并成一个平面列表 —— 否则用户会困惑
  * "为什么同一本书出现两次"（实测库里有 2 个都叫「常听」的收藏夹）。
  */
-import { abs } from '../lib/api.js'
+import { hub, hub as abs } from '../lib/servers.js'   // hub 用于判断当前激活源
 import { state, go, toast, esc, fmtDur, playItem, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
@@ -25,7 +25,9 @@ export async function renderFavorites(root) {
   } catch (_) { }
   // 本机收藏：服务器账号没有 update 权限时收藏会存在这里（见 lib/favs.js），
   // 不显示出来的话用户会以为收藏丢了。
-  const localList = await listLocal()
+  // ⚠️ 多源（2026-09-14）：本机收藏只属于 ABS 链路，ND 激活时不展示
+  //（ND 的收藏是 star，直接从服务器拉，见 collections()）。
+  const localList = hub.active === 'nd' ? [] : await listLocal()
 
   // 每个收藏夹补上完整书籍信息（列表返回的是精简对象，缺 media/duration）
   const groups = []

@@ -8,7 +8,7 @@
  * 与播放的关系：播放时 lib/offline.js 会自动优先用本地文件，
  * 所以这里下过的书，断网也能直接听。
  */
-import { abs } from '../lib/api.js'
+import { hub as abs, sourceOfId } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
 import { state, go, toast, esc, fmtDur, requireParentPin, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
@@ -169,15 +169,24 @@ async function startDownload(root, item) {
   modal.querySelector('#dlCancel').onclick = () => { closed = true; modal.remove() }
 
   try {
-    // tracks 要从 /play 拿（列表接口没有音轨）；这里用现有接口顺手取
+    // tracks 从详情接口取（列表没音轨）。
+    // ABS：audioFiles[].ino → /api/items/<id>/file/<ino>
+    // ND：getItem 已把每首歌组装成 audioFiles（ino=songId），contentUrl 为 /rest/stream?id=<songId>
     const detail = await abs.getItem(item.id)
     const audioFiles = detail?.media?.audioFiles || []
-    const tracks = audioFiles.map((af, i) => ({
-      index: i + 1,
-      title: af.metaTags?.title || af.title || `第${i + 1}集`,
-      contentUrl: `/api/items/${item.id}/file/${af.ino}`,
-      duration: af.duration || 0,
-    }))
+    const ndTracks = detail?.media?.chapters || []      // ND 走这里（带 startOffset/duration）
+    const tracks = audioFiles.map((af, i) => {
+      const ndCh = ndTracks[i]
+      return {
+        index: i + 1,
+        title: af.metaTags?.title || af.title || ndCh?.title || `第${i + 1}集`,
+        // ND 的 audioFiles[].ino 就是 songId → 拼 stream 直链；ABS 用 file/<ino>
+        contentUrl: sourceOfId(item.id) === 'nd'
+          ? `/rest/stream?id=${encodeURIComponent(af.ino)}`
+          : `/api/items/${item.id}/file/${af.ino}`,
+        duration: af.duration || ndCh?.duration || 0,
+      }
+    })
     if (!tracks.length) { modal.remove(); haptic.error(); toast('这本书没有音频文件'); return }
 
     const res = await downloadBook(

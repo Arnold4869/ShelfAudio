@@ -1,5 +1,5 @@
 /** 播放页：大圆按钮极简 + 章节/倍速/睡眠定时/收藏；内容操作收在右上角三个点菜单里 */
-import { abs } from '../lib/api.js'
+import { hub as abs, sourceOfId } from '../lib/servers.js'
 import { state, go, toast, esc, fmtTime, updateMini } from '../app.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { haptic } from '../lib/haptics.js'
@@ -55,11 +55,16 @@ export async function renderPlayer(root) {
   // 现在页面先渲染，这三个状态查完再补（paintFav / 菜单文案是动态的，不依赖时序）。
   let favState = { on: false, local: false, collections: [], itemId: c.item.id }
   let cachedNow = false
+  const isNdItem = sourceOfId(c.item.id) === 'nd'
   Promise.all([
-    abs.collections().then(cols => {
-      favState.collections = cols || []
-      if ((cols || []).some(col => (col.books || []).some(b => b.id === c.item.id))) favState.on = true
-    }).catch(() => {}),
+    // ND 的收藏是 star（无收藏夹），ABS 走 collections
+    (isNdItem
+      ? abs.isStarred(c.item.id).then(yes => { if (yes) favState.on = true })
+      : abs.collections().then(cols => {
+          favState.collections = cols || []
+          if ((cols || []).some(col => (col.books || []).some(b => b.id === c.item.id))) favState.on = true
+        })
+    ).catch(() => {}),
     hasLocal(c.item.id).then(yes => {
       if (yes && !favState.on) { favState.on = true; favState.local = true }
     }).catch(() => {}),
@@ -176,7 +181,7 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
   $('#btnR15').onclick = () => { haptic.tap(); p.seek(Math.max(0, p.position().currentTime - 15)) }
   $('#btnF15').onclick = () => { haptic.tap(); p.seek(p.position().currentTime + 15) }
   $('#btnFavTop').onclick = () => { haptic.tap(); toggleFav() }
-  // ⚠️ 不要再引用已从模板里删掉的元素：$('#x') 返回 null，给 null 赋 onclick 会抛
+  //  不要再引用已从模板里删掉的元素：$('#x') 返回 null，给 null 赋 onclick 会抛
   // TypeError，**把它之后的所有初始化全部中断**（三个点菜单就是这么失效的）。
 
   // 拖动进度条
@@ -316,6 +321,26 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
    */
   async function toggleFav() {
     try {
+      // ---- ND（2026-09-14）：star/unstar，album 级，没有收藏夹概念 ----
+      if (sourceOfId(c.item.id) === 'nd') {
+        const starred = await abs.isStarred(c.item.id)
+        if (starred) {
+          await abs.removeFromCollection('nd:starred', c.item.id)
+          favState.on = false
+          haptic.success()
+          toast('已取消收藏')
+          paintFav()
+        } else {
+          await abs.addToCollection('nd:starred', c.item.id)
+          favState.on = true
+          haptic.success()
+          toast('已收藏')
+          paintFav()
+        }
+        return
+      }
+
+      // ---- ABS：收藏夹链路（原逻辑）----
       let cols = favState.collections
       if (!cols.length) {
         cols = await abs.collections()
@@ -434,13 +459,18 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
     try {
       // 音轨要从详情接口按 ino 拼直链 ——
       // /play 给的是 HLS 播放列表（/hls/xxx/output.m3u8），下它拿不到音频。
+      // ND（2026-09-14）：详情里 audioFiles[].ino = songId，直链是 /rest/stream?id=<songId>。
       const detail = await abs.getItem(c.item.id)
       const files = detail?.media?.audioFiles || []
+      const ndCh = detail?.media?.chapters || []
+      const isNd = sourceOfId(c.item.id) === 'nd'
       const tracks = files.map((af, i) => ({
         index: i + 1,
-        title: (c.chapters?.[i]?.title) || `第${i + 1}集`,
-        contentUrl: `/api/items/${c.item.id}/file/${af.ino}`,
-        duration: af.duration || 0,
+        title: (c.chapters?.[i]?.title) || ndCh[i]?.title || `第${i + 1}集`,
+        contentUrl: isNd
+          ? `/rest/stream?id=${encodeURIComponent(af.ino)}`
+          : `/api/items/${c.item.id}/file/${af.ino}`,
+        duration: af.duration || ndCh[i]?.duration || 0,
       }))
       if (!tracks.length) { modal.remove(); haptic.error(); toast('这本书没有音频文件'); return }
 
@@ -483,7 +513,7 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
     </div>`
     document.body.appendChild(modal)
 
-    // ⚠️ chList（内容层）必须独立于 .sheet-body（滚动层）：
+    //  chList（内容层）必须独立于 .sheet-body（滚动层）：
     // 虚拟渲染要在一个「总高 536×行高」的内容容器里绝对定位行，
     // 滚动监听/scrollTop 都属于外面的滚动层。合并成一层会导致
     // list.parentElement 变成不滚动的 .sheet-card，滚动补画永不触发。

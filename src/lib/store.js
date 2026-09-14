@@ -66,6 +66,10 @@ export const CONFIG_KEYS = {
   // ---- 老板 2026-09-13 ----
   quietNotification: 'quietNotification', // 静默「普通通知」'1'|'0'（锁屏控制保留）
   volumeCap: 'volumeCap',                 // 全局音量上限 0.1~1（'1'=不限制）
+  ndServer: 'ndServer',                   // Navidrome 服务器地址
+  ndUser: 'ndUser',                       // ND 用户名
+  ndPassword: 'ndPassword',               // ND 密码：Subsonic 协议每次请求要算 md5(password+salt)，必须存
+  activeSource: 'activeSource',           // 当前激活源 'abs' | 'nd'（两源都登录时的右上角切换）
   timeLimitEnabled: 'timeLimitEnabled',   // [旧] 使用时间管控总开关（兼容读，不再写入）
   timeWindowEnabled: 'timeWindowEnabled', // 时段限制开关 '1'|'0'（老板 2026-09-14：两个限制各自独立）
   dailyLimitEnabled: 'dailyLimitEnabled', // 每日时长限制开关 '1'|'0'

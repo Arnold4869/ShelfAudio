@@ -17,7 +17,7 @@
  */
 import { Filesystem, Directory } from '@capacitor/filesystem'
 import { store, CONFIG_KEYS } from './store.js'
-import { abs } from './api.js'
+import { hub } from './servers.js'
 
 const INDEX_KEY = 'offlineIndex'
 const ROOT = 'audio'          // 相对 Directory.Data 的根目录
@@ -159,10 +159,12 @@ export async function downloadBook(book, onProgress = () => {}) {
 
     try {
       const res = await Filesystem.downloadFile({
-        url: abs.trackUrl(t.contentUrl),
+        // 多源（2026-09-14）：按书 id 分派到对应服务器拼直链 ——
+        // ABS 是 /api/items/<id>/file/<ino> + Bearer；ND 是 /rest/stream?id=<songId> + URL 凭据。
+        url: hub.downloadUrl(book.id, t.contentUrl, t.title),
         path,
         directory: Directory.Data,
-        headers: abs.authHeaders(),   // 用 Bearer header，别把 token 写进 URL
+        headers: hub.authHeaders(book.id),   // ABS 用 Bearer header；ND 返回空（凭据在 URL）
         connectTimeout: 30000,
         readTimeout: 120000,
       })

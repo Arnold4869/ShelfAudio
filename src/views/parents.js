@@ -12,7 +12,7 @@
  *     就可以限制 app 不能使用」）
  *  4. 语音搜索按钮显隐从普通设置页挪到家长设置（孩子自己就能把语音开回来不合理）
  */
-import { abs } from '../lib/api.js'
+import { hub as abs } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { state, go, toast, esc, requireParentPin, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'

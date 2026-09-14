@@ -13,7 +13,7 @@
  *     同时清本地补记，并标记本地隐藏集合，避免用户再次长按前它又冒出来。
  */
 import { state, go, toast, esc, playItem, updateMini, fmtDur } from '../app.js'
-import { abs } from '../lib/api.js'
+import { hub as abs } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { loadHistory, removeHistoryEntry } from '../lib/history.js'
 import { icon } from '../lib/icons.js'

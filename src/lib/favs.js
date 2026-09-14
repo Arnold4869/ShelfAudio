@@ -52,12 +52,14 @@ export async function localIdSet() {
 }
 
 /**
- * 把本机收藏同步到服务器（在能写的时候调用）。
+ * 把本机收藏同步到 ABS 服务器（在能写的时候调用）。
  * 目的是：用户去 ABS 后台给了 update 权限之后，之前"存在本机"的收藏能自动补齐。
+ * ⚠️ 多源（2026-09-14）：只补记 ABS 的条目（本机收藏来自 ABS 播放页）；
+ * ND 的收藏走 star，另一条链路。
  * @returns {number} 成功同步的条数
  */
 export async function syncToServer(abs) {
-  const list = await listLocal()
+  const list = (await listLocal()).filter(x => !String(x.id || '').startsWith('nd:'))
   if (!list.length) return 0
   let ok = 0
   let cols = []
