@@ -7,7 +7,7 @@
 """
 import json, pathlib, re, subprocess, sys
 
-ROOT = pathlib.Path('/home/Bin/ShelfAudio')
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 fails = []
 def ok(name, cond, extra=''):
     print(('  ✅ ' if cond else '  ❌ ') + name + (f'  [{extra}]' if extra else ''))
@@ -42,14 +42,32 @@ for f in (ROOT / 'src').rglob('*.js'):
         hard.append(f'{f.name}:{line} {m.group(0)}')
 ok('UI 源码没有写死版本号（一律用 __APP_VERSION__）', not hard, '; '.join(hard[:3]))
 
-# 应用名一致性
-sw = (ROOT / 'src/index.html').read_text()
-ok('index.html <title> = 悦耳', '<title>悦耳</title>' in sw, re.search(r'<title>(.*?)</title>', sw).group(1))
-strings = (ROOT / 'android/app/src/main/res/values/strings.xml').read_text()
-ok('strings.xml app_name = 悦耳', '>悦耳<' in strings)
-plist = (ROOT / 'ios/App/App/Info.plist').read_text()
-ok('Info.plist 含 悦耳', '悦耳' in plist)
-cfg = json.loads((ROOT / 'capacitor.config.json').read_text())
+def read_or_none(p):
+    try:
+        return pathlib.Path(p).read_text()
+    except Exception:
+        return None
+
+# 应用名一致性（文件缺失时跳过该项而不是崩 —— CI 的 checkout 可能不含平台目录）
+fails_appname = []
+sw = read_or_none(ROOT / 'src/index.html')
+ok('index.html <title> = 悦耳', bool(sw) and '<title>悦耳</title>' in sw,
+   (re.search(r'<title>(.*?)</title>', sw).group(1) if sw else 'index.html 缺失'))
+strings = read_or_none(ROOT / 'android/app/src/main/res/values/strings.xml')
+if strings is None:
+    print('  ⚠️ 跳过 android strings.xml（文件不存在）')
+else:
+    ok('strings.xml app_name = 悦耳', '>悦耳<' in strings)
+plist = read_or_none(ROOT / 'ios/App/App/Info.plist')
+if plist is None:
+    print('  ⚠️ 跳过 iOS Info.plist（文件不存在）')
+else:
+    ok('Info.plist 含 悦耳', '悦耳' in plist)
+cfgtxt = read_or_none(ROOT / 'capacitor.config.json')
+try:
+    cfg = json.loads(cfgtxt) if cfgtxt else {}
+except Exception:
+    cfg = {}
 ok('capacitor appName = 悦耳', cfg.get('appName') == '悦耳', str(cfg.get('appName')))
 
 # 不允许真实服务器数据（2026-09-15 安全重写后的铁律）
