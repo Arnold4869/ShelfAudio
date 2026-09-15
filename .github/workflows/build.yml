@@ -84,6 +84,10 @@ jobs:
       - name: Build web assets
         run: npm run build
 
+      - name: 假按钮回归（进入失败必须提示，不能静默）
+        # 必须在 build 之后（用的是 dist 产物）；无 chromium 的 runner 自动跳过
+        run: python3 scripts/test-fake-button.py
+
       - name: Sync Capacitor android
         run: npx cap sync android
 
@@ -225,6 +229,9 @@ jobs:
 
       - name: Build web assets
         run: npm run build
+
+      - name: 假按钮回归（进入失败必须提示，不能静默）
+        run: python3 scripts/test-fake-button.py
 
       - name: Sync Capacitor iOS
         # Capacitor 8 用 Swift Package Manager（无 Podfile）

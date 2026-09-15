@@ -122,15 +122,30 @@ export async function renderLogin(root) {
     }
   })
 
-  /** 登录成功后统一收尾：拉库、落状态、进主界面 */
+  /**
+   * 登录成功后统一收尾：拉库、落状态、进主界面。
+   * 返回空串 = 成功；返回错误文案 = 失败（已 toast，调用方留在当前页）。
+   * 为什么要有返回值（老板 2026-09-15「假按钮」）：之前这里没有任何错误处理，
+   * hub.libraries() 一失败（断网/token 失效/反代挂了），异常被静默吞掉 ——
+   * 点「进入悦耳」零请求零提示零跳转，按钮像坏的一样。现在失败必须说人话。
+   */
   const afterLogin = async (who) => {
-    state.libraries = await hub.libraries()
-    state.libraryId = state.libraries[0]?.id || null
+    let libs
+    try {
+      libs = await hub.libraries()
+    } catch (e) {
+      const msg = e?.message || '连不上服务器，检查网络后重试'
+      toast(msg)
+      return msg
+    }
+    state.libraries = libs
+    state.libraryId = libs[0]?.id || null
     state.sources = hub.available
     state.kidPin = (await store.get(CONFIG_KEYS.kidPin, '')) || ''
     initPlayer()
-    toast(who)
+    if (who) toast(who)
     await go('kidhome')
+    return ''
   }
 
   // ---- ABS 登录 ----
@@ -190,9 +205,23 @@ export async function renderLogin(root) {
   // ---- 直接进入 ----
   const goApp = $('#gotoApp')
   if (goApp) goApp.onclick = async () => {
-    const avail = await hub.restore()
-    if (!avail.length) { toast('还没有连上任何服务器'); return }
-    await afterLogin('')
+    // 防连点：进主界面要跑几个网络请求，期间重复点会并发跑多次 afterLogin
+    if (goApp.disabled) return
+    haptic.tap()
+    goApp.disabled = true
+    const label = goApp.textContent
+    goApp.textContent = '进入中…'
+    try {
+      const avail = await hub.restore()
+      if (!avail.length) { toast('还没有连上任何服务器'); return }
+      await afterLogin('')       // 失败时里面已 toast，这里留在登录页
+    } catch (e) {
+      // 兜底：afterLogin 之外的任何意外也要说出来，绝不静默
+      toast(e?.message || '进入失败，检查网络后重试')
+    } finally {
+      goApp.disabled = false
+      goApp.textContent = label
+    }
   }
 
   // 「未设密码 + 管理账号」首次引导家长密码的逻辑保留（放 afterLogin 里更合适，

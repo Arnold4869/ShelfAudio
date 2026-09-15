@@ -524,8 +524,14 @@ async function boot() {
       // 之前只能存本机的收藏会自动同步过去（失败就算了，不打扰用户）
       syncToServer(hub.abs).catch(() => {})
     } catch (e) {
+      // 拉库失败 ≠ 没登录（老板 2026-09-15「假按钮」根因之一）：本机明明存着
+      // 两个绿✓，却因为一次网络失败被静默丢回登录页，用户完全不知道为什么。
+      // 现在必须说出来：是「服务器连不上」，不是「要重新登录」。
       console.warn('恢复会话失败，回登录页', e)
       await go('login')
+      // 文案直接用 e.message（friendlyNetError 已经是人话，再加前缀会变成
+      // 「服务器连不上：连不上服务器：…」这种叠字，实测踩到）
+      setTimeout(() => toast((e?.message || '网络异常') + '（登录信息还在，恢复网络后点「进入悦耳」）'), 400)
     }
   } else {
     await go('login')

@@ -44,6 +44,7 @@ async function rawRequest(url, { method = 'GET', headers = {}, timeout = DEFAULT
 function friendlyNetError(e) {
   const msg = String(e?.message || e)
   if (/timeout|timed out|abort/i.test(msg)) return new Error('连接超时：检查服务器地址、网络和反向代理是否正常')
+  if (/failed to fetch|load failed|networkerror/i.test(msg)) return new Error('连不上服务器：检查手机网络（VPN/代理）或稍后再试')
   if (/cleartext|not permitted/i.test(msg)) return new Error('这台设备不允许明文 HTTP，请用 https 地址')
   if (/unable to resolve host|nodename|unknown host/i.test(msg)) return new Error('域名解析失败：检查地址是否写错')
   if (/connect|refused|unreachable|network/i.test(msg)) return new Error('连不上服务器：' + msg)
