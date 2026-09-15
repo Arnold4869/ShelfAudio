@@ -1,6 +1,6 @@
-# ShelfAudio（听书）
+# ShelfAudio（悦耳）
 
-儿童友好的 Audiobookshelf 有声书播放器，iOS + Android 一套代码。
+ABS 有声书 + Navidrome 音乐双源播放器，iOS + Android 一套代码。
 
 ## 功能
 

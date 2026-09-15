@@ -376,11 +376,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.v.outputs.tag }}
-          name: 听书 ${{ steps.v.outputs.version }}
+          name: 悦耳 ${{ steps.v.outputs.version }}
           body: |
-            ## 听书 ${{ steps.v.outputs.version }}
+            ## 悦耳 ${{ steps.v.outputs.version }}
 
-            儿童友好的 Audiobookshelf 有声书播放器。
+            ABS 有声书 + Navidrome 音乐双源播放器，iOS + Android 一套代码。
 
             ### 下载
             | 平台 | 文件 | 安装方式 |

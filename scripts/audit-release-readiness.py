@@ -49,7 +49,14 @@ def read_or_none(p):
         return None
 
 # 应用名一致性（文件缺失时跳过该项而不是崩 —— CI 的 checkout 可能不含平台目录）
+# 检查面：App 内 + 平台配置 + CI 发布文案 + README（0.9.0 曾漏掉 workflow 里的「听书」）
 fails_appname = []
+for rel in ('.github/workflows/build.yml', 'README.md'):
+    t = read_or_none(ROOT / rel)
+    if t is None:
+        continue
+    if '听书' in t:
+        fails_appname.append(f'{rel}: 残留旧名「听书」')
 sw = read_or_none(ROOT / 'src/index.html')
 ok('index.html <title> = 悦耳', bool(sw) and '<title>悦耳</title>' in sw,
    (re.search(r'<title>(.*?)</title>', sw).group(1) if sw else 'index.html 缺失'))
@@ -69,6 +76,10 @@ try:
 except Exception:
     cfg = {}
 ok('capacitor appName = 悦耳', cfg.get('appName') == '悦耳', str(cfg.get('appName')))
+if fails_appname:
+    ok('CI/README 无旧名「听书」残留', False, '; '.join(fails_appname))
+else:
+    ok('CI/README 无旧名「听书」残留', True)
 
 # 不允许真实服务器数据（2026-09-15 安全重写后的铁律）
 leaks = []
