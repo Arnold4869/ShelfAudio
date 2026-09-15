@@ -672,5 +672,8 @@ window.addEventListener('DOMContentLoaded', () => {
     openVoiceOverlay({ onSearch: (q) => go('search', { q }) })
   })
 
+  // 恢复睡眠定时（若之前设过且 WebView 被系统回收过，重建后定时仍生效）
+  import('./views/player.js').then(m => m.restoreSleepTimer()).catch(() => {})
+
   boot()
 })

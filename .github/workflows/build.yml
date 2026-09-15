@@ -39,6 +39,10 @@ jobs:
         run: python3 scripts/test-card-size.py
       - name: Chapter sheet virtualization (Playwright)
         run: python3 scripts/test-chapter-sheet.py
+      - name: Sleep timer (Playwright)
+        run: python3 scripts/test-sleep-timer.py
+      - name: Sleep timer round-2 (state machine, leak, cross-page)
+        run: python3 scripts/test-sleep-timer-round2.py
       - name: Parental controls (Playwright + node)
         run: python3 scripts/test-parental.py
       - name: Old WebView compat (Playwright)
@@ -55,8 +59,20 @@ jobs:
       - name: Verify imports resolve
         run: node scripts/check-imports.mjs
 
+      - name: Dead button scan (rendered id with no handler)
+        run: python3 scripts/audit-dead-buttons.py
+
+      - name: Stale id reference scan (deleted element, leftover binding)
+        run: python3 scripts/audit-stale-id-refs.py
+
+      - name: Release metadata audit (VERSION / appName / no real data)
+        run: python3 scripts/audit-release-readiness.py
+
       - name: Listening-stats logic
         run: node scripts/test-stats.mjs
+
+      - name: Voice command parsing (sleep on/off, no false hits)
+        run: node scripts/test-voice-commands.mjs
 
       - name: MD5 (Subsonic auth)
         run: node scripts/test-md5.mjs
@@ -72,6 +88,10 @@ jobs:
 
       - name: Round-3 UI (ND player buttons, loop modes, lyrics, playlists)
         run: python3 scripts/ui-round3.py
+
+      - name: Clickable elements must have listeners (CDP audit)
+        # 必须放在 build 之后（用的是 dist 产物）；0.8.0 的死按钮 bug 由此拦截
+        run: python3 scripts/audit-clickable-listeners.py
 
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs
@@ -185,6 +205,10 @@ jobs:
         run: python3 scripts/test-card-size.py
       - name: Chapter sheet virtualization (Playwright)
         run: python3 scripts/test-chapter-sheet.py
+      - name: Sleep timer (Playwright)
+        run: python3 scripts/test-sleep-timer.py
+      - name: Sleep timer round-2 (state machine, leak, cross-page)
+        run: python3 scripts/test-sleep-timer-round2.py
       - name: Parental controls (Playwright + node)
         run: python3 scripts/test-parental.py
       - name: Old WebView compat (Playwright)
@@ -201,8 +225,20 @@ jobs:
       - name: Verify imports resolve
         run: node scripts/check-imports.mjs
 
+      - name: Dead button scan (rendered id with no handler)
+        run: python3 scripts/audit-dead-buttons.py
+
+      - name: Stale id reference scan (deleted element, leftover binding)
+        run: python3 scripts/audit-stale-id-refs.py
+
+      - name: Release metadata audit (VERSION / appName / no real data)
+        run: python3 scripts/audit-release-readiness.py
+
       - name: Listening-stats logic
         run: node scripts/test-stats.mjs
+
+      - name: Voice command parsing (sleep on/off, no false hits)
+        run: node scripts/test-voice-commands.mjs
 
       - name: MD5 (Subsonic auth)
         run: node scripts/test-md5.mjs
@@ -218,6 +254,10 @@ jobs:
 
       - name: Round-3 UI (ND player buttons, loop modes, lyrics, playlists)
         run: python3 scripts/ui-round3.py
+
+      - name: Clickable elements must have listeners (CDP audit)
+        # 必须放在 build 之后（用的是 dist 产物）；0.8.0 的死按钮 bug 由此拦截
+        run: python3 scripts/audit-clickable-listeners.py
 
       - name: Player track-mutex regression
         run: node scripts/test-player-mutex.mjs

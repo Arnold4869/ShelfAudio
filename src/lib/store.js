@@ -58,6 +58,7 @@ export const CONFIG_KEYS = {
   kidPin: 'kidPin',             // 家长密码（进「家长设置」需要）
   playbackRate: 'playbackRate',
   sleepMinutes: 'sleepMinutes',
+  sleepAt: 'sleepAt',                     // 睡眠到点时间戳（ms）'0'=未设定（2026-09-15）
   kidLibraryIds: 'kidLibraryIds',
   haptics: 'haptics',                   // 触感反馈开关 '1' | '0'
   progressScope: 'progressScope',       // 进度条口径 'track'（单集，默认）| 'book'（整部作品）

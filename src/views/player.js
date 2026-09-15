@@ -12,6 +12,8 @@ import { openLyricsPage } from '../lib/lyrics-ui.js'
 
 let sleepTimer = null
 let sleepAt = 0
+// 心跳监听只注册一次（sa:time 由播放器每秒级发出，是"后台兜底"的第二条触发路径）
+let sleepWatched = false
 // 进度条口径：'track' = 当前这一集（默认）；'book' = 整部作品。
 // 之前写死了整本（ABS 的 currentTime 是全书累计秒），用户看着"进度条是整个作品的"很别扭。
 let progressScope = 'track'
@@ -32,6 +34,66 @@ function scopeRange() {
 export function getSleepRemaining() {
   if (!sleepAt) return 0
   return Math.max(0, Math.round((sleepAt - Date.now()) / 1000))
+}
+
+/**
+ * 到点执行：暂停播放 + 清定时（幂等 —— setTimeout 与心跳两条路径都可能先到，
+ * 多点触发只让第一次生效，否则会连弹两次提示）。
+ *
+ * silent=true 用于「App 冷启动时发现定时早就过期」：那种情况下用户并没有在听
+ * （甚至过了好几天），不该弹提示、不该震动 —— 只静默清零。
+ */
+function fireSleepTimer(silent) {
+  if (!sleepAt) return
+  sleepAt = 0
+  if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null }
+  try { store.set(CONFIG_KEYS.sleepAt, '0') } catch (_) {}
+  if (silent) return
+  try { haptic.warn?.() } catch (_) {}
+  try { state.player?.pause() } catch (_) {}
+  toast('睡眠定时到，已暂停')
+}
+
+/**
+ * 到点检查（心跳路径）。
+ * 为什么不能只靠 setTimeout：锁屏/切后台时 WebView 的 JS 定时器会被系统挂起，
+ * 而"听着睡着"恰恰是睡眠定时最核心的场景 —— 只靠 setTimeout 会出现
+ * "醒来发现还在放"。这里用播放器持续发出的 sa:time 事件当心跳兜底。
+ */
+function checkSleepDeadline() {
+  if (sleepAt && Date.now() >= sleepAt) fireSleepTimer()
+}
+
+/** 注册兜底心跳（模块级，只注册一次；与播放页的 _cleanup 无关，切页面不丢） */
+function watchSleepDeadline() {
+  if (sleepWatched) return
+  sleepWatched = true
+  window.addEventListener('sa:time', checkSleepDeadline)
+  // 第三条路径：回到前台立刻结算（后台若被完全停摆，至少"一回来就停"，
+  // 不让用户发现 App 在没人听的时候还在放）
+  const onVisible = () => { if (document.visibilityState === 'visible') checkSleepDeadline() }
+  document.addEventListener('visibilitychange', onVisible)
+  window.addEventListener('focus', onVisible)
+}
+
+/**
+ * 启动时恢复睡眠定时（WebView 被系统回收重建后仍生效）。
+ * 已过点 → 直接按到点处理（此时播放器通常也已经不在播了）。
+ */
+export async function restoreSleepTimer() {
+  try {
+    const saved = parseInt(await store.get(CONFIG_KEYS.sleepAt, '0'), 10) || 0
+    if (!saved) return
+    if (saved <= Date.now()) {
+      // 冷启动发现早就过期：不弹提示不震动（此时用户没在听，弹了只会莫名其妙），静默清零
+      sleepAt = saved
+      fireSleepTimer(true)
+      return
+    }
+    sleepAt = saved
+    watchSleepDeadline()
+    sleepTimer = setTimeout(fireSleepTimer, Math.max(0, saved - Date.now()))
+  } catch (_) {}
 }
 
 export async function renderPlayer(root) {
@@ -198,7 +260,32 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
   $('#btnFavTop').onclick = () => { haptic.tap(); toggleFav() }
   //  不要再引用已从模板里删掉的元素：$('#x') 返回 null，给 null 赋 onclick 会抛
   // TypeError，**把它之后的所有初始化全部中断**（三个点菜单就是这么失效的）。
-  // （倍速/选集/±15 秒已按老板 2026-09-14 要求移除；定时收进右上角三个点。）
+  // 0.8.0 曾把下面这段整体删掉，但 ABS 的按钮模板还在 → 倍速/±15秒/定时全变死按钮
+  //（老板 2026-09-15 报"少了一个定时关闭功能"的根因）。恢复，且全部判空（ND 不渲染这些）。
+
+  // ---- ABS：±15 秒（ND 无此按钮，判空）----
+  const r15 = $('#btnR15')
+  if (r15) r15.onclick = () => { haptic.tap(); p.seek(Math.max(0, p.position().currentTime - 15)) }
+  const f15 = $('#btnF15')
+  if (f15) f15.onclick = () => { haptic.tap(); p.seek(p.position().currentTime + 15) }
+
+  // ---- ABS 工具行：倍速 / 定时 / 选集 ----
+  const rates = [0.75, 1, 1.25, 1.5, 2]
+  const rateBtn2 = $('#btnRate')
+  if (rateBtn2) {
+    rateBtn2.onclick = async () => {
+      haptic.select()
+      const cur = p.rate || 1
+      const i = rates.indexOf(cur)
+      const next = rates[(i + 1) % rates.length]
+      await p.setRate(next)
+      rateBtn2.textContent = next.toFixed(2).replace(/0$/, '') + '×'
+      await store.set(CONFIG_KEYS.playbackRate, String(next))
+      toast('播放速度 ' + next + '×')
+    }
+  }
+  const sleepChip = $('#btnSleep')
+  if (sleepChip) sleepChip.onclick = () => { haptic.tap(); openSleepDialog() }
 
   // 拖动进度条
   let dragging = false
@@ -692,12 +779,12 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
 export function setSleepTimer(minutes) {
   if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null }
   sleepAt = 0
+  try { store.set(CONFIG_KEYS.sleepAt, '0') } catch (_) {}
   if (!minutes) { toast('已关闭睡眠定时'); return }
+  if (!sleepWatched) watchSleepDeadline()
   sleepAt = Date.now() + minutes * 60000
-  sleepTimer = setTimeout(() => {
-    state.player?.pause()
-    toast('睡眠定时到，已暂停')
-    sleepTimer = null; sleepAt = 0
-  }, minutes * 60000)
+  // 持久化到 store：锁屏久了 WebView 可能被系统整个回收重建，恢复后定时仍在
+  try { store.set(CONFIG_KEYS.sleepAt, String(sleepAt)) } catch (_) {}
+  sleepTimer = setTimeout(fireSleepTimer, minutes * 60000)
   toast('已设定 ' + minutes + ' 分钟后暂停')
 }

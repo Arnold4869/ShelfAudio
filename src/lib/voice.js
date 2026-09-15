@@ -127,7 +127,7 @@ export function parseCommand(text) {
   }
   if (/(正常速度|原速|正常语速)/.test(t)) return { intent: 'rate', rate: 1 }
 
-  if (/(定时|睡眠|睡后|听完|关闭|关掉|停止|暂停)/.test(t)) {
+  if (/(定时|睡眠|睡后|听完|关闭|关掉|停止|暂停|关$)/.test(t)) {
     const unitM = t.match(new RegExp(`([${NUM_CHARS}]+)\\s*(分钟|小时|钟头)`))
     if (unitM) {
       let n = cnNum(unitM[1])
@@ -137,6 +137,14 @@ export function parseCommand(text) {
       }
     }
     if (/半\s*小时/.test(t)) return { intent: 'sleep', minutes: 30 }
+    // 关定时类（老板 2026-09-15 审计补）：说「关闭定时/取消定时」要能真的关，
+    // 不能掉进搜索分支去搜「关闭定时」这个词。
+    // 注意顺序：必须放在带数字的 sleep 分支之后（"三十分钟后关闭"先命中数字），
+    // 且用封闭式匹配，避免误伤「找一下关闭门的小说」这类搜索语句。
+    if (/(定时|睡眠|倒计时)/.test(t) && /(关闭|关掉|取消|解除|不要|停止)/.test(t)) {
+      return { intent: 'sleep', minutes: 0 }
+    }
+    if (/^(定时关闭|停止定时)$/.test(t)) return { intent: 'sleep', minutes: 0 }
   }
 
   if (/(暂停|停一下|停下|别播了|不听了)/.test(t)) return { intent: 'pause' }
