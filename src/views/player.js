@@ -50,7 +50,9 @@ function fireSleepTimer(silent) {
   try { store.set(CONFIG_KEYS.sleepAt, '0') } catch (_) {}
   if (silent) return
   try { haptic.warn?.() } catch (_) {}
-  try { state.player?.pause() } catch (_) {}
+  // pause() 是 async：不 await 的话异常会变成未处理 Promise 拒绝（页面级报错），
+  // 用 catch 兜住；这里不需要等它完成。
+  try { Promise.resolve(state.player?.pause()).catch(() => {}) } catch (_) {}
   toast('睡眠定时到，已暂停')
 }
 
