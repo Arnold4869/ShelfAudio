@@ -133,7 +133,12 @@ export function parseCommand(text) {
       let n = cnNum(unitM[1])
       if (n !== null) {
         if (unitM[2] !== '分钟') n *= 60
-        return { intent: 'sleep', minutes: Math.round(n) }
+        const mins = Math.round(n)
+        // 与弹窗（normalizeMinutes ≤1440）保持一致：语音说「定时 99999 分钟」
+        // 交给 setSleepTimer 会设出一个荒谬的 deadline（审计发现的一致性问题）。
+        // 超范围按上限处理（语音场景给个合理结果比拒绝更好，用户不好重说一遍）。
+        if (mins >= 1 && mins <= 1440) return { intent: 'sleep', minutes: mins }
+        if (mins > 1440) return { intent: 'sleep', minutes: 1440 }
       }
     }
     if (/半\s*小时/.test(t)) return { intent: 'sleep', minutes: 30 }

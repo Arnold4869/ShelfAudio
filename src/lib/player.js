@@ -43,11 +43,26 @@ async function fgStop() {
  *   bookTime = tracks[i].startOffset + fileTime
  */
 export class BookPlayer {
-  constructor({ onTime, onState, onTrackChange, onEnd } = {}) {
+  constructor({ onTime, onState, onTrackChange, onEnd, onBeforeAdvance, onBookEnd } = {}) {
     this.onTime = onTime || (() => {})
     this.onState = onState || (() => {})
     this.onTrackChange = onTrackChange || (() => {})
     this.onEnd = onEnd || (() => {})
+    /**
+     * 「本集播完、即将进入下一集」前的拦截钩子（睡眠定时"听完 N 集/首后停"用，2026-09-16）。
+     * 返回 true = 停在这里（不再推进下一集）。
+     * 为什么不放在 onTrackChange 里判断：那样下一集已经开始播了才暂停，
+     * 用户会听到"下一集刚出声就被掐掉"的一下。
+     * 由 app.js 注入（避免 lib/player.js 反向依赖 sleep 模块）。
+     */
+    this.onBeforeAdvance = typeof onBeforeAdvance === 'function' ? onBeforeAdvance : null
+    /**
+     * 「整本书/整张专辑播完」钩子（2026-09-16 第 4 轮审计补）。
+     * 用途：睡眠定时的剩余计数必须在这里**静默清零**。否则一本书听完了
+     * （播放本来就停了），残留的计数会跟着用户去看的下一本书 —— 表现为
+     * "在新书刚听 1 集就被莫名暂停"。
+     */
+    this.onBookEnd = typeof onBookEnd === 'function' ? onBookEnd : null
 
     this.itemId = null
     this.sessionId = null
@@ -785,6 +800,32 @@ export class BookPlayer {
       const idx = this._indexFromAssetId(ev.assetId)
       if (idx !== null && idx !== this.trackIndex) return
     }
+    // 睡眠定时·按章节（老板 2026-09-16）：本集播完算消耗一次，
+    // 听满 N 集/首 → 停在这里，**不**推进下一集。
+    //
+    // ⚠️ 必须在**单曲循环/乱序分支之前**：放在后面时「单曲循环 + 按章节定时」
+    // 会永远不计数（repeat 分支先 return 了），定时形同不存在（审计发现）。
+    // 语义：每"听完一遍"算一次，无论接下来是循环本曲、随机跳还是顺序接下一集。
+    if (this.onBeforeAdvance && this.onBeforeAdvance()) {
+      // 本集已经自然播完，这里只需把状态收干净：不推进下一集、不让 UI 继续显示"播放中"。
+      // 走 pause() 而不是只手改标志位 —— 它会真正下发原生 pause 并立刻回写进度，
+      // 保证"停"是真的停（原生层不会再出声、服务器进度落在本集末尾）。
+      // 注：sleep 模块的 firePause() 也会 pause 一次（它那条不 await）—— pause 幂等，
+      // 这里再 await 一次是为了确定性（不指望另一条路径的时序）。
+      const cur = this.tracks[this.trackIndex]
+      this.currentBookTime = (cur?.startOffset || 0) + (cur?.duration || 0)
+      try {
+        await this.pause()
+      } catch (_) {
+        // 原生 pause 失败也要把内部状态收干净，否则 UI 停在"播放中"却没声音
+        this.playing = false
+        this.buffering = false
+        this._wantPlaying = false
+        this._starting = false
+        this.onState({ state: 'paused', isPlaying: false, reason: 'sleep-stop' })
+      }
+      return
+    }
     // 单曲循环（老板 2026-09-14）：本轨播完从头再来这一轨。
     // 注意 seek 用本轨起点（startOffset），autoPlay=true 保证循环不断声。
     if (this.playMode === 'repeat') {
@@ -808,6 +849,9 @@ export class BookPlayer {
       this.currentBookTime = this.duration
       this._emitTime()
       this.onEnd()
+      // 整本听完 → 睡眠定时的剩余计数静默清零（不加这句，残留计数会带到下一本书：
+      // 新书刚听 1 集就被莫名暂停 —— 第 4 轮审计发现）
+      try { this.onBookEnd && this.onBookEnd() } catch (_) {}
       this.finish()
     }
   }

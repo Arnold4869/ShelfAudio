@@ -43,6 +43,10 @@ jobs:
         run: python3 scripts/test-sleep-timer.py
       - name: Sleep timer round-2 (state machine, leak, cross-page)
         run: python3 scripts/test-sleep-timer-round2.py
+      - name: Sleep by chapters/tracks + home shuffle (Playwright)
+        run: python3 scripts/test-sleep-tracks.py
+      - name: Sleep dialog layout audit (narrow/landscape/tablet)
+        run: python3 scripts/test-sleep-layout.py
       - name: Parental controls (Playwright + node)
         run: python3 scripts/test-parental.py
       - name: Old WebView compat (Playwright)
@@ -73,6 +77,9 @@ jobs:
 
       - name: Voice command parsing (sleep on/off, no false hits)
         run: node scripts/test-voice-commands.mjs
+
+      - name: Sleep-core pure logic (countdown/track math)
+        run: node scripts/test-sleep-core.mjs
 
       - name: MD5 (Subsonic auth)
         run: node scripts/test-md5.mjs
@@ -209,6 +216,10 @@ jobs:
         run: python3 scripts/test-sleep-timer.py
       - name: Sleep timer round-2 (state machine, leak, cross-page)
         run: python3 scripts/test-sleep-timer-round2.py
+      - name: Sleep by chapters/tracks + home shuffle (Playwright)
+        run: python3 scripts/test-sleep-tracks.py
+      - name: Sleep dialog layout audit (narrow/landscape/tablet)
+        run: python3 scripts/test-sleep-layout.py
       - name: Parental controls (Playwright + node)
         run: python3 scripts/test-parental.py
       - name: Old WebView compat (Playwright)
@@ -239,6 +250,9 @@ jobs:
 
       - name: Voice command parsing (sleep on/off, no false hits)
         run: node scripts/test-voice-commands.mjs
+
+      - name: Sleep-core pure logic (countdown/track math)
+        run: node scripts/test-sleep-core.mjs
 
       - name: MD5 (Subsonic auth)
         run: node scripts/test-md5.mjs

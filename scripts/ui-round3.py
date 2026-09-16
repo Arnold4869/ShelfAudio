@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """老板 2026-09-14 第三轮反馈验证（真浏览器，全部仅 ND）：
- 1. 播放页：ND 无倍速/选集/±15秒按钮；有播放模式按钮 + 歌词按钮；定时在 ⋯ 菜单里
+ 1. 播放页：ND 无倍速/选集/±15秒按钮；有播放模式按钮 + 歌词按钮 + 定时 chip（2026-09-16）
  2. 播放模式三态轮转 + 图标切换 + 持久化
  3. 点封面 → 歌词页（加载行/返回）
- 4. ⋯ 菜单：睡眠定时项 + 添加到歌单项
+ 4. ⋯ 菜单：无睡眠定时项（已删）+ 添加到歌单项
  5. 歌单：播放页「添加到歌单」→ 选歌单 → 加歌请求发出
  6. 搜索结果多选：选择 / 全选 → 添加到歌单
  7. 首页三入口（ND）：历史记录 / 我的收藏 / 歌单
@@ -117,7 +117,10 @@ with sync_playwright() as pw:
     ok('ND 无前进15秒', not pg.evaluate("!!document.querySelector('#btnF15')"))
     ok('有播放模式按钮', pg.evaluate("!!document.querySelector('#btnMode')"))
     ok('有歌词按钮', pg.evaluate("!!document.querySelector('#btnLyrics')"))
-    ok('页面上没有「定时」chip（已进⋯）', not pg.evaluate("[...document.querySelectorAll('.tool-chip')].some(b=>b.textContent.includes('定时'))"))
+    # 老板 2026-09-16：定时入口从⋯收回播放页，ND 现在也必须有且仅有一个「定时」chip
+    ok('ND 播放页有「定时」chip（入口只在播放页）',
+       pg.evaluate("[...document.querySelectorAll('.tool-chip')].filter(b=>b.id==='btnSleep').length") == 1,
+       str(pg.evaluate("[...document.querySelectorAll('.tool-chip')].map(b=>b.textContent.trim())")))
     # 模式轮转
     icon1 = pg.evaluate("document.querySelector('#btnMode').innerHTML")
     pg.evaluate("document.querySelector('#btnMode').click()"); pg.wait_for_timeout(300)
@@ -141,7 +144,8 @@ with sync_playwright() as pw:
     # ⋯ 菜单
     pg.evaluate("document.querySelector('#btnMore').click()"); pg.wait_for_timeout(500)
     items = pg.evaluate("[...document.querySelectorAll('.sheet-item .sheet-label')].map(e=>e.textContent)")
-    ok('⋯ 菜单含「睡眠定时」', any('睡眠定时' in (i or '') for i in items), str(items))
+    ok('⋯ 菜单已无「睡眠定时」（老板 2026-09-16 删掉重复入口）',
+       not any('睡眠' in (i or '') or '定时' in (i or '') for i in items), str(items))
     ok('⋯ 菜单含「添加到歌单」', any('添加到歌单' in (i or '') for i in items), str(items))
     ok('⋯ 菜单仍含缓存/信息', any('缓存' in (i or '') for i in items) and any('信息' in (i or '') for i in items))
     # 添加到歌单流程

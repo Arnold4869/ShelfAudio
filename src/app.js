@@ -18,6 +18,7 @@ import { renderAbout } from './views/about.js'
 import { openVoiceOverlay } from './lib/voice-ui.js'
 import { startListening, stopListening } from './lib/stats.js'
 import { playbackBlockedReason, volumeCap } from './lib/parental.js'
+import { onTrackCompleted, clearTrackSleepOnBookEnd } from './lib/sleep.js'
 import { localTrackUriLazy } from './lib/offline.js'
 import { recordContinue, removeContinueLocal } from './lib/continue-local.js'
 import { initHaptics } from './lib/haptics.js'
@@ -269,6 +270,13 @@ export function initPlayer() {
     onTrackChange: (t) => {
       window.dispatchEvent(new CustomEvent('sa:track', { detail: t }))
     },
+    // 睡眠定时·按章节/歌曲（老板 2026-09-16）：本集播完 → 消耗一次，
+    // 到点返回 true 让播放器停在这一集（不推进下一集，避免"下一集刚出声就被掐"）。
+    // 放在播放器里而不是视图里，是因为视图可能不在播放页（定时要跨页面生效）。
+    onBeforeAdvance: () => onTrackCompleted(),
+    // 整本书/整张专辑播完 → 按章节定时的剩余计数静默清零
+    // （计数只对当前这本书有意义，残留到下一本书会"刚听 1 集就被莫名暂停"）
+    onBookEnd: () => clearTrackSleepOnBookEnd(),
     onEnd: () => { toast(t('finished')); updateMini() },
   })
   state.player = p
@@ -673,7 +681,7 @@ window.addEventListener('DOMContentLoaded', () => {
   })
 
   // 恢复睡眠定时（若之前设过且 WebView 被系统回收过，重建后定时仍生效）
-  import('./views/player.js').then(m => m.restoreSleepTimer()).catch(() => {})
+  import('./lib/sleep.js').then(m => m.restoreSleepTimer()).catch(() => {})
 
   boot()
 })

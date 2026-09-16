@@ -101,19 +101,25 @@ with sync_playwright() as pw:
        str(pg.evaluate("document.querySelector('#btnRate')?.textContent")))
     # 定时 chip：点一下应弹睡眠弹窗
     pg.evaluate("document.querySelector('#btnSleep')?.click()"); pg.wait_for_timeout(400)
-    ok('「定时」chip 点击弹出睡眠弹窗', pg.evaluate("!!document.querySelector('.lock-card')"),
+    # 注意：必须用 .sleep-tabs 判「睡眠弹窗开着」—— index.html 里本来就有一个静态的
+    # 「家长确认」.lock-card（hidden），拿 .lock-card 当判据是永远为真的假断言。
+    ok('「定时」chip 点击弹出睡眠弹窗', pg.evaluate("!!document.querySelector('.sleep-tabs')"),
        str(pg.evaluate("document.body.innerHTML.includes('睡眠定时')")))
-    ok('弹窗里有 5 个选项', pg.evaluate("document.querySelectorAll('.lock-card [data-m]').length") == 5)
+    ok('弹窗里有时间预设（15/30/45/60）', pg.evaluate("document.querySelectorAll('.lock-card [data-m]').length") == 5,
+       str(pg.evaluate("document.querySelectorAll('.lock-card [data-m]').length")))   # 4 预设 + 关闭定时
     # 选 15 分钟
     pg.evaluate("[...document.querySelectorAll('.lock-card [data-m]')].find(b=>b.dataset.m==='15')?.click()")
     pg.wait_for_timeout(400)
     toast = pg.evaluate("document.querySelector('#toast')?.textContent || ''")
     ok('设定后 toast 确认', '已设定' in toast and '15' in toast, toast)
-    remaining = pg.evaluate("window.__saPlayer ? 0 : 0")  # placeholder
-    # 菜单里应显示剩余分钟
+    # 老板 2026-09-16：定时 chip 本身变成倒计时（不再去 ⋯ 菜单里看剩余）
+    ok('定时 chip 变成倒计时显示',
+       ':' in (pg.evaluate("document.querySelector('#sleepLabel')?.textContent || ''")),
+       str(pg.evaluate("document.querySelector('#sleepLabel')?.textContent")))
     pg.evaluate("document.querySelector('#btnMore')?.click()"); pg.wait_for_timeout(400)
     items = pg.evaluate("[...document.querySelectorAll('.sheet-item .sheet-label')].map(e=>e.textContent)")
-    ok('⋯ 菜单「睡眠定时」显示剩余分钟', any('剩余' in (i or '') for i in items), str(items))
+    ok('⋯ 菜单确实没有睡眠定时项（入口只留播放页一个）',
+       not any('睡眠' in (i or '') or '定时' in (i or '') for i in items), str(items))
     ok('无 JS 报错', not errs, str(errs[:2]))
     ctx.close()
 
@@ -200,25 +206,24 @@ with sync_playwright() as pw:
     ok('无 JS 报错', not errs, str(errs[:2]))
     ctx.close()
 
-    # ---------- 4. ND：⋯ 菜单睡眠定时 ----------
-    print('=== 4. ND 播放页 ⋯ 菜单睡眠定时 ===')
+    # ---------- 4. ND：播放页「定时」chip（老板 2026-09-16 入口统一到播放页）----------
+    print('=== 4. ND 播放页「定时」chip ===')
     ctx, pg, errs = newpage(br, ND_PREFS)
     pg.evaluate("document.querySelector('.book-card')?.click()"); pg.wait_for_timeout(2200)
     pg.evaluate("document.querySelector('[data-idx=\"0\"]')?.click()"); pg.wait_for_timeout(2500)
     ok('ND 进播放页', pg.evaluate("document.body.dataset.view") == 'player', pg.evaluate("document.body.dataset.view"))
-    ok('ND 页面上无「定时」chip（只在⋯里）',
-       not pg.evaluate("[...document.querySelectorAll('.tool-chip')].some(b=>b.textContent.includes('定时'))"))
-    pg.evaluate("document.querySelector('#btnMore')?.click()"); pg.wait_for_timeout(400)
-    items = pg.evaluate("[...document.querySelectorAll('.sheet-item .sheet-label')].map(e=>e.textContent)")
-    ok('ND ⋯ 菜单含「睡眠定时」', any('睡眠定时' in (i or '') for i in items), str(items))
-    pg.evaluate("[...document.querySelectorAll('.sheet-item')].find(b=>b.textContent.includes('睡眠定时'))?.click()")
-    pg.wait_for_timeout(400)
-    ok('ND 睡眠弹窗打开', pg.evaluate("document.querySelectorAll('.lock-card [data-m]').length") == 5)
+    ok('ND 播放页有「定时」chip（入口只有一个）',
+       pg.evaluate("[...document.querySelectorAll('.tool-chip')].some(b=>b.id==='btnSleep')"))
+    pg.evaluate("document.querySelector('#btnSleep')?.click()"); pg.wait_for_timeout(400)
+    ok('ND 睡眠弹窗打开', pg.evaluate("document.querySelectorAll('.lock-card [data-m]').length") == 5,
+       str(pg.evaluate("document.querySelectorAll('.lock-card [data-m]').length")))
     pg.evaluate("[...document.querySelectorAll('.lock-card [data-m]')].find(b=>b.dataset.m==='30')?.click()")
     pg.wait_for_timeout(400)
-    ok('ND 设定 30 分钟生效', '已设定' in (pg.evaluate("document.querySelector('#toast')?.textContent || ''")),
+    ok('ND 设定 30 分钟生效', '已设定' in (pg.evaluate("document.querySelector('#toast')?.textContent") or ''),
        str(pg.evaluate("document.querySelector('#toast')?.textContent")))
     ok('ND sleepAt 已持久化', int(pg.evaluate("localStorage.getItem('shelfaudio.sleepAt')") or 0) > 0)
+    ok('ND chip 显示倒计时', ':' in (pg.evaluate("document.querySelector('#sleepLabel')?.textContent") or ''),
+       str(pg.evaluate("document.querySelector('#sleepLabel')?.textContent")))
     ok('无 JS 报错', not errs, str(errs[:2]))
     ctx.close()
 
@@ -226,9 +231,9 @@ with sync_playwright() as pw:
     print('=== 5. restoreSleepTimer：未过期恢复 + 已过期直接 fire ===')
     ctx, pg, errs = newpage(br, ABS_PREFS + "\nlocalStorage.setItem('shelfaudio.sleepAt', String(Date.now() + 900000));")
     open_player_abs(pg)
-    pg.evaluate("document.querySelector('#btnMore')?.click()"); pg.wait_for_timeout(400)
-    items = pg.evaluate("[...document.querySelectorAll('.sheet-item .sheet-label')].map(e=>e.textContent)")
-    ok('重载后 ⋯ 菜单仍显示剩余（≈15分钟）', any('剩余' in (i or '') for i in items), str(items))
+    ok('重载后定时 chip 仍显示倒计时（≈15分钟）',
+       ':' in (pg.evaluate("document.querySelector('#sleepLabel')?.textContent") or ''),
+       str(pg.evaluate("document.querySelector('#sleepLabel')?.textContent")))
     ok('无 JS 报错', not errs, str(errs[:2]))
     ctx.close()
 

@@ -21,6 +21,18 @@ for (const [text, min] of setCases) {
   ok(`"${text}" → sleep ${min}分钟`, r.intent === 'sleep' && r.minutes === min, JSON.stringify(r))
 }
 
+// ---- 超长时长夹到 1440（与弹窗 normalizeMinutes 一致，2026-09-16 审计补）----
+const capCases = [['定时五千分钟', 1440], ['定时99999分钟', 1440], ['定时1441分钟', 1440]]
+for (const [text, min] of capCases) {
+  const r = parseCommand(text)
+  ok(`"${text}" → 夹到 ${min} 分钟`, r.intent === 'sleep' && r.minutes === min, JSON.stringify(r))
+}
+const okCases = [['定时1440分钟', 1440], ['定时一分钟', 1]]
+for (const [text, min] of okCases) {
+  const r = parseCommand(text)
+  ok(`"${text}" → ${min} 分钟（边界内原样）`, r.intent === 'sleep' && r.minutes === min, JSON.stringify(r))
+}
+
 // ---- 睡眠定时：关闭（2026-09-15 修复的 bug）----
 const offCases = ['关闭定时', '关掉定时', '取消定时', '定时关闭', '关闭睡眠',
   '停止定时', '关闭倒计时', '解除定时', '不要定时']

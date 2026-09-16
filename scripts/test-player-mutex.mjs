@@ -533,6 +533,53 @@ console.log('\n=== 15. 播放模式：顺序 / 单曲循环 / 乱序（老板 20
   ok('单曲循环：暂停态收到 complete 不异常（仍定位到本曲开头）', Math.abs(p6.currentBookTime - 0) < 0.01,
      `t=${p6.currentBookTime}`)
   await p6.stop({ silent: true })
+
+  // ---- 整本播完 → onBookEnd 必须触发（计数清零，2026-09-16 第 4 轮审计）----
+  console.log('\n=== 15b. 整本播完触发 onBookEnd（章节计数清零）===')
+  {
+    state.assets.clear()
+    let bookEnds = 0
+    const p8 = new BookPlayer({ onBookEnd: () => { bookEnds++ } })
+    await p8.init()
+    // 2 集的书，从第 2 集（末集）播完 → 应触发 onBookEnd
+    await p8.load({ itemId: 'x', tracks: [
+      { index: 1, startOffset: 0, duration: 300, url: 'u0', headers: {} },
+      { index: 2, startOffset: 300, duration: 300, url: 'u1', headers: {} },
+    ], sessionId: 's', duration: 600, startBookTime: 300 })
+    await p8.play()
+    p8.onBeforeAdvance = () => false   // 没设章节定时 → 不拦截
+    await p8._onTrackEnd({ assetId: 'sa-1' })
+    ok('末集播完触发 onBookEnd（计数可清零）', bookEnds === 1, `bookEnds=${bookEnds}`)
+    // 重复 complete 不能重复触发（_endedFired 护栏）
+    await p8._onTrackEnd({ assetId: 'sa-1' })
+    ok('重复 complete 不重复触发 onBookEnd', bookEnds === 1, `bookEnds=${bookEnds}`)
+    await p8.stop({ silent: true })
+  }
+
+  // ---- 睡眠定时·按章节：onBeforeAdvance 拦截（老板 2026-09-16）----
+  console.log('\n=== 15. 睡眠定时·按章节（onBeforeAdvance 拦截不推进）===')
+  {
+    state.assets.clear()
+    const p7 = new BookPlayer({})
+    await p7.init()
+    await p7.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+    await p7.play()
+    // 顺序播放，onBeforeAdvance 一直返回 true（"听满 N 集该停了"）
+    p7.onBeforeAdvance = () => true
+    await p7._onTrackEnd({ assetId: 'sa-0' })
+    ok('按章节到点：停在本集（不推进下一集）', p7.trackIndex === 0, `idx=${p7.trackIndex}`)
+    ok('按章节到点：当前音轨已不在播（真的停了）', playingSet().length === 0, `playing=${playingSet()}`)
+    // 拦截器不拦截时，complete 照常推进（别把正常连播弄坏）
+    p7.onBeforeAdvance = () => false
+    await p7._onTrackEnd({ assetId: 'sa-0' })
+    ok('未到点：complete 照常推进到第2集', p7.trackIndex === 1, `idx=${p7.trackIndex}`)
+    // 拦截优先于乱序推进
+    p7.setPlayMode('shuffle')
+    p7.onBeforeAdvance = () => true
+    await p7._onTrackEnd({ assetId: 'sa-1' })
+    ok('乱序模式下到点同样被拦截（不随机跳走）', p7.trackIndex === 1, `idx=${p7.trackIndex}`)
+    await p7.stop({ silent: true })
+  }
 }
 
 try { fs.unlinkSync(stubPath) } catch (_) {}

@@ -1,6 +1,6 @@
 /** 播放页：大圆按钮极简 + 收藏；ND 去掉倍速/选集/±15秒（老板 2026-09-14），内容操作收进右上角三个点 */
 import { hub as abs, sourceOfId } from '../lib/servers.js'
-import { goBack, state, go, toast, esc, fmtTime, updateMini } from '../app.js'
+import { goBack, state, go, toast, esc, fmtTime, fmtDur, updateMini } from '../app.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { haptic } from '../lib/haptics.js'
 import { isCached, downloadBook, removeBook } from '../lib/offline.js'
@@ -9,11 +9,14 @@ import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { icon } from '../lib/icons.js'
 import { t } from '../lib/terms.js'
 import { openLyricsPage } from '../lib/lyrics-ui.js'
+// 睡眠定时状态（time / tracks 两种模式）抽到 lib/sleep.js（2026-09-16）
+import {
+  setSleepTimer, setSleepTracks,
+  getSleepRemaining, getSleepTracksLeft, sleepKind, onTrackCompleted,
+} from '../lib/sleep.js'
+// 纯计算（无 DOM/无 store，node 单测覆盖）
+import { formatCountdown, tracksCountdown, normalizeMinutes, normalizeTrackCount } from '../lib/sleep-core.js'
 
-let sleepTimer = null
-let sleepAt = 0
-// 心跳监听只注册一次（sa:time 由播放器每秒级发出，是"后台兜底"的第二条触发路径）
-let sleepWatched = false
 // 进度条口径：'track' = 当前这一集（默认）；'book' = 整部作品。
 // 之前写死了整本（ABS 的 currentTime 是全书累计秒），用户看着"进度条是整个作品的"很别扭。
 let progressScope = 'track'
@@ -29,73 +32,6 @@ function scopeRange() {
   }
   const cur = Math.max(0, Math.min(p.position().currentTime - off, trackDur))
   return { from: off, to: off + trackDur, cur, dur: trackDur }
-}
-
-export function getSleepRemaining() {
-  if (!sleepAt) return 0
-  return Math.max(0, Math.round((sleepAt - Date.now()) / 1000))
-}
-
-/**
- * 到点执行：暂停播放 + 清定时（幂等 —— setTimeout 与心跳两条路径都可能先到，
- * 多点触发只让第一次生效，否则会连弹两次提示）。
- *
- * silent=true 用于「App 冷启动时发现定时早就过期」：那种情况下用户并没有在听
- * （甚至过了好几天），不该弹提示、不该震动 —— 只静默清零。
- */
-function fireSleepTimer(silent) {
-  if (!sleepAt) return
-  sleepAt = 0
-  if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null }
-  try { store.set(CONFIG_KEYS.sleepAt, '0') } catch (_) {}
-  if (silent) return
-  try { haptic.warn?.() } catch (_) {}
-  // pause() 是 async：不 await 的话异常会变成未处理 Promise 拒绝（页面级报错），
-  // 用 catch 兜住；这里不需要等它完成。
-  try { Promise.resolve(state.player?.pause()).catch(() => {}) } catch (_) {}
-  toast('睡眠定时到，已暂停')
-}
-
-/**
- * 到点检查（心跳路径）。
- * 为什么不能只靠 setTimeout：锁屏/切后台时 WebView 的 JS 定时器会被系统挂起，
- * 而"听着睡着"恰恰是睡眠定时最核心的场景 —— 只靠 setTimeout 会出现
- * "醒来发现还在放"。这里用播放器持续发出的 sa:time 事件当心跳兜底。
- */
-function checkSleepDeadline() {
-  if (sleepAt && Date.now() >= sleepAt) fireSleepTimer()
-}
-
-/** 注册兜底心跳（模块级，只注册一次；与播放页的 _cleanup 无关，切页面不丢） */
-function watchSleepDeadline() {
-  if (sleepWatched) return
-  sleepWatched = true
-  window.addEventListener('sa:time', checkSleepDeadline)
-  // 第三条路径：回到前台立刻结算（后台若被完全停摆，至少"一回来就停"，
-  // 不让用户发现 App 在没人听的时候还在放）
-  const onVisible = () => { if (document.visibilityState === 'visible') checkSleepDeadline() }
-  document.addEventListener('visibilitychange', onVisible)
-  window.addEventListener('focus', onVisible)
-}
-
-/**
- * 启动时恢复睡眠定时（WebView 被系统回收重建后仍生效）。
- * 已过点 → 直接按到点处理（此时播放器通常也已经不在播了）。
- */
-export async function restoreSleepTimer() {
-  try {
-    const saved = parseInt(await store.get(CONFIG_KEYS.sleepAt, '0'), 10) || 0
-    if (!saved) return
-    if (saved <= Date.now()) {
-      // 冷启动发现早就过期：不弹提示不震动（此时用户没在听，弹了只会莫名其妙），静默清零
-      sleepAt = saved
-      fireSleepTimer(true)
-      return
-    }
-    sleepAt = saved
-    watchSleepDeadline()
-    sleepTimer = setTimeout(fireSleepTimer, Math.max(0, saved - Date.now()))
-  } catch (_) {}
 }
 
 export async function renderPlayer(root) {
@@ -190,11 +126,12 @@ export async function renderPlayer(root) {
 
       <div class="player-tools">
         ${isNdItem
-          /* ND：倍速/选集/定时 都不在页面上（定时已收进右上角 ⋯ 菜单，老板 2026-09-14）。
-             整行留空即可 —— 不渲染空行会更好看，所以直接不要这一行。 */
-          ? ''
+          /* ND（音乐库，老板 2026-09-14）：倍速/选集/±15秒 都不要。
+             老板 2026-09-16：定时入口统一到播放页（⋯ 里的睡眠入口删除），
+             所以 ND 也要一个「定时」chip —— 就这一个。 */
+          ? `<button class="tool-chip" id="btnSleep">${icon('timer', 18)} <span id="sleepLabel">定时</span></button>`
           : `<button class="tool-chip" id="btnRate">1.0×</button>
-             <button class="tool-chip" id="btnSleep">${icon('timer', 18)} 定时</button>
+             <button class="tool-chip" id="btnSleep">${icon('timer', 18)} <span id="sleepLabel">定时</span></button>
              <button class="tool-chip" id="btnChapters">${icon('list', 18)} 选集</button>`}
       </div>
 
@@ -213,13 +150,23 @@ export async function renderPlayer(root) {
     seekFill.style.width = pct + '%'
     $('#tCur').textContent = fmtTime(R.cur)
     $('#tDur').textContent = fmtTime(R.dur)
-    // 单集口径下补一行「整部作品 x%」，不然用户不知道整本还剩多少
+    // 进度条下方的整部作品进度（老板 2026-09-16 改版）：
+    // 「还剩 X 小时 Y 分钟 · N%」——**两个数都是"还剩多少"**：
+    // 剩余时长 + 剩余百分比（老板原话「这个百分比是整个有声书剩余的百分比」）。
+    // ND（音乐）那边不显示这一行（老板原话「在 nd 那边这些剩余时间和百分比就不显示了」）。
     const whole = $('#pWhole')
     if (whole) {
-      if (progressScope === 'track' && p.duration) {
-        whole.textContent = '整部作品 ' + Math.round((p.position().currentTime / p.duration) * 100) + '%'
-        whole.style.display = ''
-      } else whole.style.display = 'none'
+      if (!isNdItem && p.duration > 0) {
+        const bookCur = p.position().currentTime || 0
+        const remain = Math.max(0, p.duration - bookCur)
+        // 不足 1 分钟就不报「还剩 0 分钟」，只留百分比
+        const remainTxt = remain >= 60 ? '还剩 ' + fmtDur(remain) : null
+        const pctTxt = Math.round((remain / p.duration) * 100) + '%'
+        const txt = remainTxt ? `${remainTxt} · ${pctTxt}` : pctTxt
+        // 性能：sa:time 每秒一次，值没变不碰 DOM（fmtDur 是按分钟取的，多数秒里都一样）
+        if (whole.textContent !== txt) whole.textContent = txt
+        if (whole.style.display === 'none') whole.style.display = ''
+      } else if (whole.style.display !== 'none') whole.style.display = 'none'
     }
     const ch = chapters[p.trackIndex]
     $('#pChapter').textContent = ch?.title || c.tracks[p.trackIndex]?.title || `第 ${p.trackIndex + 1} / ${c.tracks.length} 集`
@@ -234,15 +181,15 @@ export async function renderPlayer(root) {
     if (rateBtn) rateBtn.textContent = (p.rate || 1).toFixed(1).replace(/\.0$/, '.0') + '×'
   }
 
-  paintProgress(); paintState()
+  paintProgress(); paintState(); paintSleepChip()
 
   // ---- 事件 ----
   // 性能（2026-09-13 审计）：sa:time 每秒触发一次。播放页里迷你条本来就是隐藏的，
 // updateMini 每秒跑一遍（读 DOM、改 class、算 dock 高度）纯属白做 —— 去掉。
 // 迷你条的状态在 onState（播放/暂停切换，低频）时更新就够。
-const onTime = () => { if (document.body.dataset.view === 'player') paintProgress() }
+const onTime = () => { if (document.body.dataset.view === 'player') { paintProgress(); paintSleepChip() } }
   const onState = () => { paintState(); updateMini() }
-  const onTrack = () => { paintProgress(); renderExtra() }
+  const onTrack = () => { paintProgress(); renderExtra(); paintSleepChip() }
   window.addEventListener('sa:time', onTime)
   window.addEventListener('sa:state', onState)
   window.addEventListener('sa:track', onTrack)
@@ -363,34 +310,153 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
     btnLyrics.style.display = 'none'
   }
 
-  // ---- 睡眠定时（已收进右上角 ⋯ 菜单；老板 2026-09-14）----
+  // ---- 睡眠定时（老板 2026-09-16 改版）----
+  // 入口**只留播放页这一个「定时」chip**（⋯ 菜单里的睡眠入口已删）。
+  // 设定后 chip 本身变成倒计时；按章节/歌曲定时那一档，倒计时 = 这几首的总时长。
+  const sleepUnit = isNdItem ? '首' : '集'
+
+  /** 把 chip 画成「定时」或倒计时（每秒由 sa:time 调用；值没变不写 DOM） */
+  function paintSleepChip() {
+    const label = $('#sleepLabel')
+    const chip = $('#btnSleep')
+    if (!label || !chip) return
+    const kind = sleepKind()
+    let txt
+    if (kind === 'time') {
+      txt = formatCountdown(getSleepRemaining())
+    } else if (kind === 'tracks') {
+      // 剩余集数 + 这几首的总时长倒计时（老板原话：按章节那种就是对应几首歌曲的总时长倒计时）
+      const left = getSleepTracksLeft()
+      txt = `${formatCountdown(tracksCountdown(p, left))} · ${left}${sleepUnit}`
+    } else {
+      txt = '定时'
+    }
+    // 性能：sa:time 每秒一次，值没变就别碰 DOM（写 textContent 会失效渲染缓存）
+    if (label.textContent !== txt) label.textContent = txt
+    chip.classList.toggle('on', kind !== null)
+  }
+
+  /**
+   * 睡眠定时弹窗：两种模式 + 自定义时间。
+   *  时间定时：预定义 15/30/45/60 + 自定义分钟
+   *  按章节：听完 N 集/首后停（1/3/5/10 + 自定义首数）
+   */
   function openSleepDialog() {
-    const opts = [15, 30, 45, 60, 0]
-    const labels = ['15 分钟', '30 分钟', '45 分钟', '60 分钟', '关闭定时']
+    const kind = sleepKind()
+    const presets = [15, 30, 45, 60]
+    const trackPresets = [1, 3, 5, 10]
     const modal = document.createElement('div')
     modal.className = 'lock'
     modal.innerHTML = `<div class="lock-card">
       <div class="lock-title">睡眠定时</div>
-      <div class="lock-sub">${getSleepRemaining() ? '剩余 ' + Math.ceil(getSleepRemaining() / 60) + ' 分钟' : '到时间自动暂停'}</div>
-      ${opts.map((m, i) => `<button class="btn block ghost" style="margin-bottom:9px" data-m="${m}">${labels[i]}</button>`).join('')}
+      <div class="lock-sub">${(() => {
+        if (kind === 'time') return '倒计时中 · 剩余 ' + formatCountdown(getSleepRemaining())
+        if (kind === 'tracks') return '连播中 · 还剩 ' + getSleepTracksLeft() + ' ' + sleepUnit
+        return '到时间自动暂停'
+      })()}</div>
+
+      <div class="sleep-tabs">
+        <button class="sleep-tab ${kind === 'tracks' ? '' : 'on'}" data-tab="time">时间</button>
+        <button class="sleep-tab ${kind === 'tracks' ? 'on' : ''}" data-tab="tracks">按${sleepUnit}数</button>
+      </div>
+
+      <div class="sleep-pane" data-pane="time" ${kind === 'tracks' ? 'hidden' : ''}>
+        <div class="sleep-grid">
+          ${presets.map(m => `<button class="btn ghost sleep-opt" data-m="${m}">${m} 分钟</button>`).join('')}
+        </div>
+        <div class="sleep-custom">
+          <input class="time-input time-input-num" id="sleepMinInput" type="text" inputmode="numeric"
+                 placeholder="自定义" value="">
+          <span class="sleep-unit">分钟后暂停</span>
+          <button class="btn small" id="sleepMinGo">确定</button>
+        </div>
+      </div>
+
+      <div class="sleep-pane" data-pane="tracks" ${kind === 'tracks' ? '' : 'hidden'}>
+        <div class="sleep-grid">
+          ${trackPresets.map(n => `<button class="btn ghost sleep-opt" data-n="${n}">听 ${n} ${sleepUnit}</button>`).join('')}
+        </div>
+        <div class="sleep-custom">
+          <input class="time-input time-input-num" id="sleepTrackInput" type="text" inputmode="numeric"
+                 placeholder="自定义" value="">
+          <span class="sleep-unit">${sleepUnit}后暂停</span>
+          <button class="btn small" id="sleepTrackGo">确定</button>
+        </div>
+      </div>
+
+      <div class="lock-actions" style="margin-top:16px">
+        <button class="btn ghost" data-m="0">关闭定时</button>
+      </div>
     </div>`
     document.body.appendChild(modal)
-    modal.addEventListener('click', async e => {
+
+    // 自定义输入：只留数字（iOS 数字键盘也可能带出符号），非法时给明确提示而不是静默
+    const onlyDigits = el => { el.addEventListener('input', () => { el.value = el.value.replace(/\D+/g, '').slice(0, 4) }) }
+    onlyDigits(modal.querySelector('#sleepMinInput'))
+    onlyDigits(modal.querySelector('#sleepTrackInput'))
+
+    const close = () => modal.remove()
+
+    // 切换 tab：只切 pane 显隐，不重开弹窗（否则用户输了一半会被吞）
+    modal.querySelectorAll('.sleep-tab').forEach(tab => {
+      tab.onclick = () => {
+        haptic.select()
+        const want = tab.dataset.tab
+        modal.querySelectorAll('.sleep-tab').forEach(x => x.classList.toggle('on', x === tab))
+        modal.querySelectorAll('.sleep-pane').forEach(x => { x.hidden = x.dataset.pane !== want })
+      }
+    })
+
+    modal.addEventListener('click', e => {
+      // 时间预设 / 关闭
       const b = e.target.closest('[data-m]')
-      if (!b && e.target !== modal) return
       if (b) {
+        haptic.select()
         const m = parseInt(b.dataset.m, 10)
         setSleepTimer(m)
+        paintSleepChip()
+        close()
+        return
       }
-      modal.remove()
+      // 章节预设
+      const nb = e.target.closest('[data-n]')
+      if (nb) {
+        haptic.select()
+        setSleepTracks(parseInt(nb.dataset.n, 10), sleepUnit)
+        paintSleepChip()
+        close()
+        return
+      }
+      if (e.target === modal) close()
     })
+
+    const submitMinutes = () => {
+      const v = normalizeMinutes(modal.querySelector('#sleepMinInput').value)
+      if (!v) { haptic.error(); toast('请输入 1~1440 之间的分钟数'); return }
+      setSleepTimer(v)
+      paintSleepChip()
+      close()
+    }
+    const submitTracks = () => {
+      const v = normalizeTrackCount(modal.querySelector('#sleepTrackInput').value)
+      if (!v) { haptic.error(); toast('请输入 1~99 之间的' + sleepUnit + '数'); return }
+      setSleepTracks(v, sleepUnit)
+      paintSleepChip()
+      close()
+    }
+    modal.querySelector('#sleepMinGo').onclick = submitMinutes
+    modal.querySelector('#sleepTrackGo').onclick = submitTracks
+    // 回车 = 确定（外接键盘/桌面端）
+    modal.querySelector('#sleepMinInput').onkeydown = e => { if (e.key === 'Enter') submitMinutes() }
+    modal.querySelector('#sleepTrackInput').onkeydown = e => { if (e.key === 'Enter') submitTracks() }
   }
 
   // ---- 右上角三个点：当前内容的操作菜单 ----
   // 三个点在所有播放器里都是"针对当前内容的操作"。
   $('#btnMore').onclick = () => { haptic.tap(); openEpisodeMenu() }
 
-  /** 当前集的操作菜单。现有项：缓存 / 定时（老板 2026-09-14 移入）/ 歌单 / 信息 */
+  /** 当前集的操作菜单。现有项：歌单（仅 ND）/ 缓存 / 信息。
+   *  （睡眠定时 2026-09-16 移出到播放页「定时」chip —— 入口只留一个，这里不再有） */
   function openEpisodeMenu() {
     const ch = chapters[p.trackIndex]
     const t = c.tracks[p.trackIndex]
@@ -406,10 +472,6 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
         <span class="sheet-ic">${icon('playlist', 20)}</span>
         <span class="sheet-label">添加到歌单</span>
       </button>` : ''}
-      <button class="sheet-item" data-act="sleep">
-        <span class="sheet-ic">${icon('timer', 20)}</span>
-        <span class="sheet-label">睡眠定时${getSleepRemaining() ? '（剩余 ' + Math.ceil(getSleepRemaining() / 60) + ' 分钟）' : ''}</span>
-      </button>
       <button class="sheet-item" data-act="download">
         <span class="sheet-ic">${icon('download', 20)}</span>
         <span class="sheet-label">${cachedNow ? '已缓存（点击删除）' : '缓存到本机（离线听）'}</span>
@@ -427,7 +489,6 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
       haptic.select()
       modal.remove()
       if (act === 'download') await toggleDownload()
-      else if (act === 'sleep') openSleepDialog()
       else if (act === 'playlist') await addCurrentToPlaylist()
       else if (act === 'info') openInfoSheet()
     })
@@ -776,17 +837,4 @@ const onTime = () => { if (document.body.dataset.view === 'player') paintProgres
   // 播放速度恢复
   const savedRate = parseFloat(await store.get(CONFIG_KEYS.playbackRate, '1')) || 1
   if (savedRate !== 1 && p.rate !== savedRate) { await p.setRate(savedRate); paintState() }
-}
-
-export function setSleepTimer(minutes) {
-  if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null }
-  sleepAt = 0
-  try { store.set(CONFIG_KEYS.sleepAt, '0') } catch (_) {}
-  if (!minutes) { toast('已关闭睡眠定时'); return }
-  if (!sleepWatched) watchSleepDeadline()
-  sleepAt = Date.now() + minutes * 60000
-  // 持久化到 store：锁屏久了 WebView 可能被系统整个回收重建，恢复后定时仍在
-  try { store.set(CONFIG_KEYS.sleepAt, String(sleepAt)) } catch (_) {}
-  sleepTimer = setTimeout(fireSleepTimer, minutes * 60000)
-  toast('已设定 ' + minutes + ' 分钟后暂停')
 }

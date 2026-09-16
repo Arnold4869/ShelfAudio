@@ -111,7 +111,7 @@ export function openVoiceOverlay({ onSearch } = {}) {
       case 'quieter': await p?.nudgeVolume(-0.2); toast('音量小一点'); close(); return
       case 'rate': await p?.setRate(cmd.rate); toast(`速度 ${cmd.rate}×`); close(); return
       case 'sleep': {
-        const { setSleepTimer } = await import('../views/player.js')
+        const { setSleepTimer } = await import('../lib/sleep.js')
         setSleepTimer(cmd.minutes); close(); return
       }
       default: {

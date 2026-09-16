@@ -22,6 +22,41 @@ import { hub } from '../lib/servers.js'
 
 let cache = { items: [], at: 0, libraryId: null }
 
+/**
+ * 首页卡片的随机顺序（老板 2026-09-16）。
+ *
+ * 要求：每次**打开 App** 时换一个新的随机顺序（不然每天看到的是同一批书，没新意），
+ * 但**只有第一次打开时随机** —— 之后在首页 ↔ 搜索 ↔ 设置之间来回切、或从书里返回首页，
+ * 顺序必须保持不变（"不是每次切换到首页都重新排序"）。
+ *
+ * 实现：模块级 Map 按「源+库+书单签名」各存一份洗牌下标 —— 双源用户来回切换时，
+ * 每个源都保持自己第一次的顺序（切走再切回也不重洗，"关闭前都固定"）。
+ * Fisher-Yates 洗的是**下标数组**，再按序取原数组 —— 比 sort(()=>Math.random()-.5)
+ * 好，后者分布有偏且在不同引擎下结果不可复现。
+ */
+const shuffleSeeds = new Map()   // key(源+库+签名) -> 洗牌下标数组
+
+/**
+ * @param {number} len 书单长度
+ * @param {string} key 源+库标识
+ * @param {string} sig 书单内容签名（id 拼接）—— 内容变了必须重洗，
+ *   否则长度相同内容不同时旧下标会指向错的书、长度变短时越界渲染 undefined
+ */
+function shuffledOrder(len, key, sig = '') {
+  const fullKey = `${key}|${sig}|${len}`
+  let order = shuffleSeeds.get(fullKey)
+  if (order) return order
+  order = Array.from({ length: len }, (_, i) => i)
+  for (let i = len - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const tmp = order[i]; order[i] = order[j]; order[j] = tmp
+  }
+  shuffleSeeds.set(fullKey, order)
+  // Map 别无限长：只可能因源/库/书单变化增加几条，超 8 条时清掉最旧的
+  if (shuffleSeeds.size > 8) shuffleSeeds.delete(shuffleSeeds.keys().next().value)
+  return order
+}
+
 export async function renderShelf(root) {
   // 只有一种模式了（老板要求取消儿童/成人分类）。保留 kid 常量便于阅读，恒为 true。
   const kid = true
@@ -194,8 +229,18 @@ export async function renderShelf(root) {
       </div>`
   }
 
+  // 首页卡片随机顺序（老板 2026-09-16）：本次 App 打开期间固定，冷启动才重新洗牌。
+  // key 带上源+库：切服务器后书单不同，旧顺序不能沿用。**注意 state.items 仍是原序**
+  // （搜索/点击处理按 id 查，不受显示顺序影响）。
+  // 洗牌结果按**书单内容签名**缓存：会话中书单变了（服务器加了/删了书）就重洗一次
+  // —— 不能按长度缓存：长度相同内容不同时旧下标会指向错的书；也不能无限沿用：
+  //   下标越界会渲染出 undefined 卡片（审计复现：6 本洗好的顺序，删 1 本后 view 里出 None）。
+  const itemsSig = items.map(x => x.id).join(',')
+  const order = shuffledOrder(items.length, cacheKey, itemsSig)
+  const viewItems = order.map(i => items[i]).filter(Boolean)
+
   root.innerHTML = head + continueHTML +
-    `<div class="shelf-grid">${items.map(it => cardHTML(it, true)).join('')}</div>`
+    `<div class="shelf-grid">${viewItems.map(it => cardHTML(it, true)).join('')}</div>`
 
   await uiPrefsReady()   // 先确保偏好读完，按钮显隐不闪
   // 语音按钮：设置页可隐藏（老板 2026-09-13：「加个开关…可以隐藏语音按钮」）

@@ -80,4 +80,6 @@ export const CONFIG_KEYS = {
   timeWeekendTo: 'timeWeekendTo',         // 周末允许结束时间
   timeDailyMinutes: 'timeDailyMinutes',   // 每天最多听多少分钟（0=不限）
   playMode: 'playMode',                   // 播放模式 'order'|'repeat'|'shuffle'（老板 2026-09-14）
+  sleepKind: 'sleepKind',                 // 睡眠定时类型 'time'（倒计时，默认）| 'tracks'（听 N 首/集后停，老板 2026-09-16）
+  sleepTracks: 'sleepTracks',             // 按章节定时：还剩几首/集后暂停（'0'=未设定）
 }

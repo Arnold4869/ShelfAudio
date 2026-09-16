@@ -400,7 +400,38 @@ body[data-view="player"] #extra { margin-bottom: auto; }
   width: 20px; height: 20px; border-radius: 50%; background: #fff;
   box-shadow: 0 2px 8px rgba(0,0,0,.4);
 }
-.seek-times { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-top: 8px; }
+/* 进度条下剩余行（还剩 X 小时 X 分 · N%）：放中间，两端时间不能被挤走 */
+.seek-times { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--text-dim); margin-top: 8px; }
+.seek-times #tCur, .seek-times #tDur { flex: 0 0 auto; }
+.seek-whole { color: var(--text-dim); font-size: 11px; }
+
+/* ---------- 睡眠定时弹窗（2026-09-16 改版：时间 / 按章节 两种模式） ---------- */
+.sleep-tabs {
+  display: flex; gap: 6px; margin-bottom: 14px;
+  background: var(--card); border-radius: 12px; padding: 4px;
+}
+.sleep-tab {
+  flex: 1; border: none; background: none; color: var(--text-dim);
+  font-size: 14px; font-weight: 700; padding: 10px 0;
+  border-radius: 9px; cursor: pointer; min-height: 44px;
+}
+.sleep-tab.on { background: var(--accent); color: #fff; }
+.sleep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 14px; }
+.sleep-opt { font-size: 15px; min-height: 44px; }
+.sleep-custom { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.sleep-custom .time-input { flex: 1; min-width: 0; height: 44px; padding: 0 8px; }
+.sleep-unit { flex: 0 0 auto; font-size: 13px; color: var(--text-dim); white-space: nowrap; }
+.sleep-custom .btn.small { flex: 0 0 auto; min-height: 44px; }
+/* 「定时」chip 处于倒计时态时数字要等宽，不跳动 */
+#sleepLabel { font-variant-numeric: tabular-nums; }
+
+/* 弹窗卡片过高时允许内部滚动（横屏矮屏 390px 高也必须能看到底部按钮） */
+.lock:has(.sleep-tabs) { align-items: center; }
+.lock:has(.sleep-tabs) .lock-card {
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
 
 .player-controls {
   display: flex; align-items: center; justify-content: center;
@@ -827,6 +858,26 @@ body.kid .sheet-body .chapter-item { height: 76px; }
 .fav-row { margin-bottom: 6px; justify-content: flex-start; }
 .tool-chip.on { background: rgba(255,122,198,.2); color: var(--accent); border-color: transparent; }
 .seek-whole { color: var(--text-dim); font-size: 11px; }
+
+/* ---------- 睡眠定时弹窗（2026-09-16 改版：时间 / 按章节 两种模式） ---------- */
+.sleep-tabs {
+  display: flex; gap: 6px; margin-bottom: 14px;
+  background: var(--card); border-radius: 12px; padding: 4px;
+}
+.sleep-tab {
+  flex: 1; border: none; background: none; color: var(--text-dim);
+  font-size: 14px; font-weight: 700; padding: 10px 0;
+  border-radius: 9px; cursor: pointer;
+}
+.sleep-tab.on { background: var(--accent); color: #fff; }
+.sleep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 14px; }
+.sleep-opt { font-size: 15px; }
+.sleep-custom { display: flex; align-items: center; gap: 8px; }
+.sleep-custom .time-input { flex: 1; min-width: 0; }
+.sleep-unit { flex: 0 0 auto; font-size: 13px; color: var(--text-dim); white-space: nowrap; }
+.sleep-custom .btn.small { flex: 0 0 auto; }
+/* 「定时」chip 处于倒计时态时数字要等宽，不跳动 */
+#sleepLabel { font-variant-numeric: tabular-nums; }
 
 /* 章节表 */
 .chapter-item {

@@ -55,9 +55,8 @@ def open_player(pg):
     return False
 
 def set_sleep(pg, minutes):
-    pg.evaluate("document.querySelector('#btnMore')?.click()"); pg.wait_for_timeout(400)
-    pg.evaluate("[...document.querySelectorAll('.sheet-item')].find(b=>b.textContent.includes('睡眠定时'))?.click()")
-    pg.wait_for_timeout(400)
+    # 老板 2026-09-16：睡眠定时入口只在播放页「定时」chip（⋯ 菜单里那个已删）
+    pg.evaluate("document.querySelector('#btnSleep')?.click()"); pg.wait_for_timeout(400)
     pg.evaluate(f"[...document.querySelectorAll('.lock-card [data-m]')].find(b=>b.dataset.m==='{minutes}')?.click()")
     pg.wait_for_timeout(400)
 
@@ -134,8 +133,8 @@ with sync_playwright() as pw:
     ok('无 JS 报错', not errs, str(errs[:2]))
     ctx.close()
 
-    # ---- 角度 5：chip 与 ⋯ 菜单同一个 deadline ----
-    print('=== 角度 5：chip 与 ⋯ 菜单一致 ===')
+    # ---- 角度 5：定时入口唯一性（⋯ 菜单已无睡眠项，老板 2026-09-16）----
+    print('=== 角度 5：⋯ 菜单无睡眠项 + chip 与 store 一致 ===')
     ctx, pg, errs = newpage(br)
     open_player(pg)
     pg.evaluate("document.querySelector('#btnSleep')?.click()"); pg.wait_for_timeout(400)
@@ -144,7 +143,8 @@ with sync_playwright() as pw:
     d1 = int(pg.evaluate("localStorage.getItem('shelfaudio.sleepAt')"))
     pg.evaluate("document.querySelector('#btnMore')?.click()"); pg.wait_for_timeout(400)
     labels = pg.evaluate("[...document.querySelectorAll('.sheet-item .sheet-label')].map(e=>e.textContent)")
-    ok('⋯ 菜单显示剩余 ≈45 分钟', any('44' in (l or '') or '45' in (l or '') or '剩余' in (l or '') for l in labels), str(labels))
+    ok('⋯ 菜单已无「睡眠定时/定时」项（入口只留播放页 chip）',
+       not any('睡眠' in (l or '') or '定时' in (l or '') for l in labels), str(labels))
     ok('deadline 未被菜单打开动作改动',
        int(pg.evaluate("localStorage.getItem('shelfaudio.sleepAt')")) == d1)
     ok('无 JS 报错', not errs, str(errs[:2]))
