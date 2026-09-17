@@ -87,8 +87,21 @@ export async function renderPlayer(root) {
           <img class="player-cover" id="pCover" data-cover src="${c.cover}" alt="">
         </div>
       </div>
-      <div class="player-title" id="pTitle">${esc(c.title)}</div>
-      <div class="player-chapter" id="pChapter"></div>
+      <div class="player-title" id="pTitle">${esc(isNdItem ? (c.tracks[p.trackIndex]?.title || c.title) : c.title)}</div>
+      <div class="player-chapter" id="pChapter"${isNdItem ? ' hidden' : ''}></div>
+      ${isNdItem
+        /* ND 标题区三层（老板 2026-09-17「正常的播放器会显示他的名字，点他的名字显示所有作品。
+           这个名字就在当前歌曲的歌名下方」）：
+             ① 歌名（大字，见上面 pTitle）
+             ② 歌手（可点 → 歌手页；带一个 chevron 提示可点）
+             ③ 专辑（小灰字，可点 → 专辑详情）
+           —— 歌名既然放大字了，原来的「章节行」在 ND 下就没意义（会把歌名显示两遍）→ 隐藏。
+           ABS 侧这两个元素根本不渲染（书没有歌手概念，老板范围限定只改 ND）。 */
+        ? `<button class="player-artist" id="pArtist" hidden>
+             <span id="pArtistName"></span>${icon('forward', 15)}
+           </button>
+           <button class="player-album" id="pAlbum" hidden></button>`
+        : ''}
 
       <div class="seek-wrap">
         <div class="seek-bar" id="seekBar">
@@ -169,7 +182,33 @@ export async function renderPlayer(root) {
       } else if (whole.style.display !== 'none') whole.style.display = 'none'
     }
     const ch = chapters[p.trackIndex]
-    $('#pChapter').textContent = ch?.title || c.tracks[p.trackIndex]?.title || `第 ${p.trackIndex + 1} / ${c.tracks.length} 集`
+    const t = c.tracks[p.trackIndex]
+    // ABS：章节行照旧。ND：pChapter 已隐藏（歌名在大字位，重复显示没意义），只更新不出错。
+    $('#pChapter').textContent = ch?.title || t?.title || `第 ${p.trackIndex + 1} / ${c.tracks.length} 集`
+    // ND 标题区：大字换当前歌名 + 歌手行（可点进歌手页）+ 专辑行（可点回专辑详情）。
+    // ABS 侧无这些元素，判空跳过。切歌（sa:track → paintProgress）会跟着刷新。
+    if (isNdItem) {
+      const titleEl = $('#pTitle')
+      const songTitle = t?.title || c.title || ''
+      if (titleEl && titleEl.textContent !== songTitle) titleEl.textContent = songTitle
+      const artistEl = $('#pArtist'), albumEl = $('#pAlbum')
+      if (artistEl) {
+        const nameEl = $('#pArtistName')
+        const aname = t?._nd?.artist || ''
+        if (nameEl && nameEl.textContent !== aname) nameEl.textContent = aname
+        // 拿不到歌手或 artistId（点不开歌手页）就整行藏掉，别渲染一个点了没反应的按钮
+        const okArtist = !!aname && !!t?._nd?.artistId
+        if (artistEl.hidden !== !okArtist) artistEl.hidden = !okArtist
+        artistEl.disabled = !okArtist
+      }
+      if (albumEl) {
+        const albumName = c.title || ''
+        if (albumEl.textContent !== albumName) albumEl.textContent = albumName
+        const okAlbum = !!albumName && String(c.item.id || '').startsWith('nd:')
+        if (albumEl.hidden !== !okAlbum) albumEl.hidden = !okAlbum
+        albumEl.disabled = !okAlbum
+      }
+    }
   }
   function paintState() {
     // 必须用 innerHTML：textContent 会把上面注入的 SVG 抹掉，播放键会变空白
@@ -207,6 +246,25 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
   $('#btnPrev').onclick = () => { haptic.tap(); p.prevTrack() }
   $('#btnNext').onclick = () => { haptic.tap(); p.nextTrack() }
   $('#btnFavTop').onclick = () => { haptic.tap(); toggleFav() }
+
+  // ---- ND：歌手行 → 歌手页；专辑行 → 专辑详情（老板 2026-09-17）----
+  // 都判空（ABS 侧不渲染这两个按钮）；disabled 态由 paintProgress 按元数据有无维护。
+  const artistBtn = $('#pArtist')
+  if (artistBtn) artistBtn.onclick = () => {
+    if (artistBtn.disabled) return
+    const artistId = c.tracks[p.trackIndex]?._nd?.artistId
+    if (!artistId) return
+    haptic.tap()
+    // 必须带 ndart: 前缀 —— hub.getArtist 按 id 前缀判断是哪个源的数据，
+    // 传裸 id 会被当成 ABS 条目直接返回 null（测试抓出的真 bug）。
+    go('artist', { id: 'ndart:' + String(artistId).replace(/^ndart:/, '') })
+  }
+  const albumBtn = $('#pAlbum')
+  if (albumBtn) albumBtn.onclick = () => {
+    if (albumBtn.disabled) return
+    haptic.tap()
+    go('album', { id: c.item.id })
+  }
   //  不要再引用已从模板里删掉的元素：$('#x') 返回 null，给 null 赋 onclick 会抛
   // TypeError，**把它之后的所有初始化全部中断**（三个点菜单就是这么失效的）。
   // 0.8.0 曾把下面这段整体删掉，但 ABS 的按钮模板还在 → 倍速/±15秒/定时全变死按钮

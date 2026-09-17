@@ -286,7 +286,8 @@ export class NavidromeApi {
         contentUrl: `/rest/stream?id=${encodeURIComponent(s.id)}`,
         title: s.title || `第 ${i + 1} 首`,
         mimeType: s.contentType || 'audio/mpeg',
-        _nd: { songId: s.id, track: s.track, suffix: s.suffix, artist: s.artist },
+        // artistId 一并带上：播放页要显示「歌手」并可点进歌手页（老板 2026-09-17）
+        _nd: { songId: s.id, track: s.track, suffix: s.suffix, artist: s.artist, artistId: s.artistId || '' },
       }
     })
     item.media.audioFiles = songs.map(s => ({
@@ -305,8 +306,7 @@ export class NavidromeApi {
     return item
   }
 
-  /**
-   * 搜索：老板 2026-09-14「分成几个的搜索：专辑、作者、歌曲名或者详情，不要混到一块」。
+  /** 搜索：老板 2026-09-14「分成几个的搜索：专辑、作者、歌曲名或者详情，不要混到一块」。
    * 返回三组分开的数据（Subsonic search3 一次请求就带三类结果，不用多发）：
    *   { albums: [书形状], artists: [{id, name}], songs: [{id, albumId, title, artist, duration}] }
    * 歌曲点进去 → 定位到所在专辑从那首开始播（复用专辑详情页）。
@@ -332,6 +332,61 @@ export class NavidromeApi {
       duration: s.duration || 0,
     }))
     return { albums, artists, songs }
+  }
+
+  /**
+   * 歌手详情（老板 2026-09-17：播放页点歌手名 → 看他的全部作品）。
+   * 实测（ND v0.64.0，2026-09-17）：
+   *  - getArtist 一次返回歌手 + 名下**全部专辑**（getAlbumList2 的 byArtist 类型没实现，
+   *    不能用它）；专辑对象形状与 getAlbumList2 相同。
+   *  - 歌曲列表没有专用端点（getTopSongs/getArtistSongs 都不可用/会超时），
+   *    实测用 search3 按歌手名搜 + artistId 精确过滤：许嵩 174/174、王菲 177/177、
+   *    周杰伦 151/151 全对上（search3 上限实测 ≥3930，覆盖全库）。
+   *    search3 返回里可能混进「合作曲/同名歌」，必须按 artistId 过滤，不能只看文本。
+   * 返回 { id, name, albums: [书形状], songs: [{ songId, title, artist, albumId, duration }] }
+   */
+  async getArtist(ndArtistId) {
+    const aid = String(ndArtistId || '').replace(/^ndart:/, '')
+    if (!aid) throw new Error('缺少歌手 id')
+    const sr = await this._sub('/rest/getArtist', { id: aid })
+    const a = sr?.artist
+    if (!a) throw new Error('找不到这个歌手')
+    const albums = (a.album || []).map(x => this._albumToItem(x))
+    // 歌曲：按歌手名搜（songCount 给大 —— search3 单次返回实测可达全库量级），
+    // 再按 artistId 过滤掉同名/合作曲目。失败不致命：专辑列表已经足够用。
+    let songs = []
+    try {
+      const sr2 = await this._sub('/rest/search3', {
+        query: a.name || '',
+        albumCount: 0, artistCount: 0, songCount: 1000,
+      })
+      songs = (sr2?.searchResult3?.song || [])
+        .filter(s => s.artistId === aid)
+        .map(s => ({
+          songId: s.id,
+          title: s.title || '',
+          artist: s.artist || a.name || '',
+          albumId: s.albumId || '',
+          album: s.album || '',
+          duration: Number(s.duration) || 0,
+          track: Number(s.track) || 0,
+        }))
+    } catch (_) { }
+    return { id: 'ndart:' + a.id, name: a.name || '', albums, songs }
+  }
+
+  /** 歌手头像直链（ND 支持用 getCoverArt 取 artist 图，id 用 ar-<artistId> 形式）。
+   *  实测本库 613 位歌手全是同一张默认占位星图（没抓取真实照片）——
+   *  视图层要配自绘兜底（fallbackAvatar），图加载失败才露出来。 */
+  artistImageUrl(ndArtistId, { width = 300 } = {}) {
+    const aid = String(ndArtistId || '').replace(/^ndart:/, '')
+    if (!aid || !this.baseUrl) return ''
+    const salt = randomSalt()
+    const token = md5(this.password + salt)
+    const qs = new URLSearchParams({
+      id: 'ar-' + aid, size: String(width), u: this.username, t: token, s: salt, v: API_VER, c: CLIENT,
+    })
+    return `${this.baseUrl}/rest/getCoverArt?${qs.toString()}`
   }
 
   async searchLibrary(libraryId, q) {
@@ -500,7 +555,13 @@ export class NavidromeApi {
         mimeType: 'audio/mpeg',
         // 带 songId：播放页「添加到歌单」需要拿当前这首歌的 ND songId
         // （老板 2026-09-14）。albumId 一并带上，便于跨专辑按专辑播。
-        _nd: { songId: song.id, albumId: item._nd?.albumId || String(ndItemId).replace(/^nd:/, '') },
+        // artist/artistId：播放页标题区显示歌手 + 点进歌手页（老板 2026-09-17）
+        _nd: {
+          songId: song.id,
+          albumId: item._nd?.albumId || String(ndItemId).replace(/^nd:/, ''),
+          artist: song.artist || item._nd?.artist || '',
+          artistId: song.artistId || item._nd?.artistId || '',
+        },
       }
     })
     return {

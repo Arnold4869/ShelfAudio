@@ -283,6 +283,24 @@ class ServerHub {
     return this.nd.getLyrics(id)
   }
 
+  /**
+   * 歌手详情（老板 2026-09-17：ND 播放页点歌手名 → 看他全部作品）。
+   * 只有 ND 有歌手概念；ABS 那边没有 → 返回 null（视图层据此不渲染入口）。
+   * ⚠️ 歌手 id 前缀是 `ndart:`（不是 `nd:`）—— sourceOfId() 只认 `nd:`，
+   * 直接用它会判成 ABS 返回 null（开发时踩到，测试抓出）。这里显式判两种前缀。
+   */
+  getArtist(artistId) {
+    const id = String(artistId || '')
+    if (!id.startsWith('ndart:') && !id.startsWith('nd:')) return Promise.resolve(null)
+    return this.nd.getArtist(id)
+  }
+
+  /** 歌手头像直链（配自绘兜底；ABS 无 → 空串） */
+  artistImageUrl(artistId, opts) {
+    if (typeof this.nd.artistImageUrl !== 'function') return ''
+    return this.nd.artistImageUrl(artistId, opts)
+  }
+
   // ---- 收藏夹（按 id 分派；ND 只有 star，无收藏夹） ----
   getCollection(id) { return this.clientFor(id).getCollection(id) }
   addToCollection(colId, itemId) { return this.clientFor(itemId).addToCollection(colId, itemId) }

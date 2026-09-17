@@ -620,6 +620,13 @@ route('album', async (root, params) => {
   await renderAlbum(root, params)
 })
 
+// 歌手页（Navidrome）：播放页点歌手名进来，看他的全部作品（老板 2026-09-17）
+route('artist', async (root, params) => {
+  document.body.dataset.view = 'artist'
+  const { renderArtist } = await import('./views/artist.js')
+  await renderArtist(root, params)
+})
+
 // 歌单（Navidrome）：列表 + 详情（老板 2026-09-14，方案 A：首页三入口之一）
 route('playlists', async (root) => {
   document.body.dataset.view = 'playlists'

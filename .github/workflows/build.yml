@@ -43,8 +43,12 @@ jobs:
         run: python3 scripts/test-sleep-timer.py
       - name: Sleep timer round-2 (state machine, leak, cross-page)
         run: python3 scripts/test-sleep-timer-round2.py
-      - name: Sleep by chapters/tracks + home shuffle (Playwright)
+      - name: Sleep by chapters/tracks + home order (Playwright)
         run: python3 scripts/test-sleep-tracks.py
+      - name: ND player artist row + artist page (Playwright)
+        run: python3 scripts/test-nd-artist.py
+      - name: Artist row/page layout audit (narrow/landscape/tablet)
+        run: python3 scripts/test-artist-layout.py
       - name: Sleep dialog layout audit (narrow/landscape/tablet)
         run: python3 scripts/test-sleep-layout.py
       - name: Parental controls (Playwright + node)
@@ -216,8 +220,12 @@ jobs:
         run: python3 scripts/test-sleep-timer.py
       - name: Sleep timer round-2 (state machine, leak, cross-page)
         run: python3 scripts/test-sleep-timer-round2.py
-      - name: Sleep by chapters/tracks + home shuffle (Playwright)
+      - name: Sleep by chapters/tracks + home order (Playwright)
         run: python3 scripts/test-sleep-tracks.py
+      - name: ND player artist row + artist page (Playwright)
+        run: python3 scripts/test-nd-artist.py
+      - name: Artist row/page layout audit (narrow/landscape/tablet)
+        run: python3 scripts/test-artist-layout.py
       - name: Sleep dialog layout audit (narrow/landscape/tablet)
         run: python3 scripts/test-sleep-layout.py
       - name: Parental controls (Playwright + node)
