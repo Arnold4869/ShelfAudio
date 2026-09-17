@@ -131,18 +131,48 @@ def main():
 
     srv = subprocess.Popen([sys.executable, '-m', 'http.server', str(PORT), '--bind', '127.0.0.1'],
                            cwd=DIST, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    br = subprocess.Popen([chrome, '--headless=new', '--no-sandbox', '--disable-gpu',
-                           f'--remote-debugging-port={CDP_PORT}',
-                           f'--user-data-dir=/tmp/sa-regress-{os.getpid()}', 'about:blank'],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        base = f'http://127.0.0.1:{PORT}/index.html'
+    # ⚠️ headless Chrome 在 CI runner 上**偶尔起不来**（0.10.2 / 0.11.0 各踩过一次：
+    # CDP 端口一直 Connection refused → 脚本崩 → android job 红）。
+    # 本测试的既定策略就是「没浏览器就跳过」（见上面 dist / chromium 判断）——
+    # 起不来同属"没有可用的浏览器"，必须同样跳过，绝不能让环境问题打红 CI。
+    # 处理：最多重启 3 次；仍失败则打印 Chrome 的 stderr（便于下次诊断）并按跳过处理。
+    br = None
+    cdp_ready = False
+    chrome_err = b''
+    for attempt in range(3):
+        br = subprocess.Popen([chrome, '--headless=new', '--no-sandbox', '--disable-gpu',
+                               f'--remote-debugging-port={CDP_PORT}',
+                               f'--user-data-dir=/tmp/sa-regress-{os.getpid()}-{attempt}', 'about:blank'],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        cdp_ready = False
         for _ in range(40):
+            if br.poll() is not None:
+                break   # Chrome 进程已退出 —— 再等也没用，直接走重试
             try:
                 urllib.request.urlopen(f'http://127.0.0.1:{CDP_PORT}/json/version', timeout=1)
+                cdp_ready = True
                 break
             except Exception:
                 time.sleep(0.5)
+        if cdp_ready:
+            break
+        # 起不来：收 stderr（诊断用）+ 清掉进程/目录再重试
+        try:
+            if br.poll() is None:
+                br.terminate()
+            chrome_err = (br.stderr.read() or b'')[-500:] if br.stderr else b''
+        except Exception:
+            pass
+        br = None
+        time.sleep(1)
+    if not cdp_ready:
+        print('跳过：headless Chrome 起不来（CI 环境问题，非代码回归）')
+        if chrome_err:
+            print('  chrome stderr 尾部:', chrome_err.decode('utf-8', 'replace')[-300:])
+        srv.terminate()
+        return 0
+    try:
+        base = f'http://127.0.0.1:{PORT}/index.html'
         tabs = [t for t in json.load(urllib.request.urlopen(f'http://127.0.0.1:{CDP_PORT}/json'))
                 if t['type'] == 'page']
         c = CDP(tabs[0]['webSocketDebuggerUrl'])
