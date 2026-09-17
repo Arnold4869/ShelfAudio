@@ -397,7 +397,7 @@ body[data-view="player"] #extra { margin-bottom: auto; }
   cursor: pointer;
 }
 .player-artist { min-height: 44px; font-size: 15px; font-weight: 600; }
-.player-artist .ic-svg { color: var(--text-dim); opacity: .8; }
+/* 箭头已按老板要求去掉（0.11.0 二轮）：可点性只靠 ：active 按压反馈表达 */
 .player-artist:active { opacity: .7; }
 /* 歌手名可能很长（多人合作），一行截断 + 省略号，别把标题区撑成两行 */
 .player-artist span {

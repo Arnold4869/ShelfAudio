@@ -93,12 +93,14 @@ export async function renderPlayer(root) {
         /* ND 标题区三层（老板 2026-09-17「正常的播放器会显示他的名字，点他的名字显示所有作品。
            这个名字就在当前歌曲的歌名下方」）：
              ① 歌名（大字，见上面 pTitle）
-             ② 歌手（可点 → 歌手页；带一个 chevron 提示可点）
+             ② 歌手（可点 → 歌手页）
              ③ 专辑（小灰字，可点 → 专辑详情）
            —— 歌名既然放大字了，原来的「章节行」在 ND 下就没意义（会把歌名显示两遍）→ 隐藏。
-           ABS 侧这两个元素根本不渲染（书没有歌手概念，老板范围限定只改 ND）。 */
+           ABS 侧这两个元素根本不渲染（书没有歌手概念，老板范围限定只改 ND）。
+           老板 2026-09-17 二轮：**歌名旁不要任何符号**（曾加过 forward 箭头做可点提示，
+           老板「为嘛会多个符号，不需要它，只需要点击姓名跳转就行」→ 已去掉，靠按压反馈提示）。 */
         ? `<button class="player-artist" id="pArtist" hidden>
-             <span id="pArtistName"></span>${icon('forward', 15)}
+             <span id="pArtistName"></span>
            </button>
            <button class="player-album" id="pAlbum" hidden></button>`
         : ''}

@@ -196,6 +196,16 @@ with sync_playwright() as pw:
     ok('有歌手行', pg.evaluate("!!document.querySelector('#pArtist')"))
     ok('歌手行显示歌手名', pg.evaluate("document.querySelector('#pArtistName')?.textContent") == '歌手N',
        str(pg.evaluate("document.querySelector('#pArtistName')?.textContent")))
+    # 老板 2026-09-17 二轮：「名字旁边为嘛会多个符号，不需要它，只需要点击姓名跳转就行」
+    # → 歌手行内不得有任何图标/符号（曾有过 forward 箭头），只留纯文字。
+    ok('歌手行没有多余符号（无 SVG 图标）',
+       pg.evaluate("!document.querySelector('#pArtist svg') && !document.querySelector('#pArtist img')"),
+       str(pg.evaluate("document.querySelector('#pArtist')?.innerHTML?.trim()")))
+    ok('歌手行文字就是歌手名本身（无前后缀符号）',
+       pg.evaluate("(document.querySelector('#pArtist')?.textContent || '').trim()") == '歌手N',
+       repr(pg.evaluate("(document.querySelector('#pArtist')?.textContent || '').trim()")))
+    ok('专辑行同样无多余符号', pg.evaluate("!document.querySelector('#pAlbum svg')"),
+       str(pg.evaluate("document.querySelector('#pAlbum')?.innerHTML?.trim()")))
     ok('歌手行可见（未 hidden）', pg.evaluate("document.querySelector('#pArtist')?.hidden") == False)
     ok('歌手行在歌名下方（垂直位置 > 标题底部）',
        pg.evaluate("""(() => {
