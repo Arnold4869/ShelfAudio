@@ -23,11 +23,15 @@ import { hub } from '../lib/servers.js'
 let cache = { items: [], at: 0, libraryId: null }
 
 /**
- * 首页卡片的随机顺序（老板 2026-09-16）。
+ * 首页卡片的随机顺序 —— **仅 Navidrome 源生效**（老板 2026-09-17 拍板）。
  *
- * 要求：每次**打开 App** 时换一个新的随机顺序（不然每天看到的是同一批书，没新意），
- * 但**只有第一次打开时随机** —— 之后在首页 ↔ 搜索 ↔ 设置之间来回切、或从书里返回首页，
+ * ND 要求：每次**打开 App** 时换一个新的随机顺序（不然每天看到的是同一批专辑，没新意），
+ * 但**只有第一次打开时随机** —— 之后在首页 ↔ 搜索 ↔ 设置之间来回切、或从专辑里返回首页，
  * 顺序必须保持不变（"不是每次切换到首页都重新排序"）。
+ *
+ * **ABS 侧保持服务器固定排序**（老板原话「abs 这边还是原来的固定排序就可以」）——
+ * 有声书是一本本连续听的，顺序乱掉反而找不到书。`shuffledOrder()` 只在
+ * `hub.active === 'nd'` 时被调用，ABS 直接原序渲染。
  *
  * 实现：模块级 Map 按「源+库+书单签名」各存一份洗牌下标 —— 双源用户来回切换时，
  * 每个源都保持自己第一次的顺序（切走再切回也不重洗，"关闭前都固定"）。
@@ -229,15 +233,21 @@ export async function renderShelf(root) {
       </div>`
   }
 
-  // 首页卡片随机顺序（老板 2026-09-16）：本次 App 打开期间固定，冷启动才重新洗牌。
+  // 首页卡片随机顺序 —— **仅 ND 生效**（老板 2026-09-17 拍板：「abs 这边还是原来的
+  // 固定排序就可以」）。ABS 直接原序渲染（state.items 本来就是服务器给的顺序）。
+  // ND：本次 App 打开期间固定，冷启动才重新洗牌。
   // key 带上源+库：切服务器后书单不同，旧顺序不能沿用。**注意 state.items 仍是原序**
   // （搜索/点击处理按 id 查，不受显示顺序影响）。
-  // 洗牌结果按**书单内容签名**缓存：会话中书单变了（服务器加了/删了书）就重洗一次
-  // —— 不能按长度缓存：长度相同内容不同时旧下标会指向错的书；也不能无限沿用：
-  //   下标越界会渲染出 undefined 卡片（审计复现：6 本洗好的顺序，删 1 本后 view 里出 None）。
-  const itemsSig = items.map(x => x.id).join(',')
-  const order = shuffledOrder(items.length, cacheKey, itemsSig)
-  const viewItems = order.map(i => items[i]).filter(Boolean)
+  // 洗牌结果按**书单内容签名**缓存：会话中书单变了（服务器加了/删了专辑）就重洗一次
+  // —— 不能按长度缓存：长度相同内容不同时旧下标会指向错的专辑；也不能无限沿用：
+  //   下标越界会渲染出 undefined 卡片（审计复现：6 张洗好的顺序，删 1 张后 view 里出 None）。
+  const viewItems = hub.active === 'nd'
+    ? (() => {
+        const itemsSig = items.map(x => x.id).join(',')
+        const order = shuffledOrder(items.length, cacheKey, itemsSig)
+        return order.map(i => items[i]).filter(Boolean)
+      })()
+    : items
 
   root.innerHTML = head + continueHTML +
     `<div class="shelf-grid">${viewItems.map(it => cardHTML(it, true)).join('')}</div>`

@@ -24,6 +24,11 @@ ABS_BOOK = {'id':'absbook1','media':{'metadata':{'title':'ABS 有声书','author
 # 多本书用于随机排序验证
 BOOKS = [{'id':f'absbook{i}','media':{'metadata':{'title':f'书{i}','authorName':'作者'},'duration':600}} for i in range(6)]
 ND_ALBUM = {'id':'ndalb1','name':'ND 测试专辑','artist':'歌手N','songCount':3,'duration':300,'coverArt':'c1'}
+# 多张 ND 专辑用于「首页随机排序仅 ND 生效」验证（2026-09-17）
+ND_ALBUMS = [ND_ALBUM] + [
+  {'id':f'ndalb{i}','name':f'ND 专辑{i}','artist':f'歌手{i}','songCount':3,'duration':300,'coverArt':f'c{i}'}
+  for i in range(2, 7)
+]
 ND_SONGS = [
   {'id':'nds1','albumId':'ndalb1','title':'第一首歌','artist':'歌手N','duration':100,'track':1,'contentType':'audio/mpeg'},
   {'id':'nds2','albumId':'ndalb1','title':'第二首歌','artist':'歌手N','duration':100,'track':2,'contentType':'audio/mpeg'},
@@ -52,8 +57,14 @@ def mk_handler(books):
         if '/rest/' in p:
             def nd(b): return route.fulfill(status=200, content_type='application/json', body=json.dumps({'subsonic-response':{'status':'ok','version':'1.16.1', **b}}))
             if p == '/rest/getMusicFolders': return nd({'musicFolders':{'musicFolder':[{'id':'ndlib','name':'音乐'}]}})
-            if p == '/rest/getAlbumList2': return nd({'albumList2':{'album':[ND_ALBUM]}})
-            if p == '/rest/getAlbum': return nd({'album':{**ND_ALBUM,'song':ND_SONGS}})
+            if p == '/rest/getAlbumList2': return nd({'albumList2':{'album':ND_ALBUMS}})
+            if p == '/rest/getAlbum':
+                # 任意专辑都返回 3 首（首页洗牌后第一张卡可能是别的专辑）
+                qs = dict(x.split('=', 1) for x in u.split('?', 1)[1].split('&')) if '?' in u else {}
+                aid = qs.get('id', 'ndalb1')
+                alb = next((a for a in ND_ALBUMS if a['id'] == aid), ND_ALBUM)
+                songs = [{**s, 'albumId': aid} for s in ND_SONGS]
+                return nd({'album':{**alb,'song':songs}})
             if p == '/rest/getStarred2': return nd({'starred2':{'album':[]}})
             if p == '/rest/getBookmarks': return nd({'bookmarks':{'bookmark':[]}})
             return nd({})
@@ -235,30 +246,57 @@ with sync_playwright() as pw:
     ok('无 JS 报错', not errs, str(errs[:2]))
     ctx.close()
 
-    # ---------- 7. 首页随机排序 ----------
-    print('=== 7. 首页随机排序（冷启动洗一次，会话内固定）===')
+    # ---------- 7. 首页排序：ABS 固定 / 仅 ND 洗牌（老板 2026-09-17 拍板）----------
+    print('=== 7. 首页排序：ABS 固定排序，仅 ND 随机（2026-09-17）===')
     ctx, pg, errs = newpage(br, ABS_PREFS, handler)
     pg.wait_for_timeout(400)
     def ids(pg):
         return pg.evaluate("[...document.querySelectorAll('.shelf-grid .book-card')].map(e=>e.dataset.id)")
     first = ids(pg)
-    ok('首页有 6 张卡', len(first) == 6, str(first))
-    # 回书架（导航往返）→ 顺序不变
+    ok('ABS 首页有 6 张卡', len(first) == 6, str(first))
+    ok('ABS 顺序 = 服务器原序（不洗牌）', first == [f'absbook{i}' for i in range(6)], str(first))
+    # 回书架（导航往返）→ ABS 顺序不变
     pg.evaluate("document.querySelector('.book-card')?.click()"); pg.wait_for_timeout(2200)
     pg.evaluate("document.querySelector('#btnBack')?.click()"); pg.wait_for_timeout(800)
     second = ids(pg)
-    ok('往返播放页后顺序不变（会话内固定）', first == second, f'{first} vs {second}')
-    # 切到搜索再回来 → 顺序也不变
+    ok('ABS 往返播放页后顺序不变', first == second, f'{first} vs {second}')
+    ok('无 JS 报错', not errs, str(errs[:2]))
+    ctx.close()
+
+    # ND：冷启动洗一次、会话内固定（与 ABS 行为对照）
+    ctx, pg, errs = newpage(br, ND_PREFS, handler)
+    pg.wait_for_timeout(400)
+    nd_first = ids(pg)
+    ok('ND 首页有 6 张专辑卡', len(nd_first) == 6, str(nd_first))
+    # 切页签往返 → ND 顺序也固定（会话内不重洗）
     pg.evaluate("[...document.querySelectorAll('.kid-tab')].find(b=>b.dataset.tab==='search')?.click()")
     pg.wait_for_timeout(600)
     pg.evaluate("[...document.querySelectorAll('.kid-tab')].find(b=>b.dataset.tab==='kidhome')?.click()")
     pg.wait_for_timeout(800)
-    third = ids(pg)
-    ok('切页签回来顺序也不变', first == third, f'{first} vs {third}')
-    # 刷新 = 冷启动 → 允许重新洗牌（只验证刷新后仍渲染 6 张，顺序可能不同也可能相同——概率问题不断言不同）
-    pg.reload(); pg.wait_for_timeout(2400)
-    fourth = ids(pg)
-    ok('刷新后卡片渲染正常（数量一致）', sorted(fourth) == sorted(first), f'{fourth}')
+    nd_second = ids(pg)
+    ok('ND 切页签回来顺序不变（会话内固定）', nd_first == nd_second, f'{nd_first} vs {nd_second}')
+    ok('无 JS 报错', not errs, str(errs[:2]))
+    ctx.close()
+
+    # 双源：ABS ↔ ND 各自保持自己的顺序（ABS 恒为原序，ND 会话内固定）
+    # 注意 prefs 拼接顺序：ND_PREFS 末尾会把 activeSource 覆盖成 'nd' → 显式钉回 'abs'
+    DUAL_PREFS = ABS_PREFS + ND_PREFS + "localStorage.setItem('shelfaudio.activeSource','abs');"
+    ctx, pg, errs = newpage(br, DUAL_PREFS, handler)
+    pg.wait_for_timeout(400)
+    def switch(pg, src):
+        pg.evaluate(f"document.querySelector('#srcSwitch')?.click()"); pg.wait_for_timeout(300)
+        pg.evaluate(f"document.querySelector('.src-menu [data-src=\"{src}\"]')?.click()"); pg.wait_for_timeout(1200)
+    dual_abs1 = ids(pg)
+    ok('双源-ABS 首屏 = 原序', dual_abs1 == [f'absbook{i}' for i in range(6)], str(dual_abs1))
+    switch(pg, 'nd')
+    dual_nd1 = ids(pg)
+    ok('双源-ND 首屏有 6 张', len(dual_nd1) == 6, str(dual_nd1))
+    switch(pg, 'abs')
+    dual_abs2 = ids(pg)
+    ok('双源-切回 ABS 仍是原序（不洗牌）', dual_abs2 == [f'absbook{i}' for i in range(6)], str(dual_abs2))
+    switch(pg, 'nd')
+    dual_nd2 = ids(pg)
+    ok('双源-切回 ND 顺序保持（会话内固定）', dual_nd2 == dual_nd1, f'{dual_nd1} vs {dual_nd2}')
     ok('无 JS 报错', not errs, str(errs[:2]))
     ctx.close()
 
