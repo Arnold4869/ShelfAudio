@@ -82,6 +82,7 @@ export class BookPlayer {
     this.notification = null    // { title, artist, album, artworkUrl }
     this._volume = 1
     this._volumeCap = 1         // 家长音量上限（load 时读一次，之后每次装轨都再套一遍）
+    this._lastVolumeSent = null // 已下发到原生层的音量值（null = 未知，需重发）。见 _applyNativeVolume
     // 播放模式（老板 2026-09-14：「单曲循环、顺序播放、乱序播放」）
     //   'order'  顺序播放（默认，播完一集接下一集，最后一集结束）
     //   'repeat' 单曲循环（当前这一首/集反复）
@@ -271,7 +272,7 @@ export class BookPlayer {
           // 选章节/拖进度条/从暂停恢复都会因此被"弹回开头"——这就是
           // 「选集点了没用」「历史记录没更新」的共同根因。
           const fileTime = this._fileTimeFor(this.trackIndex)
-          await NativeAudio.play({ assetId: this._assetId(this.trackIndex), time: fileTime })
+          await NativeAudio.play(this._playArgs(this._assetId(this.trackIndex), fileTime))
           this._playingAssetIdx = this.trackIndex
         } else if (this._audio) {
           await this._audio.play().catch(e => console.warn('play 失败', e))
@@ -283,7 +284,7 @@ export class BookPlayer {
         try {
           await this._nativeLoadTrack(this.trackIndex, this._fileTimeFor(this.trackIndex))
           const fileTime2 = this._fileTimeFor(this.trackIndex)
-          await NativeAudio.play({ assetId: this._assetId(this.trackIndex), time: fileTime2 })
+          await NativeAudio.play(this._playArgs(this._assetId(this.trackIndex), fileTime2))
           this._playingAssetIdx = this.trackIndex
         } catch (e2) {
           this._starting = false
@@ -330,7 +331,7 @@ export class BookPlayer {
       try {
         try { await NativeAudio.clearCache?.() } catch (_) {}
         await this._nativeLoadTrack(this.trackIndex, this._fileTimeFor(this.trackIndex))
-        await NativeAudio.play({ assetId: this._assetId(this.trackIndex), time: this._fileTimeFor(this.trackIndex) })
+        await NativeAudio.play(this._playArgs(this._assetId(this.trackIndex), this._fileTimeFor(this.trackIndex)))
         this._playingAssetIdx = this.trackIndex
         this._startDeadline = Date.now() + 15000
         this._armStartWatchdog()   // 再观察一轮；仍不出声就真报错
@@ -487,6 +488,49 @@ export class BookPlayer {
     return Math.max(0.01, Math.min(v, cap))
   }
 
+  /**
+   * 原生层已下发的音量值（跨 asset 复用；resetNativeVolumeState() 显式清空）。
+   * 用途：play() 必须带 volume，但绝大多数情况（音量 100%、上限未设）
+   * 插件的默认值就是正确值 —— 没必要为它多付一次桥调用。
+   */
+  _nativeVolumeApplied() {
+    return this._lastVolumeSent
+  }
+
+  /**
+   * 装轨/重新加载 native 播放器后调用：那条 asset 的音量回到插件默认（100%），
+   * 我们记录的"已下发值"随之失效。
+   */
+  _resetNativeVolumeState() {
+    this._lastVolumeSent = null
+  }
+
+  /** 把当前生效音量下发到当前音轨（仅在与上次下发值不同时才发桥调用） */
+  async _applyNativeVolume(assetId = this._assetId(this.trackIndex), force = false) {
+    const eff = this._effectiveVolume()
+    if (!force && this._lastVolumeSent === eff) return
+    try {
+      await NativeAudio.setVolume({ assetId, volume: eff })
+      this._lastVolumeSent = eff
+    } catch (_) {}
+  }
+
+  /**
+   * play() 参数：**必须显式带 volume**。
+   * 插件 play 的 volume 默认值两端都是 1.0，且 Android 的 playInternal 会无条件
+   * `player.setVolume(1.0)`（只有传 0 才跳过）、iOS 会 `player.volume = initialVolume`。
+   * 不传 = 每次开播（暂停恢复、切集、换书、看门狗自愈）音量被打回 100%，
+   * 连家长音量上限也一起被打穿。仅在音量真的不是 100% 时才带上，
+   * 保持"音量 1 + 无上限"这条主路径的桥调用次数不变。
+   */
+  _playArgs(assetId, time) {
+    const eff = this._effectiveVolume()
+    const args = { assetId, time }
+    // 浮点比较用容差：0.6 这类值乘除后可能有尾差
+    if (Math.abs(eff - 1) > 1e-6) args.volume = eff
+    return args
+  }
+
   /** 音量增减（语音“大声点/小声点”用），0.1~1.0 */
   async setVolume(v, { enforceCap = true } = {}) {
     // 家长音量上限（老板 2026-09-13）：设置过 volumeCap 后，App 内任何音量调整
@@ -503,11 +547,11 @@ export class BookPlayer {
       } catch (_) {}
     }
     this._volume = Math.max(0.1, Math.min(1, Number(v) || 0))
-    const eff = this._effectiveVolume()
     if (this.isNativeEngine) {
-      try { await NativeAudio.setVolume({ assetId: this._assetId(this.trackIndex), volume: eff }) } catch (_) {}
+      // force=true：用户/语音显式调音量，即使算出的生效值碰巧和上次相同也下发一次
+      await this._applyNativeVolume(this._assetId(this.trackIndex), true)
     } else if (this._audio) {
-      this._audio.volume = eff
+      this._audio.volume = this._effectiveVolume()
     }
   }
 
@@ -522,7 +566,7 @@ export class BookPlayer {
     const eff = this._effectiveVolume()
     if (this.isNativeEngine) {
       if (!this._loadedIdx.has(this.trackIndex) && this._playingAssetIdx == null) return
-      try { await NativeAudio.setVolume({ assetId: this._assetId(this.trackIndex), volume: eff }) } catch (_) {}
+      await this._applyNativeVolume(this._assetId(this.trackIndex), true)
     } else if (this._audio) {
       this._audio.volume = eff
     }
@@ -701,8 +745,11 @@ export class BookPlayer {
     // ⚠️ 插件的音量是 per-asset 的：新 preload 的 asset 音量是默认 100%，
     // 不在这里重新套上限/当前音量，每次切集/换书音量都会弹回 100%
     // —— 这正是「音量上限不生效」的另一半根因（2026-09-14）。
-    if (this._volume < 1 || this._volumeCap < 1) {
-      try { await NativeAudio.setVolume({ assetId, volume: this._effectiveVolume() }) } catch (_) {}
+    // 2026-09-17：这里重套的是 **下一条 play() 之前** 的音量；play() 本身也
+    // 必须带 volume（见 _playArgs），否则 play 内部的默认值 1.0 会立刻覆盖它。
+    this._resetNativeVolumeState()
+    if (Math.abs(this._effectiveVolume() - 1) > 1e-6) {
+      await this._applyNativeVolume(assetId)
     }
   }
 

@@ -31,21 +31,25 @@ const playingSet = () => [...state.assets.entries()].filter(([, a]) => a.playing
 const FakeAudio = {
   async configure(o) { state.calls.push(['configure', o?.background]) },
   async addListener(name, cb) { (state.events[name] ||= []).push(cb); return { remove() {} } },
-  async preload({ assetId }) {
+  async preload({ assetId, volume }) {
     state.calls.push(['preload', assetId])
     // ⚠️ 忠于真实插件（NativeAudio.preloadAsset）：
     //     assetId 已存在时直接 reject ERROR_AUDIO_EXISTS，不是覆盖！
     //     真实代码见 node_modules/@capgo/capacitor-native-audio/.../NativeAudio.java
     //     if (audioAssetList.containsKey(audioId)) { call.reject(ERROR_AUDIO_EXISTS ...) }
     if (state.assets.has(assetId)) throw new Error('audio asset already exists - ' + assetId)
-    state.assets.set(assetId, { playing: false, time: 0 })
+    state.assets.set(assetId, { playing: false, time: 0, volume: volume ?? 1 })
   },
-  async play({ assetId, time }) {
-    state.calls.push(['play', assetId, time])
+  // 忠于真实插件：play 的 volume 默认 1.0，且 Android playInternal 会无条件
+  // player.setVolume(volume)（不传 = 打回 100%）。这是「音量每次开播被重置」bug 的根，
+  // 假插件必须复刻这个行为，回归断言才有意义。
+  async play({ assetId, time, volume }) {
+    state.calls.push(['play', assetId, time, volume])
     const a = state.assets.get(assetId)
     if (!a) throw new Error('asset 未 preload: ' + assetId)
     a.playing = true
     a.time = time || 0
+    a.volume = volume ?? 1
   },
   async pause({ assetId }) { const a = state.assets.get(assetId); if (a) a.playing = false },
   async resume({ assetId }) { const a = state.assets.get(assetId); if (a) a.playing = true },
@@ -579,6 +583,65 @@ console.log('\n=== 15. 播放模式：顺序 / 单曲循环 / 乱序（老板 20
     await p7._onTrackEnd({ assetId: 'sa-1' })
     ok('乱序模式下到点同样被拦截（不随机跳走）', p7.trackIndex === 1, `idx=${p7.trackIndex}`)
     await p7.stop({ silent: true })
+  }
+
+  // ---- 音量在 play/切集/暂停恢复时不被插件默认值打回 100%（2026-09-17 修复）----
+  // 根因：插件 play() 的 volume 默认 1.0（两端一致），Android playInternal 无条件
+  // player.setVolume(volume)、iOS player.volume = initialVolume。修复前 app 的
+  // NativeAudio.play 从不传 volume → 每次开播（暂停恢复/切集/换书/看门狗自愈）
+  // 音量都回满，家长上限也被打穿。假插件已复刻该语义（play 不带 volume → 1）。
+  console.log('\n=== 16. 音量跨 play/暂停恢复/切集保持（2026-09-17）===')
+  {
+    const store = globalThis.__SA_TEST_STORE__
+    state.assets.clear(); state.calls.length = 0
+    store.set('volumeCap', '0.5')
+    const p = new BookPlayer({})
+    await p.init()
+    await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+    await p.play()
+    ok('开播后原生层音量 = 上限 0.5', state.assets.get('sa-0')?.volume === 0.5,
+       `v=${state.assets.get('sa-0')?.volume}`)
+
+    // 暂停 → 播放：真实插件 play 默认值会把音量打回 1.0，修复后必须仍 0.5
+    await p.pause()
+    await p.play()
+    ok('暂停→恢复后音量仍 0.5（旧 bug：play 不带 volume 被打回 100%）',
+       state.assets.get('sa-0')?.volume === 0.5, `v=${state.assets.get('sa-0')?.volume}`)
+
+    // 语音"小声点"（0.5→0.3）→ 再暂停恢复，用户调的音量也不能丢
+    await p.setVolume(0.3)
+    ok('语音调小后生效 0.3', state.assets.get('sa-0')?.volume === 0.3)
+    await p.pause()
+    await p.play()
+    ok('用户调小后再恢复仍 0.3（不被打回 100%）', state.assets.get('sa-0')?.volume === 0.3,
+       `v=${state.assets.get('sa-0')?.volume}`)
+
+    // 自动切集：新 asset 的音量也必须继承生效值
+    p.onBeforeAdvance = () => false
+    await p._onTrackEnd({ assetId: 'sa-0' })
+    ok('切集后新 asset 音量 0.3（per-asset 默认 100% 不允许漏）',
+       state.assets.get('sa-1')?.volume === 0.3, `v=${state.assets.get('sa-1')?.volume}`)
+    // 看门狗自愈 / play 重试路径同样带 volume：直接检查 _playArgs
+    // （用 ?. 调用：旧代码没有这个方法时应判失败，而不是抛错中断后续断言）
+    const args = p._playArgs?.('sa-1', 10)
+    ok('_playArgs 显式带 volume=0.3', args?.volume === 0.3, `args=${JSON.stringify(args)}`)
+    await p.stop({ silent: true })
+
+    // 桥调用次数护栏：音量=100%、无上限的主路径，play 不应额外多带 setVolume
+    state.assets.clear(); state.calls.length = 0
+    store.set('volumeCap', '1')
+    const p2 = new BookPlayer({})
+    await p2.init()
+    await p2.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+    await p2.play()
+    await p2.pause()
+    state.calls.length = 0
+    await p2.play()
+    ok('音量 100% 主路径：恢复播放不产生额外 setVolume 桥调用',
+       state.calls.filter(c => c[0] === 'setVolume').length === 0,
+       `calls=${JSON.stringify(state.calls)}`)
+    ok('音量 100% 主路径：asset 音量保持 1', state.assets.get('sa-0')?.volume === 1)
+    await p2.stop({ silent: true })
   }
 }
 
