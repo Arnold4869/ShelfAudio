@@ -203,8 +203,19 @@ with sync_playwright() as pw:
            f"{ageo['avatarLeft']}..{ageo['avatarRight']} vw={ageo['vw']}")
         ok('歌手页歌名不超出视口', ageo['nameRight'] is not None and ageo['nameRight'] <= ageo['vw'] + 1,
            f"nameRight={ageo['nameRight']} vw={ageo['vw']}")
-        ok('歌手页列出专辑', ageo['cards'] >= 1, f"cards={ageo['cards']}")
-        ok('歌手页列出歌曲', ageo['songs'] >= 1, f"songs={ageo['songs']}")
+        ok('歌手页列出专辑（默认视图）', ageo['cards'] >= 1, f"cards={ageo['cards']}")
+        # 老板 2026-09-19：歌手页默认只显示专辑，右上角切换后才显示歌曲列表
+        ok('默认不渲染歌曲列表', ageo['songs'] == 0, f"songs={ageo['songs']}")
+        pg.evaluate("document.querySelector('#btnView')?.click()"); pg.wait_for_timeout(900)
+        ageo2 = pg.evaluate("""(() => ({
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          cards: document.querySelectorAll('.book-card[data-album]').length,
+          songs: document.querySelectorAll('.list-item[data-song]').length,
+          vw: window.innerWidth,
+        }))()""")
+        ok('切到歌曲视图', ageo2['songs'] >= 1 and ageo2['cards'] == 0,
+           f"songs={ageo2['songs']} cards={ageo2['cards']}")
+        ok('歌曲视图无横向溢出', ageo2['overflow'] <= 1, f"overflow={ageo2['overflow']}")
         # 320 窄屏播放页 overflow=32 是 0.9.0 既有问题（.player-controls 五按钮超宽），
         # skill 已记录、本轮范围外；这里只保证「歌手页自身」无溢出（上面已断言）。
         ok('无 JS 报错', not errs, str(errs[:2]))

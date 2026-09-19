@@ -183,9 +183,17 @@ class ServerHub {
    * 继续听：**只看当前激活源**（老板原话「分开显示」+ 右上角切换按钮）。
    * 不合并两个源 —— 合并会让 ABS 的书和 ND 的专辑混在一张列表里，
    * 那正是老板要避免的"不分开"。
+   *
+   * ⚠️ 返回值统一成**数组**（2026-09-19 修）：ABS 客户端返回数组，
+   * ND 客户端返回 `{ libraryItems }` 对象，门面直接透传 → 调用方 `.map()`
+   * 在 ND 下抛 TypeError 被 try/catch 吞掉 → **ND 的「继续听」和「历史记录」
+   * 永远空白**（老板 2026-09-19 提「所有出现演唱者的地方」时顺带查出来）。
+   * 现在在这里收敛成同一形状，视图侧只认数组。
    */
   async itemsInProgress() {
-    return this.cur.itemsInProgress()
+    const r = await this.cur.itemsInProgress()
+    if (Array.isArray(r)) return r
+    return (r && r.libraryItems) || []
   }
 
   /**

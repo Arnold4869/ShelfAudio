@@ -47,6 +47,8 @@ jobs:
         run: python3 scripts/test-sleep-tracks.py
       - name: ND player artist row + artist page (Playwright)
         run: python3 scripts/test-nd-artist.py
+      - name: 歌手链接审计
+        run: python3 scripts/test-artist-links.py
       - name: Artist row/page layout audit (narrow/landscape/tablet)
         run: python3 scripts/test-artist-layout.py
       - name: Sleep dialog layout audit (narrow/landscape/tablet)
@@ -224,6 +226,8 @@ jobs:
         run: python3 scripts/test-sleep-tracks.py
       - name: ND player artist row + artist page (Playwright)
         run: python3 scripts/test-nd-artist.py
+      - name: 歌手链接审计
+        run: python3 scripts/test-artist-links.py
       - name: Artist row/page layout audit (narrow/landscape/tablet)
         run: python3 scripts/test-artist-layout.py
       - name: Sleep dialog layout audit (narrow/landscape/tablet)

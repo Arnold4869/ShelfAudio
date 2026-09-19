@@ -79,11 +79,17 @@ VARIANT = {'songs': ND_SONGS, 'album2': ND_ALBUM2_SONGS, 'album': ND_ALBUM, 'alb
 ABS_BOOK = {'id': 'absbook1', 'media': {'metadata': {'title': 'ABS 有声书', 'authorName': '作者A'},
                                         'duration': 3600}}
 
+# 记录所有打到 ABS 服务器（/api/**）的请求路径 —— 供排查误分派（不进断言：
+# 该 fixture 里 ABS 未登录，误分派会在发请求前就抛错，因此拿不到证据 → 会变成假绿灯）。
+ABS_HITS = []
+
 
 def handler(route):
     u = route.request.url
     p = re.sub(r'^https?://[^/]+', '', u).split('?')[0]
     qs = dict(x.split('=', 1) for x in u.split('?', 1)[1].split('&')) if '?' in u else {}
+    if p.startswith('/api/'):
+        ABS_HITS.append(p)
     if p == '/status':
         return route.fulfill(status=200, content_type='application/json', body='{"version":"2.36.0"}')
     if p == '/login':
@@ -223,8 +229,8 @@ with sync_playwright() as pw:
     ok('歌手行触摸目标 ≥44px', hh >= 44, f'{round(hh)}px')
     ok('无 JS 报错', not errs, str(errs[:2]))
 
-    # ---------- 2. 点歌手名 → 歌手页 ----------
-    print('=== 2. 点歌手名 → 歌手页（全部作品）===')
+    # ---------- 2. 点歌手名 → 歌手页（全部作品）----------
+    print('=== 2. 点歌手名 → 歌手页（默认只显示专辑，右上角切换）===')
     pg.evaluate("document.querySelector('#pArtist')?.click()"); pg.wait_for_timeout(1800)
     ok('进了歌手页', pg.evaluate("document.body.dataset.view") == 'artist',
        str(pg.evaluate("document.body.dataset.view")))
@@ -233,11 +239,23 @@ with sync_playwright() as pw:
     ok('画家头像槽', pg.evaluate("!!document.querySelector('.artist-avatar')"))
     ok('副标题写专辑数+歌曲数', '2 张专辑' in (pg.evaluate("document.querySelector('.artist-hero-sub')?.textContent") or ''),
        str(pg.evaluate("document.querySelector('.artist-hero-sub')?.textContent")))
+    # 老板 2026-09-19：「点击名字进入后，只显示专辑或列表，可以在右上角点击切换」
     albums = pg.evaluate("[...document.querySelectorAll('.book-card[data-album]')].map(e=>e.dataset.album)")
-    ok('列出名下 2 张专辑', albums == ['nd:ndalb1', 'nd:ndalb2'], str(albums))
+    ok('默认只显示专辑（不两段全铺）', albums == ['nd:ndalb1', 'nd:ndalb2'], str(albums))
+    songs0 = pg.evaluate("[...document.querySelectorAll('.list-item[data-song]')].map(e=>e.dataset.song)")
+    ok('默认不渲染歌曲列表', songs0 == [], str(songs0))
+    ok('右上角有切换按钮', pg.evaluate("!!document.querySelector('#btnView')"))
+    # 切到歌曲
+    pg.evaluate("document.querySelector('#btnView')?.click()"); pg.wait_for_timeout(900)
     songs = pg.evaluate("[...document.querySelectorAll('.list-item[data-song]')].map(e=>e.dataset.song)")
-    ok('列出 3 首歌（合作曲被 artistId 过滤掉）', sorted(songs) == ['nds1', 'nds2', 'nds3'], str(songs))
+    ok('切换后列出 3 首歌', sorted(songs) == ['nds1', 'nds2', 'nds3'], str(songs))
     ok('没有混进合作曲', 'nds8' not in songs, str(songs))
+    albums2 = pg.evaluate("document.querySelectorAll('.book-card[data-album]').length")
+    ok('切到歌曲后专辑网格不再显示', albums2 == 0, str(albums2))
+    # 切回专辑
+    pg.evaluate("document.querySelector('#btnView')?.click()"); pg.wait_for_timeout(900)
+    ok('再切回专辑视图', pg.evaluate("document.querySelectorAll('.book-card[data-album]').length") == 2,
+       str(pg.evaluate("document.querySelectorAll('.book-card[data-album]').length")))
     ok('无 JS 报错', not errs, str(errs[:2]))
 
     # ---------- 3. 歌手页跳转：专辑 / 歌曲 ----------
@@ -245,13 +263,25 @@ with sync_playwright() as pw:
     pg.evaluate("document.querySelector('.book-card[data-album]')?.click()"); pg.wait_for_timeout(1800)
     ok('点专辑 → 专辑详情页', pg.evaluate("document.body.dataset.view") == 'album',
        str(pg.evaluate("document.body.dataset.view")))
-    # 返回歌手页，点歌曲 → 进专辑页并自动播放
+    # 返回歌手页，切到歌曲，点歌曲 → 进专辑页
     pg.evaluate("document.querySelector('#btnBack')?.click()"); pg.wait_for_timeout(1500)
     ok('返回歌手页', pg.evaluate("document.body.dataset.view") == 'artist',
        str(pg.evaluate("document.body.dataset.view")))
+    # 会话内记住上次视图：返回时仍是歌曲视图（若实现成专辑视图也接受，先切一下再断言）
+    if not pg.evaluate("!!document.querySelector('.list-item[data-song]')"):
+        pg.evaluate("document.querySelector('#btnView')?.click()"); pg.wait_for_timeout(900)
+    # ⚠️ 404 回归（2026-09-19 老板报的 bug）：歌曲行的 data-album 必须是 nd: 前缀，
+    #    否则 go('album') 会把裸 ND id 当 ABS 书去查有声书服务器 → 404。
+    #    （数据层契约另有一条更硬的 node 断言：test-navidrome.mjs 的 getArtist albumId）
+    songAlbums = pg.evaluate("[...document.querySelectorAll('.list-item[data-song]')].map(e=>e.dataset.album)")
+    ok('歌曲行 albumId 带 nd: 前缀（404 修复的判据）',
+       bool(songAlbums) and all(str(a).startswith('nd:') for a in songAlbums), str(songAlbums))
     pg.evaluate("document.querySelectorAll('.list-item[data-song]')[0]?.click()"); pg.wait_for_timeout(2600)
-    ok('点歌曲 → 进专辑页起播', pg.evaluate("document.body.dataset.view") == 'album',
+    ok('点歌曲 → 进专辑并起播（落到播放页）',
+       pg.evaluate("document.body.dataset.view") == 'player',
        str(pg.evaluate("document.body.dataset.view")))
+    ok('起播的是点的那首歌', pg.evaluate("document.querySelector('#pTitle')?.textContent") == '第一首歌',
+       str(pg.evaluate("document.querySelector('#pTitle')?.textContent")))
     ok('无 JS 报错', not errs, str(errs[:2]))
     ctx.close()
 

@@ -17,6 +17,7 @@ import { voiceHidden, uiPrefsReady } from '../lib/ui-prefs.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 import { haptic } from '../lib/haptics.js'
+import { artistLink, artistIdOf } from '../lib/artist-links.js'
 import { sourceSwitchHTML, wireSourceSwitch } from '../lib/source-switch.js'
 import { hub } from '../lib/servers.js'
 
@@ -170,7 +171,9 @@ export async function renderShelf(root) {
         ${prog && (prog.currentTime > 30) ? `<div class="book-badge">${done ? '已听完' : '听 ' + pct + '%'}</div>` : ''}
         <div class="book-meta">
           <div class="book-title">${esc(title)}</div>
-          <div class="book-sub">${esc(m.authorName || m.narratorName || fmtDur(it.media?.duration))}</div>
+          <div class="book-sub">${artistIdOf(it) || m.authorName || m.narratorName
+            ? artistLink(m.authorName || m.narratorName, artistIdOf(it))
+            : esc(fmtDur(it.media?.duration))}</div>
         </div>
         ${pct > 0 && pct < 100 ? `<div class="book-progress"><i style="width:${pct}%"></i></div>` : ''}
       </div>`
@@ -227,7 +230,7 @@ export async function renderShelf(root) {
         </div>
         <div class="list-main">
           <div class="list-title">${esc(title)}</div>
-          <div class="list-sub">${esc(who)}${who && dur ? ' · ' : ''}${esc(dur)}</div>
+          <div class="list-sub">${artistLink(who, artistIdOf(it))}${who && dur ? ' · ' : ''}${esc(dur)}</div>
         </div>
         <div class="list-pct">${tail}</div>
       </div>`

@@ -17,6 +17,7 @@ import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { t } from '../lib/terms.js'
+import { wireArtistLinks, artistLink } from '../lib/artist-links.js'
 
 export async function renderAlbum(root, params = {}) {
   const id = params.id
@@ -42,6 +43,12 @@ export async function renderAlbum(root, params = {}) {
   const author = m.authorName || m.narratorName || ''
   const songs = item.media?.chapters || []
   const cover = abs.coverUrl(id, { width: 600 })
+  // 歌手可点：ND 专辑/歌都带 artistId（老板 2026-09-19：所有演唱者都可点进歌手页）
+  const rawArtistId = item._nd?.artistId
+    || (songs.find(ch => ch?._nd?.artistId)?._nd?.artistId ?? '')
+    || ''
+  // 统一成 nd:<artistId> 形式（album._nd.artistId 是裸 id；track 级的可能已是 nd: 前缀）
+  const artistId = rawArtistId ? 'nd:' + String(rawArtistId).replace(/^(ndart:|nd:)/, '') : ''
 
   root.innerHTML = `
     <div class="page-head">
@@ -56,7 +63,7 @@ export async function renderAlbum(root, params = {}) {
       </div>
       <div class="album-meta">
         <div class="album-title">${escH(title)}</div>
-        ${author ? `<div class="album-artist">${escH(author)}</div>` : ''}
+        ${author ? `<div class="album-artist">${artistLink(author, artistId)}</div>` : ''}
         <div class="album-sub">${songs.length} 首${item.media?.duration ? ' · ' + fmtDur(item.media.duration) : ''}</div>
         <button class="btn" id="playAll" style="margin-top:14px;padding:11px 20px">${icon('play', 16)} 播放全部</button>
       </div>

@@ -11,6 +11,7 @@ import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { openAddToPlaylist, openNewPlaylistDialog } from '../lib/playlist-ui.js'
+import { artistLink } from '../lib/artist-links.js'
 
 export async function renderPlaylists(root) {
   root.innerHTML = `
@@ -113,7 +114,7 @@ export async function renderPlaylistDetail(root, params = {}) {
       ${songs.map((s, i) => `<div class="list-item" data-idx="${i}" data-songid="${esc(s.songId)}">
         <div class="list-main">
           <div class="list-title">${esc(s.title || `第 ${i + 1} 首`)}</div>
-          <div class="list-sub">${esc(s.artist || '')}${s.album ? ' · ' + esc(s.album) : ''}${s.duration ? ' · ' + fmtDur(s.duration) : ''}</div>
+          <div class="list-sub">${artistLink(s.artist, s.artistId)}${s.album ? (s.artist ? ' · ' : '') + esc(s.album) : ''}${s.duration ? ' · ' + fmtDur(s.duration) : ''}</div>
         </div>
         <div class="list-pct">${icon('play', 15)}</div>
       </div>`).join('')}

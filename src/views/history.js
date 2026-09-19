@@ -16,6 +16,7 @@ import { goBack, state, go, toast, esc, playItem, updateMini, fmtDur } from '../
 import { hub, hub as abs } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { loadHistory, removeHistoryEntry } from '../lib/history.js'
+import { artistLink, artistIdOf } from '../lib/artist-links.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 import { requireParentPin } from '../app.js'
@@ -62,7 +63,7 @@ export async function renderHistory(root, params = {}) {
         </div>
         <div class="list-main">
           <div class="list-title">${esc(m.title || '未命名')}</div>
-          <div class="list-sub">${esc(m.authorName || m.narratorName || '')}</div>
+          <div class="list-sub">${artistLink(m.authorName || m.narratorName, artistIdOf(e.raw))}</div>
         </div>
         <div class="list-pct">${tail}</div>
       </div>`

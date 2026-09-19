@@ -15,6 +15,7 @@ import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { listLocal, removeLocal } from '../lib/favs.js'
+import { artistLink, artistIdOf } from '../lib/artist-links.js'
 import { t } from '../lib/terms.js'
 
 export async function renderFavorites(root) {
@@ -83,7 +84,7 @@ export async function renderFavorites(root) {
             </div>
             <div class="list-main">
               <div class="list-title">${esc(title)}</div>
-              <div class="list-sub">${esc(m.authorName || m.narratorName || '')}${it.media?.duration ? ' · ' + fmtDur(it.media.duration) : ''}</div>
+              <div class="list-sub">${artistLink(m.authorName || m.narratorName, artistIdOf(it))}${it.media?.duration ? ' · ' + fmtDur(it.media.duration) : ''}</div>
             </div>
             <button class="row-del" data-rm="${esc(it.id)}" data-col="${esc(g.id)}" aria-label="取消收藏">${icon('trash', 20)}</button>
           </div>`

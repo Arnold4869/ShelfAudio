@@ -157,6 +157,10 @@ export async function go(name, params = {}, opts = {}) {
   root.innerHTML = ''
   await fn(root, params)
   currentCleanup = typeof root._cleanup === 'function' ? root._cleanup : null
+  // 演唱者可点（老板 2026-09-19）：所有视图统一在这里挂一次委托。
+  // 视图内部再各自 wireArtistLinks() 会叠加监听器（go() 不清理 #view 上的监听），
+  // 所以约定**视图内部不再自己挂**，全部走这一个入口。
+  import('./lib/artist-links.js').then(m => m.wireArtistLinks(root)).catch(() => {})
   // 把底栏从 #view 移进底部 dock 容器（和迷你条同一个表面 → 视觉上连成一整块）。
   // ⚠️ 新视图**没有**底栏时（如全屏播放页）必须把旧底栏删掉 ——
   // 只写 `if (tabsEl)` 会留下上一个页面（书架/搜索/设置）的底栏，

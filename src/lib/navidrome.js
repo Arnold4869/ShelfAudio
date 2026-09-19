@@ -249,6 +249,9 @@ export class NavidromeApi {
           title: a.name || '未命名',
           authorName: a.artist || '',        // 艺术家 → 显示位
           narratorName: '',
+          // 艺术家 id 也放进 metadata：视图层把「演唱者」渲染成可点链接时
+          // 统一从 metadata 取（老板 2026-09-19 全局可点）。ABS 无此字段 → 不可点。
+          artistId: a.artistId || '',
           description: a.description || '',
         },
         duration: (Number(a.duration) || 0),
@@ -325,6 +328,7 @@ export class NavidromeApi {
     const songs = (r.song || []).map(s => ({
       id: 'nd:' + s.id,
       songId: s.id,
+      artistId: s.artistId || '',
       albumId: s.albumId ? 'nd:' + s.albumId : '',
       album: s.album || '',
       title: s.title || '',
@@ -346,7 +350,10 @@ export class NavidromeApi {
    * 返回 { id, name, albums: [书形状], songs: [{ songId, title, artist, albumId, duration }] }
    */
   async getArtist(ndArtistId) {
-    const aid = String(ndArtistId || '').replace(/^ndart:/, '')
+    // ⚠️ 两种前缀都要剥：hub.getArtist 认 `ndart:` 与 `nd:`，
+    // 少剥一个 → aid 变成 'nd:art1' → search3 结果按 artistId 过滤时全军覆没
+    //（歌手页变成「只有专辑没有歌」，2026-09-19 测试抓出的真 bug）。
+    const aid = String(ndArtistId || '').replace(/^(ndart:|nd:)/, '')
     if (!aid) throw new Error('缺少歌手 id')
     const sr = await this._sub('/rest/getArtist', { id: aid })
     const a = sr?.artist
@@ -366,7 +373,10 @@ export class NavidromeApi {
           songId: s.id,
           title: s.title || '',
           artist: s.artist || a.name || '',
-          albumId: s.albumId || '',
+          // ⚠️ albumId 必须带 nd: 前缀！点歌走 go('album', {id}) → clientFor 按
+          // sourceOfId 分派，裸 id 会被当成 ABS 书去查有声书服务器 → 404
+          // （2026-09-19 老板报「歌手页点歌 404」的根因，搜索页/歌单都带前缀所以没事）。
+          albumId: s.albumId ? 'nd:' + s.albumId : '',
           album: s.album || '',
           duration: Number(s.duration) || 0,
           track: Number(s.track) || 0,
@@ -379,7 +389,7 @@ export class NavidromeApi {
    *  实测本库 613 位歌手全是同一张默认占位星图（没抓取真实照片）——
    *  视图层要配自绘兜底（fallbackAvatar），图加载失败才露出来。 */
   artistImageUrl(ndArtistId, { width = 300 } = {}) {
-    const aid = String(ndArtistId || '').replace(/^ndart:/, '')
+    const aid = String(ndArtistId || '').replace(/^(ndart:|nd:)/, '')   // 两种前缀都要剥（同 getArtist）
     if (!aid || !this.baseUrl) return ''
     const salt = randomSalt()
     const token = md5(this.password + salt)
@@ -639,6 +649,7 @@ export class NavidromeApi {
       songs: list.map(s => ({
         id: 'nd:' + s.id,
         songId: s.id,
+        artistId: s.artistId || '',
         albumId: s.albumId ? 'nd:' + s.albumId : '',
         album: s.album || '',
         title: s.title || '',

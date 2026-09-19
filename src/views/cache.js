@@ -13,6 +13,7 @@ import { goBack, state, go, toast, esc, fmtDur, requireParentPin, updateMini } f
 import { icon } from '../lib/icons.js'
 import { t } from '../lib/terms.js'
 import { haptic } from '../lib/haptics.js'
+import { artistLink, artistIdOf } from '../lib/artist-links.js'
 import {
   cachedBooks, cacheSize, downloadBook, removeBook, clearAll, isCached, fmtBytes,
 } from '../lib/offline.js'
@@ -81,7 +82,7 @@ export async function renderCache(root) {
           <div class="setting-ic">${icon('headphones', 22)}</div>
           <div class="setting-main">
             <div class="setting-label">${esc(m.title || '未命名')}</div>
-            <div class="setting-value">${esc(m.authorName || '')}${dur ? ' · ' + fmtDur(dur) : ''}</div>
+            <div class="setting-value">${artistLink(m.authorName || '', artistIdOf(it))}${dur ? ' · ' + fmtDur(dur) : ''}</div>
           </div>
           <div class="row-act">
             ${cached

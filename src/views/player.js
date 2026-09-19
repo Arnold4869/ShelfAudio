@@ -16,6 +16,8 @@ import {
 } from '../lib/sleep.js'
 // 纯计算（无 DOM/无 store，node 单测覆盖）
 import { formatCountdown, tracksCountdown, normalizeMinutes, normalizeTrackCount } from '../lib/sleep-core.js'
+// 演唱者可点（老板 2026-09-19）：歌手行 id 归一 + 统一点击委托
+import { wireArtistLinks, normArtistId } from '../lib/artist-links.js'
 
 // 进度条口径：'track' = 当前这一集（默认）；'book' = 整部作品。
 // 之前写死了整本（ABS 的 currentTime 是全书累计秒），用户看着"进度条是整个作品的"很别扭。
@@ -98,7 +100,9 @@ export async function renderPlayer(root) {
            —— 歌名既然放大字了，原来的「章节行」在 ND 下就没意义（会把歌名显示两遍）→ 隐藏。
            ABS 侧这两个元素根本不渲染（书没有歌手概念，老板范围限定只改 ND）。
            老板 2026-09-17 二轮：**歌名旁不要任何符号**（曾加过 forward 箭头做可点提示，
-           老板「为嘛会多个符号，不需要它，只需要点击姓名跳转就行」→ 已去掉，靠按压反馈提示）。 */
+           老板「为嘛会多个符号，不需要它，只需要点击姓名跳转就行」→ 已去掉，靠按压反馈提示）。
+           2026-09-19 全局可点：歌手行的点击改由 lib/artist-links.js 的委托统一处理，
+           这里只负责把 data-artist-id 写进 DOM（与搜索/歌单/专辑页同一套机制）。 */
         ? `<button class="player-artist" id="pArtist" hidden>
              <span id="pArtistName"></span>
            </button>
@@ -202,6 +206,10 @@ export async function renderPlayer(root) {
         const okArtist = !!aname && !!t?._nd?.artistId
         if (artistEl.hidden !== !okArtist) artistEl.hidden = !okArtist
         artistEl.disabled = !okArtist
+        // data-artist-id 供 lib/artist-links.js 的委托读取（切歌要跟着换，
+        // 否则会点出上一首的歌手）。拿不到就删掉属性，行本身也是 hidden 的。
+        if (okArtist) artistEl.dataset.artistId = normArtistId(t._nd.artistId)
+        else delete artistEl.dataset.artistId
       }
       if (albumEl) {
         const albumName = c.title || ''
@@ -250,17 +258,9 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
   $('#btnFavTop').onclick = () => { haptic.tap(); toggleFav() }
 
   // ---- ND：歌手行 → 歌手页；专辑行 → 专辑详情（老板 2026-09-17）----
-  // 都判空（ABS 侧不渲染这两个按钮）；disabled 态由 paintProgress 按元数据有无维护。
-  const artistBtn = $('#pArtist')
-  if (artistBtn) artistBtn.onclick = () => {
-    if (artistBtn.disabled) return
-    const artistId = c.tracks[p.trackIndex]?._nd?.artistId
-    if (!artistId) return
-    haptic.tap()
-    // 必须带 ndart: 前缀 —— hub.getArtist 按 id 前缀判断是哪个源的数据，
-    // 传裸 id 会被当成 ABS 条目直接返回 null（测试抓出的真 bug）。
-    go('artist', { id: 'ndart:' + String(artistId).replace(/^ndart:/, '') })
-  }
+  // 歌手行点击走 lib/artist-links.js 的统一委托（data-artist-id 在 paintProgress
+  // 里随切歌刷新）—— 与搜索/专辑/歌单页同一套机制，不在这里单独绑。
+  wireArtistLinks(root)
   const albumBtn = $('#pAlbum')
   if (albumBtn) albumBtn.onclick = () => {
     if (albumBtn.disabled) return

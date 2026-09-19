@@ -149,9 +149,13 @@ console.log('\n=== 2. 再登录 ND：两台都在，active 决定显示谁 ===')
   const ndLibs = await hub.libraries()
   ok('库列表整体换成 ND 的库', ndLibs[0].id === 'nd-lib', JSON.stringify(ndLibs))
   const ndProg = await hub.itemsInProgress()
+  // ⚠️ 门面统一返回**数组**（2026-09-19 修：ND 客户端原本返回 {libraryItems} 对象，
+  //    调用方 .map() 抛错被吞 → ND 继续听/历史永远空白）。
+  ok('itemsInProgress 统一返回数组（形状与 ABS 一致）', Array.isArray(ndProg),
+     JSON.stringify(v => v))
   ok('继续听也只出 ND 的（分开显示，不混合）',
-     (ndProg.libraryItems || []).every(i => String(i.id).startsWith('nd:')),
-     JSON.stringify((ndProg.libraryItems || []).map(i => i.id)))
+     (ndProg || []).every(i => String(i.id).startsWith('nd:')),
+     JSON.stringify((ndProg || []).map(i => i.id)))
 }
 
 console.log('\n=== 3. 按 id 前缀分派：激活源 ≠ 条目源 也能正确路由 ===')

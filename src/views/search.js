@@ -8,6 +8,7 @@ import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 import { t } from '../lib/terms.js'
+import { wireArtistLinks, artistLink, artistIdOf } from '../lib/artist-links.js'
 
 /** 点列表条目：ND 专辑进详情页自己选歌；ABS 书保持原行为（直接续听） */
 async function openOrPlay(it, { resumeAt } = {}) {
@@ -54,9 +55,10 @@ export async function renderSearch(root, params = {}) {
   }
   $('#btnBack').onclick = () => goBack('kidhome')
 
-  // 专辑行（带封面）
+  // 专辑行（带封面）。ND 专辑的作者行可点进歌手页（老板 2026-09-19 全局可点）
   const albumRow = it => {
     const m = it.media?.metadata || {}
+    const aid = artistIdOf(it)
     return `<div class="list-item" data-id="${it.id}">
       <div class="cover-slot">
         ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
@@ -64,29 +66,33 @@ export async function renderSearch(root, params = {}) {
       </div>
       <div class="list-main">
         <div class="list-title">${esc(m.title || '未命名')}</div>
-        <div class="list-sub">${esc(m.authorName || m.narratorName || '')}${it.media?.duration ? ' · ' + fmtDur(it.media.duration) : ''}</div>
+        <div class="list-sub">${artistLink(m.authorName || m.narratorName, aid)}${it.media?.duration ? ' · ' + fmtDur(it.media.duration) : ''}</div>
       </div>
       <div class="list-pct">${icon('forward', 16)}</div>
     </div>`
   }
 
-  // 歌曲行（无封面小图，点它 = 进所在专辑并从这首开始播）
+  // 歌曲行（无封面小图，点它 = 进所在专辑并从这首开始播）。
+  // 歌手名可点 → 歌手页（老板 2026-09-19：所有出现演唱者的地方都可点）。
+  // ND 歌曲带 artistId；ABS 书没有歌手概念 → 永远走不到 artistLink。
   const songRow = sg => `<div class="list-item song-item" data-song="${esc(sg.id)}" data-album="${esc(sg.albumId || '')}">
       <div class="list-main">
         <div class="list-title">${esc(sg.title || '未命名')}</div>
-        <div class="list-sub">${esc(sg.artist || '')}${sg.album ? ' · ' + esc(sg.album) : ''}${sg.duration ? ' · ' + fmtDur(sg.duration) : ''}</div>
+        <div class="list-sub">${artistLink(sg.artist, sg.artistId)}${sg.album ? (sg.artist ? ' · ' : '') + esc(sg.album) : ''}${sg.duration ? ' · ' + fmtDur(sg.duration) : ''}</div>
       </div>
       <div class="list-pct">${icon('play', 15)}</div>
     </div>`
 
-  // 歌手行
-  const artistRow = ar => `<div class="list-item" data-artist="${esc(ar.name)}">
+  /** 歌手行：直接进歌手页（以前是拿名字重新搜一遍 —— 老板 2026-09-19 要看他的全部作品页） */
+  const artistRow = ar => `<div class="list-item" data-artist-go="${esc(ar.id)}">
       <div class="list-main">
         <div class="list-title">${esc(ar.name)}</div>
         <div class="list-sub">歌手</div>
       </div>
-      <div class="list-pct">${icon('search', 15)}</div>
+      <div class="list-pct">${icon('person', 15)}</div>
     </div>`
+
+  // 歌手行的点击委托在 renderGrouped 里绑一次（这段 HTML 重建后要重绑）
 
   /** 分组渲染：专辑 / 歌手 / 歌曲 各一段（老板要求不要混在一起）
    *  歌曲组在 ND 下支持多选（勾选 / 全选）→ 添加到歌单（老板 2026-09-14）。 */
@@ -216,11 +222,17 @@ export async function renderSearch(root, params = {}) {
         }
       })
     }
-    // 歌手：以歌手名为关键词再搜一遍（Subsonic 没有"按歌手列出其专辑"的单一接口，
-    // getArtist 也能做，但结果形态和这里不一致；搜索更简单可靠）
-    results.querySelectorAll('.list-item[data-artist]').forEach(el => {
-      el.onclick = () => { haptic.tap(); input.value = el.dataset.artist; doSearch(el.dataset.artist) }
+    // 歌手：进歌手页看他的全部作品（老板 2026-09-19 改：以前是拿名字重新搜一遍）
+    results.querySelectorAll('.list-item[data-artist-go]').forEach(el => {
+      el.onclick = () => {
+        haptic.tap()
+        const id = el.dataset.artistGo
+        if (!id) return
+        go('artist', { id })
+      }
     })
+    // 歌曲行里的歌手名（可点 → 歌手页）。捕获阶段拦截，不会连带触发行点击。
+    wireArtistLinks(results)
   }
 
   const renderList = (items, q) => {
@@ -237,7 +249,7 @@ export async function renderSearch(root, params = {}) {
         </div>
         <div class="list-main">
           <div class="list-title">${esc(m.title || '未命名')}</div>
-          <div class="list-sub">${esc(m.authorName || m.narratorName || '')} · ${fmtDur(it.media?.duration)}</div>
+          <div class="list-sub">${artistLink(m.authorName || m.narratorName, artistIdOf(it))} · ${fmtDur(it.media?.duration)}</div>
         </div>
         <div class="list-pct">${icon('play', 15)}</div>
       </div>`
@@ -269,7 +281,7 @@ export async function renderSearch(root, params = {}) {
             </div>
             <div class="list-main">
               <div class="list-title">${esc(m.title || '未命名')}</div>
-              <div class="list-sub">${esc(m.authorName || m.narratorName || '')} · ${fmtDur(it.media?.duration)}</div>
+              <div class="list-sub">${artistLink(m.authorName || m.narratorName, artistIdOf(it))} · ${fmtDur(it.media?.duration)}</div>
             </div>
             <div class="list-pct">${icon('play', 15)}</div>
           </div>`

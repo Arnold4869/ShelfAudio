@@ -437,6 +437,29 @@ body[data-view="player"] #extra { margin-bottom: auto; }
 }
 .artist-hero-sub { font-size: 13px; color: var(--text-dim); margin-top: 6px; }
 
+/* ---------- 演唱者可点（老板 2026-09-19：所有出现演唱者的地方都能点进歌手页）----------
+   纯文字 + accent 色，不加箭头/图标（老板 2026-09-17「名字旁边为嘛会多个符号」的铁律
+   同样适用于列表里的歌手名）。触摸目标靠 padding 撑到 ≥44px（行内联元素，
+   用 inline-block + 上下 padding 撑高，不破坏 list-sub 的基线）。
+   display:inline-block 是必须的：span 默认 inline，padding 上下不影响行高 → 点不到。 */
+.artist-link {
+  display: inline-block;
+  color: var(--accent-2);
+  font-weight: 600;
+  /* 触摸目标 ≥44px：行内文字本身只有 ~16px 高，靠上下 padding 撑到 44+，
+     再用等量负 margin 抵消 —— 视觉行高完全不变，只有命中区变大。
+     实测（12px 字号）：padding 15px → 47px 命中区；曾经用 12px 只有 41px 不合格。 */
+  padding: 15px 0;
+  margin: -15px 0;
+  cursor: pointer;
+}
+.artist-link:active { opacity: .6; }
+.artist-name { color: inherit; }
+
+/* 歌手页右上角「专辑/歌曲」切换按钮：与返回键同规格（44px 圆形 icon-btn）。
+   用 list 图标表示"列表视图"，点一下在专辑网格 / 歌曲列表之间切。 */
+#btnView { color: var(--accent-2); }
+
 .seek-wrap { margin: 20px 2px 6px; }
 .seek-bar {
   height: 8px; border-radius: 4px; background: rgba(255,255,255,.22);

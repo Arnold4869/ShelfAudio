@@ -28,7 +28,7 @@ function makeServer() {
     for (let s = 1; s <= 3; s++) {
       songs.push({
         id: `song-a${a}-${s}`, albumId: `alb${a}`, album: `专辑${a}`,
-        title: `第${s}首`, artist: `歌手${a}`, duration: 100 + s * 10, track: s,
+        title: `第${s}首`, artist: `歌手${a}`, artistId: `art${a}`, duration: 100 + s * 10, track: s,
         contentType: 'audio/mpeg', suffix: 'mp3',
       })
     }
@@ -80,7 +80,31 @@ function makeServer() {
         return s ? ok({ song: s }) : fail(70, 'not found')
       }
       case '/rest/search3':
-        return ok({ searchResult3: { album: albums.filter(a => (a.name || '').includes(q.get('query') || '')) } })
+        // 支持按歌曲名/歌手名搜（getArtist 的歌曲列表靠 search3 + songCount）
+        {
+          const q2 = q.get('query') || ''
+          const wantSongs = Number(q.get('songCount') || 0)
+          return ok({
+            searchResult3: {
+              album: albums.filter(a => (a.name || '').includes(q2)),
+              artist: q2 ? [{ id: 'art1', name: '歌手1' }] : [],
+              // 合作曲（artistId 不同）会被 getArtist 按 artistId 过滤掉
+              song: wantSongs
+                ? songs.filter(s => s.artist === q2).concat([
+                    { id: 'coop1', albumId: 'alb1', album: '专辑1', title: '合作曲',
+                      artist: '歌手1', artistId: 'otherart', duration: 90, track: 9, contentType: 'audio/mpeg' },
+                  ])
+                : [],
+            },
+          })
+        }
+      case '/rest/getArtist':
+        return ok({
+          artist: {
+            id: q.get('id'), name: '歌手1', albumCount: 2,
+            album: albums.map(a => ({ ...a, artistId: 'art1' })),
+          },
+        })
       case '/rest/getStarred2':
         return ok({ starred2: { album: albums.filter(a => state.starred.has(a.id)) } })
       case '/rest/star': {
@@ -347,6 +371,26 @@ console.log('\n=== 10. 歌词（结构化 + 毫秒→秒 + 排序）===')
   ok('按时间排序（乱序输入已纠正）', lyr.lines.map(l => l.start).join(',') === '5,8,12', lyr.lines.map(l => l.start).join(','))
   const none = await nd.getLyrics('song-a2-3')
   ok('无歌词返回 null', none === null, JSON.stringify(none))
+}
+
+console.log('\n=== 11. 歌手详情（老板 2026-09-17/19：所有演唱者可点 → 歌手页）===')
+{
+  // ⚠️ 404 回归：getArtist 返回的歌曲 albumId 必须带 nd: 前缀。
+  //    不带前缀时视图 go('album', {id: 裸id}) 会被 sourceOfId 判成 ABS →
+  //    拿 ND 专辑 id 去查有声书服务器 → 404（老板 2026-09-19 报的 bug）。
+  for (const input of ['nd:art1', 'ndart:art1']) {
+    const a = await nd.getArtist(input)
+    ok(`getArtist(${input}) 认两种前缀 + 返回歌手名`, a.name === '歌手1', JSON.stringify({ name: a.name }))
+    ok(`getArtist(${input}) 名下专辑带 nd: 前缀`, a.albums.length === 2 && a.albums.every(x => x.id.startsWith('nd:')),
+       JSON.stringify(a.albums.map(x => x.id)))
+    ok(`getArtist(${input}) 歌曲非空（前缀没剥干净会全军覆没）`, a.songs.length > 0,
+       JSON.stringify({ n: a.songs.length }))
+    ok(`getArtist(${input}) 歌曲 albumId 带 nd: 前缀（404 根因）`,
+       a.songs.every(s => !s.albumId || s.albumId.startsWith('nd:')),
+       JSON.stringify(a.songs.map(s => s.albumId)))
+    ok(`getArtist(${input}) 合作曲被 artistId 过滤`, !a.songs.some(s => s.songId === 'coop1'),
+       JSON.stringify(a.songs.map(s => s.songId)))
+  }
 }
 
 try { fs.unlinkSync(stubPath) } catch (_) {}
