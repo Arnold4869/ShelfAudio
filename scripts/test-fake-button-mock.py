@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """test-fake-button.py 用的本地 mock：/status /api/libraries /api/me 等最小实现 + dist 静态文件。"""
-import json, os, re, sys, zlib
+import json, os, re, sys, zlib, pathlib
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
-DIST = '/home/Bin/ShelfAudio/dist'
+DIST = str(pathlib.Path(__file__).resolve().parent.parent / 'dist')
 BOOK = {"id": "b1", "media": {"metadata": {"title": "测试有声书", "authorName": "作者A"}, "duration": 3600,
                               "audioFiles": [{"ino": "f1", "duration": 3600}], "chapters": []}}
 

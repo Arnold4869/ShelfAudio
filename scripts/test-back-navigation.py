@@ -18,11 +18,18 @@
 """
 import json, re, sys, types
 
-mod = types.ModuleType('m')
-exec(compile(open('/home/Bin/ShelfAudio/scripts/audit-clickable-listeners.py').read()
-             .split('with sync_playwright')[0], 'aud', 'exec'), mod.__dict__)
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    print('跳过：无 Playwright'); sys.exit(0)
 
-from playwright.sync_api import sync_playwright
+# fixture 复用 audit-clickable-listeners.py 的 handler（同目录，__file__ 相对定位，
+# 不许硬编码 /home/Bin/... —— CI 上没有这个路径，0.12.1 第一次 attempt 就栽过）。
+import pathlib as _pl
+_AUDIT = _pl.Path(__file__).resolve().parent / 'audit-clickable-listeners.py'
+mod = types.ModuleType('m')
+exec(compile(_AUDIT.read_text().split('with sync_playwright')[0], str(_AUDIT), 'exec'),
+     mod.__dict__)
 
 fails = []
 checks = 0

@@ -12,7 +12,7 @@ try:
 except ImportError:
     print('跳过：CI 环境未安装 Playwright（本地/真机验证时运行）')
     sys.exit(0)
-ROOT = pathlib.Path('/home/Bin/ShelfAudio')
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 def _png(w=40,h=40,rgb=(90,140,200)):
     def chunk(t,d):
         c=t+d; return len(d).to_bytes(4,'big')+c+zlib.crc32(c).to_bytes(4,'big')
