@@ -123,6 +123,15 @@ export async function goBack(fallback = 'kidhome') {
   if (viewStack.length > 1) {
     viewStack.pop()
     const prev = viewStack[viewStack.length - 1]
+    // ⚠️ 返回时必须把一次性参数剥掉：album 页的 songId 是「点歌跳转时」的一次性
+    // 起播指令（0.7.2 引入，老板「我自己选个单曲播放」）。不剥的话：从搜索/歌手页
+    // 点歌 → 专辑页自动起播 → 进播放页 → 按返回 → 回专辑页 → 又自动起播 →
+    // 立刻被踢回播放页 = **在播放页按返回永远出不去**（老板 2026-09-20 实测卡死）。
+    // album 页起播过一次后这条指令已经消费掉了，返回必须是「安静地看专辑」。
+    if (prev.name === 'album' && prev.params?.songId) {
+      const { songId, ...rest } = prev.params
+      prev.params = rest
+    }
     await go(prev.name, prev.params, { replace: true })
     return
   }
