@@ -60,6 +60,15 @@ const FakeAudio = {
   async setVolume({ assetId, volume }) { state.calls.push(['setVolume', assetId, volume]); const a = state.assets.get(assetId); if (a) a.volume = volume },
   async getCurrentTime({ assetId }) { return { currentTime: state.assets.get(assetId)?.time ?? 0 } },
   async clearCache() { state.calls.push(['clearCache']); state.cacheCleared = true },
+  // ⚠️ 忠于真实插件（NativeAudio.deinitPlugin）：停**全部**音轨 + 清通知 + 释放音频焦点。
+  //    真实实现见 @capgo/capacitor-native-audio 的 NativeAudio.java:1496 / Plugin.swift:1613。
+  //    这个替身是「冷启动残留音轨」回归测试的判据来源。
+  async deinitPlugin() {
+    state.calls.push(['deinitPlugin'])
+    state.deinitCalled = true
+    for (const [, a] of state.assets) a.playing = false
+    state.assets.clear()
+  },
 }
 
 // ---------- 用替身跑真实 src/lib/player.js ----------
@@ -647,6 +656,47 @@ console.log('\n=== 15. 播放模式：顺序 / 单曲循环 / 乱序（老板 20
 
 try { fs.unlinkSync(stubPath) } catch (_) {}
 try { fs.unlinkSync(path.join(ROOT, '.tmp-parental-stub.mjs')) } catch (_) {}
+
+console.log('\n=== 17. 冷启动清理残留音轨（老板 2026-09-20 报「自动出声、界面没控制器」）===')
+{
+  // 场景：WebView 被系统回收后重建 —— 原生层播放器（PlaybackService）还活着、
+  // 音轨还在播，但 JS 世界从零开始。此时若不清，就会出现
+  // 「有声音 + 没有迷你条/播放页 + 不知道在播哪个」= 老板描述的症状。
+  state.assets.clear(); state.calls = []; state.deinitCalled = false
+  // 模拟残留：两条 staler asset 仍在播
+  state.assets.set('sa-3', { playing: true, time: 999 })
+  state.assets.set('sa-4', { playing: true, time: 1234 })
+
+  const bp = new BookPlayer({})
+  await bp.init()
+  const stillPlaying = [...state.assets.entries()].filter(([, a]) => a.playing).map(([id]) => id)
+  ok('init() 调用了 deinitPlugin 清残留', state.deinitCalled === true,
+     JSON.stringify(state.calls.filter(c => c[0] === 'deinitPlugin')))
+  ok('清理后原生层没有仍在播的音轨', stillPlaying.length === 0, JSON.stringify(stillPlaying))
+  ok('JS 侧状态也归零（playing=false）', bp.playing === false, `playing=${bp.playing}`)
+  ok('JS 侧播放意图归零（_wantPlaying=false）', bp._wantPlaying === false, `want=${bp._wantPlaying}`)
+  ok('清理不影响后续正常装载', (() => { return typeof bp.load === 'function' })())
+
+  // 反向：清理必须发生在注册监听之前（否则残留事件会污染 UI 状态）
+  state.calls.length = 0; state.deinitCalled = false; state.assets.clear()
+  const bp2 = new BookPlayer({})
+  await bp2.init()
+  const iDeinit = state.calls.findIndex(c => c[0] === 'deinitPlugin')
+  ok('deinitPlugin 在 configure 之前调用（残留事件不会先进来）', iDeinit === 0,
+     JSON.stringify(state.calls.slice(0, 3)))
+
+  // 老版本插件没有 deinitPlugin → 不能崩，只能静默降级
+  const savedDeinit = FakeAudio.deinitPlugin
+  delete FakeAudio.deinitPlugin
+  state.assets.set('sa-9', { playing: true, time: 1 })
+  const bp3 = new BookPlayer({})
+  let threw = null
+  try { await bp3.init() } catch (e) { threw = e }
+  ok('插件无 deinitPlugin 时 init 不抛异常（向后兼容）', threw === null, String(threw))
+  ok('此时 JS 侧状态仍归零（尽力而为）', bp3.playing === false && bp3._wantPlaying === false)
+  FakeAudio.deinitPlugin = savedDeinit
+  state.assets.clear()
+}
 
 console.log('\n==============================================')
 console.log(`结果：${pass} 通过 / ${fail} 失败`)

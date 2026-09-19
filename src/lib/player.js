@@ -154,8 +154,50 @@ export class BookPlayer {
   }
 
   // ---------- 初始化 ----------
+  /**
+   * 冷启动清理：把原生层可能「残留还在播」的音轨彻底停掉。
+   *
+   * 为什么必须做（老板 2026-09-20 报：
+   *  「不放 ABS 了，下次打开手机上别的音频软件，会自动播放 ABS；界面上还没有
+   *   播放控制器，也不知道在播哪个，只能后台划走把它关了」）：
+   *
+   * 两条**源码级**路径会导致「原生层在播 + JS 侧完全不知情」：
+   *   ① 插件 Android 侧自己维护 resumeList：别的 App 抢音频焦点
+   *      (AUDIOFOCUS_LOSS_TRANSIENT) → 插件 pause 并记住；焦点回来
+   *      (AUDIOFOCUS_GAIN) → **插件自己 resume()**，全程不通知 JS
+   *      （NativeAudio.onAudioFocusChange）。用户以为被打断了，它却自己接上。
+   *   ② WebView 被系统回收（后台久置内存压力）→ 原生 PlaybackService 里的
+   *      播放器和通知还活着，JS 世界从零开始（state.current=null）→
+   *      没有迷你条、播放页也不知道播的是什么 = 「没界面、有声音、不知在播啥」。
+   *
+   * 探针已验证（/tmp/probe_residual.mjs 同款手法）：init() 后 JS 侧
+   * playing=false / tracks=[]，而原生层仍有 asset 处于 playing。
+   *
+   * 修法：App 初始化播放器时调 `deinitPlugin()` —— 插件里唯一能一次做完
+   * 「停全部音轨 + 清通知 + release mediaSession + 释放音频焦点」的原子操作
+   * （NativeAudio.java:1496）。**只清残留，不碰会话**：之后用户点的播放照旧。
+   * 失败不抛（老版本插件可能没这个方法），静默降级。
+   */
+  async purgeResidualPlayback() {
+    if (!isNative()) return
+    try {
+      if (typeof NativeAudio.deinitPlugin === 'function') {
+        await NativeAudio.deinitPlugin()
+        this._purged = true
+      }
+    } catch (_) { /* 插件不支持就跳过，不影响正常播放 */ }
+    // 本地状态一并归零：避免后续收到残留事件时误判成「正在播」
+    this._wantPlaying = false
+    this._starting = false
+    this.buffering = false
+    this.playing = false
+  }
+
   async init() {
     if (isNative()) {
+      // 先清残留再注册监听：顺序反了的话，残留音轨抛出的 playbackState/currentTime
+      // 事件会先被我们收下，把 UI 带进「正在播放」的错觉。
+      await this.purgeResidualPlayback()
       try {
         await NativeAudio.configure(BookPlayer.sessionOptions())
       } catch (e) { console.warn('NativeAudio.configure 失败', e) }
