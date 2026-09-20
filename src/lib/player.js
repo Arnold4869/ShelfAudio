@@ -43,11 +43,15 @@ async function fgStop() {
  *   bookTime = tracks[i].startOffset + fileTime
  */
 export class BookPlayer {
-  constructor({ onTime, onState, onTrackChange, onEnd, onBeforeAdvance, onBookEnd } = {}) {
+  constructor({ onTime, onState, onTrackChange, onEnd, onBeforeAdvance, onBookEnd, onGhostPause } = {}) {
     this.onTime = onTime || (() => {})
     this.onState = onState || (() => {})
     this.onTrackChange = onTrackChange || (() => {})
     this.onEnd = onEnd || (() => {})
+    // 压停幽灵播放（focus-guard / ghost-guard）后回调：app.js 用它把被自动恢复期间
+    // 消耗掉的时间落一次库，别让进度悄悄漂移
+    /** 压停「原生在播、用户意图是暂停」的幽灵播放后回调（app.js 用它落一次进度） */
+    this.onGhostPause = typeof onGhostPause === 'function' ? onGhostPause : null
     /**
      * 「本集播完、即将进入下一集」前的拦截钩子（睡眠定时"听完 N 集/首后停"用，2026-09-16）。
      * 返回 true = 停在这里（不再推进下一集）。
@@ -101,6 +105,8 @@ export class BookPlayer {
     this._watchdogFired = false
     this._lastTimeEventAt = 0    // 最后一次收到 currentTime 事件的时间
     this.buffering = false       // 正在缓冲（UI 显示加载态，而不是装作在播）
+    this._loading = false        // load() 进行中（装载完成前 toggle/seek 一律忽略，防止与装载竞争）
+    this._loadChain = Promise.resolve() // load 串行队列：上一次装载（含清理）完成后才开始下一次
   }
 
   /**
@@ -153,6 +159,28 @@ export class BookPlayer {
     try { await NativeAudio.configure(BookPlayer.sessionOptions()) } catch (_) {}
   }
 
+  /**
+   * 放弃音频焦点（仅 Android）。
+   *
+   * 为什么必须做（老板 2026-09-20 报「悦耳暂停后，用别的软件放音频，悦耳自己又响起来」的**根因**）：
+   * 插件的 Android 实现在 `onAudioFocusChange` 里自己维护 resumeList —— 收到
+   * AUDIOFOCUS_LOSS_TRANSIENT 就 pause 并记住，焦点回来（AUDIOFOCUS_GAIN）就
+   * **自动 resume()**，全程不问 JS（NativeAudio.java:137）。
+   * 而我们的 `pause()` 只下发 pause、**焦点一直握着** → 用户暂停后焦点仍在悦耳手里，
+   * 别的 App 结束播放释放焦点时插件收到 GAIN → 自行续播 = 幽灵出声、UI 还以为在暂停。
+   *
+   * 正确姿势（Android 官方建议）：**不播的时候不该持焦点**。暂停即放弃，
+   * 下次 play() 会经 reassertSession()/configure(focus:true) 重新申请。
+   * 这样暂停期间根本收不到 GAIN 回调，插件无从自动恢复。
+   *
+   * 用插件自己的 configure 参数实现（不 patch 第三方编译产物）；
+   * iOS 无焦点概念（会话由系统管理），不动，避免干扰 AVAudioSession。
+   */
+  static async releaseAudioFocus() {
+    if (!isNative() || platform() !== 'android') return
+    try { await NativeAudio.configure({ ...BookPlayer.sessionOptions(), focus: false }) } catch (_) {}
+  }
+
   // ---------- 初始化 ----------
   /**
    * 冷启动清理：把原生层可能「残留还在播」的音轨彻底停掉。
@@ -194,12 +222,27 @@ export class BookPlayer {
   }
 
   async init() {
+    // 幂等 + 可等待：init 里的 deinitPlugin 必须在任何装载/播放**之前**跑完，
+    // 否则冷启动用户手快时（WebView 恢复后立刻点历史记录）会出现
+    // 「刚 preload 好的音轨被紧接着的 deinitPlugin 停掉」→ 点了**一直等不到声音**
+    // （老板 2026-09-20 报的第二个问题，冷启动尤其容易撞）。
+    // 所以 load()/play() 都先 await 这个 promise；重复调用只跑一次。
+    if (this._initPromise) return this._initPromise
+    this._initPromise = this._init()
+    return this._initPromise
+  }
+
+  async _init() {
     if (isNative()) {
       // 先清残留再注册监听：顺序反了的话，残留音轨抛出的 playbackState/currentTime
       // 事件会先被我们收下，把 UI 带进「正在播放」的错觉。
       await this.purgeResidualPlayback()
       try {
-        await NativeAudio.configure(BookPlayer.sessionOptions())
+        // ⚠️ 冷启动时 **不申请音频焦点**（focus:false）：
+        // 插件只要持有焦点，别的 App 用完释放焦点就会回调 GAIN → 插件自动 resume
+        // = 幽灵出声（老板 2026-09-20 报）。此刻我们本来就什么都没播，
+        // 没理由握焦点；真正开播时 play() 会经 reassertSession() 重新申请。
+        await NativeAudio.configure({ ...BookPlayer.sessionOptions(), focus: false })
       } catch (e) { console.warn('NativeAudio.configure 失败', e) }
 
       if (NativeAudio.addListener) {
@@ -211,6 +254,7 @@ export class BookPlayer {
         } catch (e) { console.warn('NativeAudio 监听注册失败', e) }
       }
     }
+    this._initDone = true
   }
 
   get isNativeEngine() { return isNative() }
@@ -220,7 +264,29 @@ export class BookPlayer {
    * @param {object} opts
    *   itemId, tracks[], sessionId, duration, startBookTime, notification{title,artist,album,artworkUrl}
    */
-  async load({ itemId, tracks, sessionId, duration, startBookTime = 0, notification, localMap = null, localResolver = null }) {
+  async load(opts) {
+    // 串行化：playItem 里换书时会先 finish 再 load，用户连点时可能两次 load 交叠。
+    // 交叠的后果是两次 preload/_keepOnly 交叉执行 —— 轻则白装一条音轨，
+    // 重则第二条把第一条清理掉导致「点了没反应」。排队执行，后者等前者做完。
+    const run = this._loadChain.then(() => this._loadInner(opts), () => this._loadInner(opts))
+    this._loadChain = run.then(() => {}, () => {})
+    return run
+  }
+
+  async _loadInner({ itemId, tracks, sessionId, duration, startBookTime = 0, notification, localMap = null, localResolver = null }) {
+    this._loading = true
+    try {
+      // 冷启动竞态（老板 2026-09-20「点了等不到声音」）：init 还没跑完就装载，
+      // 会让 init 里的 deinitPlugin 把刚装好的音轨停掉。等 init 收尾。
+      try { await this.init() } catch (_) {}
+      await this._loadBody({ itemId, tracks, sessionId, duration, startBookTime, notification, localMap, localResolver })
+    } finally {
+      this._loading = false
+    }
+    return this
+  }
+
+  async _loadBody({ itemId, tracks, sessionId, duration, startBookTime = 0, notification, localMap = null, localResolver = null }) {
     await this.stop({ silent: true })
     // 加载前把「上次被杀时残留的播放意图」清干净：
     // App 被杀时 _wantPlaying 可能还是 true，重开后这里不清，
@@ -400,6 +466,11 @@ export class BookPlayer {
       this.buffering = false
       this.onState({ state: 'paused', isPlaying: false })
       this._stopWebTicker()
+      // ⚠️ 暂停后必须放弃音频焦点（Android）：插件握着焦点时，别的 App 用完
+      // 释放焦点会回调 GAIN → 插件自动 resume = 幽灵出声（老板 2026-09-20 报）。
+      // 放在 pause 之后（先真停再放焦点，避免中间空档别的 App 抢不到）。
+      // 不 await 阻塞后续：失败也不影响暂停这件事。
+      BookPlayer.releaseAudioFocus().catch(() => {})
       // 暂停 = 用户明确停下的位置，立刻回写 ABS。
       // 之前只靠 10s 节流 + complete/finish，"听完这集前的暂停"会把
       // 最后几秒漏在服务端外面，恢复时就贴着集尾（见 load 的结尾贴齐）。
@@ -407,7 +478,14 @@ export class BookPlayer {
     })
   }
 
-  async toggle() { return this._wantPlaying ? this.pause() : this.play() }
+  async toggle() {
+    // 装载闸门（老板 2026-09-20 报「历史记录点了等不到声音」的一部分）：
+    // load() 还在进行时（preload 定位尚未完成）点播放/暂停，会和装载交叉 ——
+    // play 抢在 preload 之前执行就会 reject，用户看到的就是「点了没反应」。
+    // 装载中的点击直接忽略（最多几百 ms，比出错误反馈好）。
+    if (this._loading) return
+    return this._wantPlaying ? this.pause() : this.play()
+  }
 
   /** 跳到全书某个时间点 */
   /**
@@ -799,6 +877,14 @@ export class BookPlayer {
     // ev: { assetId, currentTime, duration }
     const idx = this._indexFromAssetId(ev.assetId)
     if (idx === null || idx !== this.trackIndex) return
+    // 🚨 幽灵播放护栏（老板 2026-09-20「暂停后别的 App 一放，悦耳自己出声」）：
+    // 收到 currentTime 事件 = 原生层**确实在推进播放**。若用户意图是暂停
+    // （_wantPlaying=false），说明原生层被插件自动恢复了（焦点 GAIN / 后台回前台），
+    // 而 UI 还停在暂停态 —— 立刻压回去，不必等用户手动「播放再暂停」。
+    if (!this._wantPlaying) {
+      this._forcePauseGhost(ev.assetId)
+      return
+    }
     this._lastTimeEventAt = Date.now()   // 供启动看门狗判断"真的出过声"
     const off = this.tracks[idx]?.startOffset || 0
     this.currentBookTime = off + (ev.currentTime || 0)
@@ -807,9 +893,65 @@ export class BookPlayer {
     this._syncProgress()
   }
 
+  /** 把"原生在播、用户意图是暂停"的幽灵播放压停（下发原生 pause + 放焦点 + 状态归零） */
+  _forcePauseGhost(assetId) {
+    const id = assetId || this._assetId(this.trackIndex)
+    try { NativeAudio.pause({ assetId: id }) } catch (_) {}
+    BookPlayer.releaseAudioFocus().catch(() => {})
+    this._starting = false
+    this.buffering = false
+    this.playing = false
+    this.onState({ state: 'paused', isPlaying: false, reason: 'ghost-guard' })
+    try { this.onGhostPause?.() } catch (_) {}
+  }
+
+  /**
+   * 状态对账（回到前台/可见性变化时调用）：
+   * JS 侧认为"已暂停"，但原生层可能被插件自动恢复还在播（且没广播事件）——
+   * 直接问一次原生层真值，真在播就压停。解决「播放控制器管不住它、
+   * 必须手动播放再暂停」的现象，不必等用户操作。
+   */
+  async reconcilePaused() {
+    if (!this.isNativeEngine) return
+    if (this._wantPlaying || this.playing || this._loading) return
+    if (!this.tracks?.length) return
+    const assetId = this._assetId(this.trackIndex)
+    try {
+      const r = await NativeAudio.isPlaying({ assetId })
+      if (r?.isPlaying) this._forcePauseGhost(assetId)
+    } catch (_) {}
+  }
+
   _onNativeState(ev) {
     // 远程控制（锁屏/通知栏）也会触发这里，UI 必须跟着变
     const playing = ev?.state === 'playing'
+
+    // 🚨 焦点自动恢复护栏（老板 2026-09-20 报「悦耳暂停后，用别的 App 播放音频，
+    //    悦耳自己又响起来、播放控制器管不住它」）：
+    // 插件会在两类时机**自己恢复播放**、只广播一条 playing 事件（甚至不广播）：
+    //   - 音频焦点回到自己（AUDIOFOCUS_GAIN，别的 App 停止/释放焦点）：
+    //     onAudioFocusChange 自动 resume 全部音轨（NativeAudio.java:149）
+    //   - App 从后台回前台且 backgroundPlayback 配置缺失时：handleOnResume 自动 resume
+    // 这些自动恢复完全不知道「用户是不是主动暂停过」。若这不是用户意图
+    // （_wantPlaying=false）→ 立刻压回去：下发原生 pause + UI 维持暂停态。
+    // ⚠️ 顺序铁律：remotePlay（用户在锁屏/通知栏按了播放）必须**先**处理 ——
+    //   它到达时 JS 还没来得及设 _wantPlaying，先落护栏会被误杀（点了不出声）。
+    //   它是明确的用户意图：把意图标志跟上，让之后的 toggle() 语义正确。
+    if (playing && ev?.reason === 'remotePlay') {
+      this._wantPlaying = true
+    } else if (playing && !this._wantPlaying
+               && (ev?.reason === 'audioFocusGain' || ev?.reason === 'appResume')) {
+      const assetId = (ev.assetId && this._indexFromAssetId(ev.assetId) !== null)
+        ? ev.assetId
+        : this._assetId(this.trackIndex)
+      try { NativeAudio.pause({ assetId }) } catch (_) {}
+      this._starting = false
+      this.buffering = false
+      this.playing = false
+      this.onState({ state: 'paused', isPlaying: false, reason: 'focus-guard' })
+      return
+    }
+
     if (typeof ev?.currentTime === 'number') {
       const idx = this._indexFromAssetId(ev.assetId)
       if (idx !== null) {
@@ -858,6 +1000,13 @@ export class BookPlayer {
         this._starting = false
         this.buffering = false
         this.playing = false
+        // 锁屏/通知栏的暂停（remotePause）= 用户明确喊停：必须把意图标志一并清掉。
+        // 不清的话（旧 bug）_wantPlaying 残留 true，之后别的 App 用完音频焦点
+        // 插件自动 resume（audioFocusGain）时，焦点护栏会因「意图=播放」放行 →
+        // 老板报的「暂停后用别的软件，悦耳自己又响起来」。
+        // 注意：系统抢占（audioFocusLossTransient 等）**不能**清 —— 那种情况
+        // 意图仍是播放，焦点回来由插件自动续上是 Android 惯例（也是期望行为）。
+        if (ev?.reason === 'remotePause') this._wantPlaying = false
         this.onState({ state: 'paused', isPlaying: false, reason: ev?.reason || 'native-confirmed-pause' })
       } else {
         // 还在播：抖动，维持播放态

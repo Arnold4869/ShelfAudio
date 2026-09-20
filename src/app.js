@@ -280,6 +280,11 @@ export function initPlayer() {
         stopListening().catch(() => {})
       }
     },
+    /** 播放器压停幽灵播放（focus-guard / ghost-guard）后回调：进度落库 */
+    onGhostPause: () => {
+      try { state.player?._syncProgress?.(true) } catch (_) {}
+      updateMini()
+    },
     onTrackChange: (t) => {
       window.dispatchEvent(new CustomEvent('sa:track', { detail: t }))
     },
@@ -310,6 +315,7 @@ export async function playItem(item, { startTime } = {}) {
   }
   const player = initPlayer()
   const meta = item.media?.metadata || {}
+  const isNd = String(item.id || '').startsWith('nd:')
   const sameBook = state.current?.item?.id === item.id && !!player.tracks?.length
 
   // 同一本书已经在播（或暂停）→ 直接回播放页，**不要**重建会话重播。
@@ -320,6 +326,12 @@ export async function playItem(item, { startTime } = {}) {
   // 例外：显式传了 startTime（如"已听完需重头听"）时才真的重载。
   if (sameBook && startTime === undefined) {
     toast('继续播放')
+    await go('player')
+    return
+  }
+  // 同一本书的 load 还在进行中（用户在装载完成前又点了一下）：别再排一次装载，
+  // 直接回播放页等它响。否则第二次 load 会把第一次刚装好的音轨拆掉重来。
+  if (state.current?.item?.id === item.id && player._loading) {
     await go('player')
     return
   }
@@ -334,16 +346,34 @@ export async function playItem(item, { startTime } = {}) {
     updateMini()
   }
 
-  // 进度：优先用传入的，其次 ABS 的上次进度
+  // 冷启动起播提速（老板 2026-09-20 报「历史记录点进去一直等不到声音」）：
+  // ① ABS：**砍掉起播前的 getProgress**。ABS 服务端开 session 时自己读
+  //    userProgress 定位（PlaybackSessionManager.startSession），已听完自动归 0 ——
+  //    和我们先 getProgress 再判 isFinished 完全等价，响应里的 session.startTime
+  //    就是它。少一趟网络往返（公网实测 ~50-150ms，弱网更久）。
+  // ② ND：进度（getBookmarks+getAlbum）和开会话（getAlbum）互不依赖 → 并行。
+  // ③ 章节：/play 的响应里 chapters 是全量自带的（实测 452 条全在），
+  //    ND 的 startPlayback 返回的 raw 也是完整 item —— 下面补详情的那次
+  //    getItem（ABS 实测 775KB）整趟砍掉。
   let start = startTime
-  if (start === undefined) {
-    const prog = await hub.getProgress(item.id)
+  let session
+  if (start === undefined && isNd) {
+    const [prog, s] = await Promise.all([
+      hub.getProgress(item.id).catch(() => null),
+      hub.startPlayback(item.id, 0),
+    ])
     start = prog?.currentTime || 0
     // 已听完的书从头开始
     if (prog?.isFinished) start = 0
+    session = s
+  } else {
+    session = await hub.startPlayback(item.id, 0)
+    if (start === undefined) {
+      // ABS：服务端定位用的进度就在响应里（已听完时服务端自己归 0）
+      start = Number(session.raw?.startTime) || 0
+    }
   }
-
-  const { sessionId, tracks, duration } = await hub.startPlayback(item.id, Math.floor(start))
+  const { sessionId, tracks, duration } = session
   if (!tracks.length) { toast(t('noAudio')); return }
 
   // 补上带 token 的直链
@@ -353,19 +383,17 @@ export async function playItem(item, { startTime } = {}) {
     headers: hub.authHeaders(item.id),
   }))
 
-  // 章节：列表接口不返回 chapters，只有单本详情有。这里先取详情补上，
-  // 拿不到就用音轨自身信息合成（ABS 里一个音轨通常就是一集，startOffset 即章节起点）
+  // 章节：列表接口不返回 chapters，所以优先用条目自带的；没有就用会话响应里的
+  // （ABS 的 /play 自带 chapters，ND 的 raw 是完整专辑详情），最后才合成。
+  // 不再为补章节单独发 getItem —— 大书 775KB 白拉一趟（冷启动"等不到声音"的一部分）。
   let chapters = item.media?.chapters || []
   if (!chapters.length) {
-    try {
-      const detail = await hub.getItem(item.id)
-      chapters = detail?.media?.chapters || []
-    } catch (_) {}
+    chapters = (isNd ? session.raw?.media?.chapters : session.raw?.chapters) || []
   }
   if (!chapters.length) {
     // 章节标题的单位按源取（ND=首，ABS=集）。曾经这里调了一个不存在的
     // chapterUnit() → ReferenceError → playItem 整个中断（0.7.2 引入，审计抓到）。
-    const unit = (String(item.id || '').startsWith('nd:')) ? '首' : '集'
+    const unit = isNd ? '首' : '集'
     chapters = withUrls.map(t => ({
       title: t.title || `第 ${t.index} ${unit}`,
       start: t.startOffset || 0,
@@ -557,6 +585,15 @@ async function boot() {
   } else {
     await go('login')
   }
+
+  // 回前台状态对账（老板 2026-09-20 报「暂停后别的 App 一放，悦耳自己出声、
+  // 控制器管不住」）：JS 认为已暂停时，插件原生层可能被自动恢复还在播（部分情况
+  // 不广播事件）。用户切回悦耳的那一刻问一次原生真值，真在播就立刻压停 + 落进度。
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      try { state.player?.reconcilePaused?.() } catch (_) {}
+    }
+  })
 
   // 闪屏至少在屏幕上待一会儿，避免闪一下就跳走
   setTimeout(() => $('#boot')?.classList.add('hidden'), 420)

@@ -29,7 +29,7 @@ const state = {
 const playingSet = () => [...state.assets.entries()].filter(([, a]) => a.playing).map(([id]) => id)
 
 const FakeAudio = {
-  async configure(o) { state.calls.push(['configure', o?.background]) },
+  async configure(o) { state.calls.push(['configure', o?.background, o?.focus]); state.lastConfigure = o },
   async addListener(name, cb) { (state.events[name] ||= []).push(cb); return { remove() {} } },
   async preload({ assetId, volume }) {
     state.calls.push(['preload', assetId])
@@ -51,7 +51,7 @@ const FakeAudio = {
     a.time = time || 0
     a.volume = volume ?? 1
   },
-  async pause({ assetId }) { const a = state.assets.get(assetId); if (a) a.playing = false },
+  async pause({ assetId }) { state.calls.push(['pause', assetId]); const a = state.assets.get(assetId); if (a) a.playing = false },
   async resume({ assetId }) { const a = state.assets.get(assetId); if (a) a.playing = true },
   async stop({ assetId }) { state.calls.push(['stop', assetId]); const a = state.assets.get(assetId); if (a) a.playing = false },
   async unload({ assetId }) { state.calls.push(['unload', assetId]); state.assets.delete(assetId) },
@@ -59,6 +59,7 @@ const FakeAudio = {
   async setRate() {},
   async setVolume({ assetId, volume }) { state.calls.push(['setVolume', assetId, volume]); const a = state.assets.get(assetId); if (a) a.volume = volume },
   async getCurrentTime({ assetId }) { return { currentTime: state.assets.get(assetId)?.time ?? 0 } },
+  async isPlaying({ assetId }) { return { isPlaying: !!state.assets.get(assetId)?.playing } },
   async clearCache() { state.calls.push(['clearCache']); state.cacheCleared = true },
   // ⚠️ 忠于真实插件（NativeAudio.deinitPlugin）：停**全部**音轨 + 清通知 + 释放音频焦点。
   //    真实实现见 @capgo/capacitor-native-audio 的 NativeAudio.java:1496 / Plugin.swift:1613。
@@ -676,6 +677,10 @@ console.log('\n=== 17. 冷启动清理残留音轨（老板 2026-09-20 报「自
   ok('JS 侧状态也归零（playing=false）', bp.playing === false, `playing=${bp.playing}`)
   ok('JS 侧播放意图归零（_wantPlaying=false）', bp._wantPlaying === false, `want=${bp._wantPlaying}`)
   ok('清理不影响后续正常装载', (() => { return typeof bp.load === 'function' })())
+  // 冷启动不握音频焦点（老板 2026-09-20 幽灵播放根因之一）：此刻什么都没播，
+  // 握着焦点的话别的 App 释放焦点会触发插件自动 resume。
+  ok('init 的 configure focus=false（不申请焦点）', state.lastConfigure?.focus === false,
+     JSON.stringify(state.lastConfigure))
 
   // 反向：清理必须发生在注册监听之前（否则残留事件会污染 UI 状态）
   state.calls.length = 0; state.deinitCalled = false; state.assets.clear()
@@ -696,6 +701,144 @@ console.log('\n=== 17. 冷启动清理残留音轨（老板 2026-09-20 报「自
   ok('此时 JS 侧状态仍归零（尽力而为）', bp3.playing === false && bp3._wantPlaying === false)
   FakeAudio.deinitPlugin = savedDeinit
   state.assets.clear()
+}
+
+console.log('\n=== 18. 幽灵播放护栏：暂停后插件自动恢复必须被压停（老板 2026-09-20 报「别的 App 一放，悦耳自己响」）===')
+{
+  state.assets.clear(); state.calls.length = 0
+  const p = new BookPlayer({})
+  p._watchdogMs = 500
+  await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  await p.play()
+  await p.pause()
+  ok('暂停后无音轨在播', playingSet().length === 0)
+
+  // ① 焦点自动恢复事件（audioFocusGain）→ 必须立刻下发原生 pause 压停
+  state.calls.length = 0
+  let ghostStates = []
+  p.onState = s => ghostStates.push(s)
+  await p._onNativeState({ assetId: 'sa-0', state: 'playing', reason: 'audioFocusGain' })
+  ok('收到 audioFocusGain playing 事件 → 下发原生 pause',
+     state.calls.some(c => c[0] === 'pause' && c[1] === 'sa-0'), JSON.stringify(state.calls))
+  ok('UI 维持暂停态（不跟进播放）', ghostStates.at(-1)?.isPlaying === false,
+     JSON.stringify(ghostStates.at(-1)))
+  ok('原生层也被停掉', state.assets.get('sa-0')?.playing === false)
+
+  // ② 前台回对账：原生层无声恢复在播（没广播事件）→ isPlaying 反查 + 压停
+  state.calls.length = 0
+  state.assets.get('sa-0').playing = true
+  await p.reconcilePaused()
+  ok('reconcilePaused 发现原生在播 → 压停', state.assets.get('sa-0')?.playing === false)
+  ok('reconcilePaused 也下发了原生 pause', state.calls.some(c => c[0] === 'pause' && c[1] === 'sa-0'))
+
+  // ③ currentTime 事件兜底：意图是暂停却收到时间事件 = 在出声 → 压停
+  state.calls.length = 0
+  state.assets.get('sa-0').playing = true
+  await p._onNativeTime({ assetId: 'sa-0', currentTime: 100, duration: 300 })
+  ok('暂停态收到 currentTime 事件 → 判定幽灵播放压停',
+     state.calls.some(c => c[0] === 'pause' && c[1] === 'sa-0'))
+
+  // ④ 反向：用户意图是播放（_wantPlaying=true）时，audioFocusGain 事件不许误杀
+  state.calls.length = 0
+  ghostStates = []
+  await p.play()
+  await p._onNativeState({ assetId: 'sa-0', state: 'playing', reason: 'audioFocusGain' })
+  ok('意图为播放时同样的焦点事件不触发压停',
+     !state.calls.some(c => c[0] === 'pause' && c[1] === 'sa-0'))
+  ok('意图为播放时 UI 保持播放态', ghostStates.at(-1)?.isPlaying === true,
+     JSON.stringify(ghostStates.at(-1)))
+
+  // ⑤ 锁屏播放键（remotePlay）必须放行 —— 不得被护栏误杀
+  await p.pause()
+  ghostStates = []
+  await p._onNativeState({ assetId: 'sa-0', state: 'playing', reason: 'remotePlay' })
+  ok('remotePlay 是用户意图：意图标志跟上（之后 toggle 语义正确）', p._wantPlaying === true)
+  ok('remotePlay 不被压停（UI 跟进播放）', ghostStates.at(-1)?.isPlaying === true,
+     JSON.stringify(ghostStates.at(-1)))
+  // remotePlay 之后 toggle() 应该执行「暂停」而不是再播放
+  await p.toggle()
+  ok('remotePlay 后 toggle() = 暂停（不是假按钮）', p.playing === false && state.assets.get('sa-0')?.playing === false)
+
+  // ⑥ remotePause 确认真停后必须清意图标志（不清的话下次焦点 GAIN 会放行幽灵播放）
+  await p.play()
+  ok('播放态意图为 true', p._wantPlaying === true)
+  // remotePause 不带确认：走 _resolveRealPause 异步反查 → 等它 settle（硬超时 2.5s 内）
+  // 必须同时把"原生真值"设成已停，否则反查会判成焦点抖动（那是另一条分支）
+  state.assets.get('sa-0').playing = false
+  await p._onNativeState({ assetId: 'sa-0', state: 'paused', reason: 'remotePause' })
+  await new Promise(r => setTimeout(r, 600))
+  ok('remotePause 事件后 _wantPlaying 清掉', p._wantPlaying === false, `want=${p._wantPlaying}`)
+  // 之后焦点 GAIN 的自动恢复必须被拦
+  state.calls.length = 0
+  await p._onNativeState({ assetId: 'sa-0', state: 'playing', reason: 'audioFocusGain' })
+  ok('remotePause 清意图后，焦点自动恢复被拦下',
+     state.calls.some(c => c[0] === 'pause' && c[1] === 'sa-0'))
+
+  // ⑦ 装载闸门：load 进行中 toggle() 直接忽略
+  state.calls.length = 0
+  const p3 = new BookPlayer({})
+  p3._loading = true
+  await p3.toggle()
+  ok('装载中 toggle() 不产生任何桥调用', state.calls.length === 0, JSON.stringify(state.calls))
+
+  // ⑦b Android 专属：暂停必须放弃音频焦点（幽灵播放的**根因**修法）
+  {
+    const savedPlat = globalThis.window.Capacitor.getPlatform
+    globalThis.window.Capacitor.getPlatform = () => 'android'
+    const pa = new BookPlayer({})
+    pa._watchdogMs = 500
+    await pa.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+    await pa.play()
+    state.calls.length = 0
+    await pa.pause()
+    await new Promise(r => setTimeout(r, 50))
+    const focusOff = state.calls.find(c => c[0] === 'configure' && c[2] === false)
+    ok('Android 暂停后下发 configure(focus:false) 放弃焦点', !!focusOff, JSON.stringify(state.calls))
+    // 播放时必须把焦点要回来，否则别的 App 抢走声音、我们也收不到打断
+    state.calls.length = 0
+    await pa.play()
+    ok('Android 恢复播放时重新申请焦点（reassertSession 走 focus:true）',
+       state.calls.some(c => c[0] === 'configure' && c[2] === true), JSON.stringify(state.calls))
+    await pa.stop({ silent: true })
+    globalThis.window.Capacitor.getPlatform = savedPlat
+  }
+
+  // ⑧ load 串行化：第二次 load 排队，不与第一次交叉
+  state.assets.clear()
+  const p4 = new BookPlayer({})
+  p4._watchdogMs = 500
+  const l1 = p4.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  const l2 = p4.load({ itemId: 'y', tracks, sessionId: 's2', duration: 900, startBookTime: 0 })
+  await Promise.all([l1, l2])
+  ok('两次并发 load 全部完成且只保留一条音轨', state.assets.size === 1,
+     `assets=${[...state.assets.keys()]}`)
+  ok('后一次 load 胜出（itemId=y）', p4.itemId === 'y', `实际=${p4.itemId}`)
+  await p4.stop()
+
+  // ⑨ 换书必须走 stop()（分拆 load 时差点丢掉它）
+  // ⚠️ 判据必须选 stop() **独有**的行为：_keepOnly 会兜住「旧音轨不再出声」，
+  //    所以「没声音」不能证明 stop() 跑过 —— 假绿灯。stop() 独有的是
+  //    停掉原生兜底心跳（_nativeTicker），_keepOnly 不碰它。
+  state.assets.clear(); state.calls.length = 0
+  const p5 = new BookPlayer({})
+  p5._watchdogMs = 500
+  await p5.load({ itemId: 'A', tracks, sessionId: 'sa', duration: 900, startBookTime: 0 })
+  await p5.play()
+  ok('A 书第1集在播', playingSet().join() === 'sa-0', `实际=${playingSet()}`)
+  ok('播放中兜底心跳已启动（_nativeTicker 非空）', !!p5._nativeTicker)
+  state.calls.length = 0
+  await p5.load({ itemId: 'B', tracks, sessionId: 'sb', duration: 900, startBookTime: 0 })
+  const stopIdx = state.calls.findIndex(c => c[0] === 'stop')
+  const preloadIdx = state.calls.findIndex(c => c[0] === 'preload')
+  ok('换书时先 stop 旧音轨再 preload 新音轨', stopIdx >= 0 && stopIdx < preloadIdx,
+     JSON.stringify(state.calls.slice(0, 6)))
+  ok('换书后原生层没有仍在播的旧音轨', playingSet().length === 0, JSON.stringify(playingSet()))
+  ok('换书后只保留新书这一条音轨', state.assets.size === 1, `assets=${[...state.assets.keys()]}`)
+  // 关键判据：旧书的兜底心跳必须被停掉（只有 stop() 做这件事）
+  ok('换书时旧书的兜底心跳被停掉（证明 stop() 真的跑了）', p5._nativeTicker === null,
+     `ticker=${p5._nativeTicker}`)
+  ok('换书后播放意图归零（不会自己接着播）', p5._wantPlaying === false, `want=${p5._wantPlaying}`)
+  await p5.stop()
 }
 
 console.log('\n==============================================')

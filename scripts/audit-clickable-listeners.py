@@ -83,7 +83,12 @@ def handler(route):
                                                 {'id': 1, 'start': 1800, 'end': 3600, 'title': '第二章'}]}}))
     if p == '/api/items/absbook1/play':
         return route.fulfill(status=200, content_type='application/json', body=json.dumps({
-            'id': 'sess1', 'duration': 3600, 'audioTracks': [
+            'id': 'sess1', 'duration': 3600,
+            # 真实服务器行为（2026-09-20 实测）：startTime=服务端存的进度、chapters 全量自带
+            'startTime': 300, 'currentTime': 300,
+            'chapters': [{'id': 0, 'start': 0, 'end': 1800, 'title': '第一章'},
+                         {'id': 1, 'start': 1800, 'end': 3600, 'title': '第二章'}],
+            'audioTracks': [
                 {'index': 1, 'startOffset': 0, 'duration': 1800,
                  'contentUrl': '/api/items/absbook1/file/f1', 'title': '第一章'},
                 {'index': 2, 'startOffset': 1800, 'duration': 1800,
