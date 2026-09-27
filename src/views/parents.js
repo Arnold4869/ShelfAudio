@@ -296,7 +296,7 @@ export async function renderParent(root) {
               <span class="time-sep">分钟</span>
             </div>
           </div>
-          <div class="time-hint">时长用完后当天不能再播，第二天自动恢复</div>
+          <div class="time-hint">时长用完后当天不能再播，第二天自动恢复；到点后可在弹出的「家长加时」里输密码给今天临时加时间</div>
         </div>
       </div>
 

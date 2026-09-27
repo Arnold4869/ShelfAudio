@@ -59,6 +59,8 @@ jobs:
         run: python3 scripts/test-sleep-layout.py
       - name: Parental controls (Playwright + node)
         run: python3 scripts/test-parental.py
+      - name: Parental extend / top-up (Playwright + node)
+        run: python3 scripts/test-parental-extend.py
       - name: Old WebView compat (Playwright)
         run: python3 scripts/test-old-webview.py
       - name: Android XML checks
@@ -242,6 +244,8 @@ jobs:
         run: python3 scripts/test-sleep-layout.py
       - name: Parental controls (Playwright + node)
         run: python3 scripts/test-parental.py
+      - name: Parental extend / top-up (Playwright + node)
+        run: python3 scripts/test-parental-extend.py
       - name: Old WebView compat (Playwright)
         run: python3 scripts/test-old-webview.py
       - name: Android XML checks

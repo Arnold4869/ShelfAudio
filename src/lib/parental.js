@@ -114,17 +114,51 @@ export async function dailyLimitMinutes() {
   return Number.isFinite(v) && v > 0 ? Math.floor(v) : 0
 }
 
+// ---------- 家长加时（2026-09-27：时间到点后输家长密码可再续） ----------
+
+/**
+ * 今天的家长加时余额（秒）。
+ * key = bonus-YYYY-MM-DD，每天自然独立、第二天自动失效（旧 key 留着也不影响：
+ * 只读「今天」的 key）。家长每次加时把余额往上加；孩子无法改（没有 UI 入口）。
+ */
+export async function dailyBonusSeconds() {
+  const d = new Date()
+  const p = n => String(n).padStart(2, '0')
+  const key = `bonus-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  return Number(await store.get(key, '0')) || 0
+}
+
+/** 家长加时：给今天追加 minutes 分钟（连同已有余额一起落盘） */
+export async function addDailyBonusMinutes(minutes) {
+  const m = Math.max(0, Math.floor(Number(minutes) || 0))
+  if (m <= 0) return
+  const cur = await dailyBonusSeconds()
+  const d = new Date()
+  const p = n => String(n).padStart(2, '0')
+  const key = `bonus-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  await store.set(key, String(cur + m * 60))
+}
+
+/** 今天的每日上限（基础上限 + 家长加时，秒）。加时不改家长设置里的基础分钟数。 */
+async function dailyLimitSecWithBonus() {
+  return (await dailyLimitMinutes()) * 60 + await dailyBonusSeconds()
+}
+
 /**
  * 今天是否还能听（时长维度）。开关没开 / 上限为 0 → 不限。
- * @returns {allowed: boolean, remainingSec: number} remainingSec=Infinity 表示不限
+ * @returns {allowed: boolean, remainingSec: number, bonusSec: number}
+ *   remainingSec=Infinity 表示不限；bonusSec=今天的家长加时余额（展示用）。
  */
 export async function dailyQuota() {
-  if (!(await dailyLimitEnabled())) return { allowed: true, remainingSec: Infinity }
-  const limit = await dailyLimitMinutes()
-  if (!limit) return { allowed: true, remainingSec: Infinity }
+  if (!(await dailyLimitEnabled())) return { allowed: true, remainingSec: Infinity, bonusSec: 0 }
+  // ⚠️ 必须 await：dailyLimitMinutes() 是 async，写 `if (!dailyLimitMinutes())`
+  // 判断的是 Promise 对象（恒为真值）→ 上限设成 0（不限）时会掉到下面按 0 额度算，
+  // 变成「已听任何时长都被拒」。老测试里那条「时长不限 → Infinity」就是这个。
+  if (!(await dailyLimitMinutes())) return { allowed: true, remainingSec: Infinity, bonusSec: 0 }
+  const limitSec = await dailyLimitSecWithBonus()
   const used = await listenedSecondsToday()
-  const remain = limit * 60 - used
-  return { allowed: remain > 0, remainingSec: Math.max(0, remain) }
+  const remain = limitSec - used
+  return { allowed: remain > 0, remainingSec: Math.max(0, remain), bonusSec: await dailyBonusSeconds() }
 }
 
 /**
@@ -132,16 +166,43 @@ export async function dailyQuota() {
  * @returns {null | string} null=允许；否则是给孩子看的阻止原因
  */
 export async function playbackBlockedReason(now = new Date()) {
+  const g = await playbackGate(now)
+  return g.blocked ? g.message : null
+}
+
+/**
+ * 结构化闸门（2026-09-27 新增，供「输家长密码继续听」用）。
+ *
+ * 为什么要结构化：被拦下时要区分**是哪种限制**——只有「今日时长用完」能用
+ * 家长加时续上；「不在收听时段」是时间窗问题，加时没意义（要改时段）。
+ * 文案仍与旧接口完全一致（playbackBlockedReason 委托到这里，老调用方零改动）。
+ *
+ * @returns {{blocked: boolean, kind: 'window'|'quota'|null, message: string,
+ *            usedSec: number, limitSec: number, bonusSec: number}}
+ */
+export async function playbackGate(now = new Date()) {
+  const miss = { blocked: false, kind: null, message: '', usedSec: 0, limitSec: 0, bonusSec: 0 }
   if (!(await withinTimeWindow(now))) {
     const weekend = isWeekend(now)
     const label = weekend ? '周末' : '周一至周五'
     const from = await store.get(weekend ? CONFIG_KEYS.timeWeekendFrom : CONFIG_KEYS.timeWeekdayFrom, '')
     const to = await store.get(weekend ? CONFIG_KEYS.timeWeekendTo : CONFIG_KEYS.timeWeekdayTo, '')
-    return `现在不在收听时间（${label} ${from || '…'}–${to || '…'}），到点再来吧`
+    return {
+      ...miss, blocked: true, kind: 'window',
+      message: `现在不在收听时间（${label} ${from || '…'}–${to || '…'}），到点再来吧`,
+    }
   }
   const q = await dailyQuota()
-  if (!q.allowed) return '今天的收听时间用完啦，明天再来吧'
-  return null
+  if (!q.allowed) {
+    return {
+      ...miss, blocked: true, kind: 'quota',
+      message: '今天的收听时间用完啦，明天再来吧',
+      usedSec: Math.round(await listenedSecondsToday()),
+      limitSec: (await dailyLimitMinutes()) * 60 + (q.bonusSec || 0),
+      bonusSec: q.bonusSec || 0,
+    }
+  }
+  return miss
 }
 
 // ---------- 音量上限 ----------

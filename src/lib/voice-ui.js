@@ -103,7 +103,12 @@ export function openVoiceOverlay({ onSearch } = {}) {
     switch (cmd.intent) {
       case 'pause': await p?.pause(); toast('已暂停'); close(); return
       case 'play':
-        if (state.current) { await p?.play(); toast('继续播放') } else toast(t('notPlaying'))
+        if (state.current) {
+          // 家长管控（2026-09-27）：语音「继续播放」也必须过闸门 ——
+          // 否则孩子说一句「继续播放」就绕过了到点限制。
+          const { resumeGate } = await import('../app.js')
+          if (await resumeGate()) { await p?.play(); toast('继续播放') }
+        } else toast(t('notPlaying'))
         close(); return
       case 'next': await p?.nextTrack(); toast('下一集'); close(); return
       case 'prev': await p?.prevTrack(); toast('上一集'); close(); return

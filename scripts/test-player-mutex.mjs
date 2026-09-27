@@ -750,14 +750,44 @@ console.log('\n=== 18. 幽灵播放护栏：暂停后插件自动恢复必须被
 
   // ⑤ 锁屏播放键（remotePlay）必须放行 —— 不得被护栏误杀
   await p.pause()
+  state.calls.length = 0
   ghostStates = []
   await p._onNativeState({ assetId: 'sa-0', state: 'playing', reason: 'remotePlay' })
   ok('remotePlay 是用户意图：意图标志跟上（之后 toggle 语义正确）', p._wantPlaying === true)
   ok('remotePlay 不被压停（UI 跟进播放）', ghostStates.at(-1)?.isPlaying === true,
      JSON.stringify(ghostStates.at(-1)))
+  ok('remotePlay 不重复下发 play（不重置播放位置）',
+     !state.calls.some(c => c[0] === 'play'), JSON.stringify(state.calls))
   // remotePlay 之后 toggle() 应该执行「暂停」而不是再播放
   await p.toggle()
   ok('remotePlay 后 toggle() = 暂停（不是假按钮）', p.playing === false && state.assets.get('sa-0')?.playing === false)
+
+  // ⑤b remotePlay × 家长闸门（2026-09-27 加时轮）：闸门注入时被拦 → 压停 + 意图清零
+  {
+    await p.pause()
+    state.calls.length = 0
+    ghostStates = []
+    let gateCalls = 0
+    p._saGate = async () => { gateCalls++; return false }   // 家长管控：拒绝
+    await p._onNativeState({ assetId: 'sa-0', state: 'playing', reason: 'remotePlay' })
+    await new Promise(r => setTimeout(r, 50))
+    ok('到点后锁屏按播放：闸门被问过', gateCalls === 1)
+    ok('到点后锁屏按播放：意图清零 + 原生被压停',
+       p._wantPlaying === false && state.calls.some(c => c[0] === 'pause'),
+       JSON.stringify(state.calls))
+    ok('到点后锁屏按播放：UI 维持暂停态', ghostStates.at(-1)?.isPlaying === false,
+       JSON.stringify(ghostStates.at(-1)))
+    // 闸门放行 → 行为与 ⑤ 完全一致
+    state.calls.length = 0
+    ghostStates = []
+    p._saGate = async () => true
+    await p._onNativeState({ assetId: 'sa-0', state: 'playing', reason: 'remotePlay' })
+    await new Promise(r => setTimeout(r, 50))
+    ok('闸门放行的 remotePlay：意图跟上、不压停、无重复 play',
+       p._wantPlaying === true && ghostStates.at(-1)?.isPlaying === true &&
+       !state.calls.some(c => c[0] === 'play'))
+    p._saGate = null
+  }
 
   // ⑥ remotePause 确认真停后必须清意图标志（不清的话下次焦点 GAIN 会放行幽灵播放）
   await p.play()
@@ -839,6 +869,54 @@ console.log('\n=== 18. 幽灵播放护栏：暂停后插件自动恢复必须被
      `ticker=${p5._nativeTicker}`)
   ok('换书后播放意图归零（不会自己接着播）', p5._wantPlaying === false, `want=${p5._wantPlaying}`)
   await p5.stop()
+}
+
+console.log('\n=== 20. 家长闸门注入 toggle()：到点后点播放键必须被拦住（2026-09-27）===')
+{
+  state.assets.clear(); state.calls.length = 0
+  const p = new BookPlayer({})
+  p._watchdogMs = 500
+  await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+
+  // ① 闸门拒绝 → 不起播，且不产生任何播放桥调用
+  state.calls.length = 0
+  let asked = 0
+  p._saGate = async () => { asked++; return false }
+  await p.toggle()
+  ok('闸门被问过一次', asked === 1, `asked=${asked}`)
+  ok('被拦后没有起播（无 play 桥调用）', !state.calls.some(c => c[0] === 'play'),
+     JSON.stringify(state.calls))
+  ok('被拦后 playing 仍为 false', p.playing === false)
+
+  // ② 闸门放行 → 正常起播
+  state.calls.length = 0
+  p._saGate = async () => true
+  await p.toggle()
+  ok('放行后正常起播', p.playing === true, `playing=${p.playing}`)
+  ok('放行后确实下发了 play', state.calls.some(c => c[0] === 'play'), JSON.stringify(state.calls))
+
+  // ③ 播放中 toggle = 暂停：不该再问闸门（否则家长锁会在孩子点暂停时弹出来）
+  state.calls.length = 0
+  let askedWhilePlaying = 0
+  p._saGate = async () => { askedWhilePlaying++; return true }
+  await p.toggle()
+  ok('播放中 toggle 不询问闸门（暂停不该弹家长锁）', askedWhilePlaying === 0,
+     `asked=${askedWhilePlaying}`)
+  ok('播放中 toggle = 暂停', p.playing === false)
+
+  // ④ 闸门没注入（旧行为/测试环境）→ 直接放行，零变化
+  state.calls.length = 0
+  p._saGate = null
+  await p.toggle()
+  ok('未注入闸门时 toggle 照常起播（向后兼容）', p.playing === true, `playing=${p.playing}`)
+
+  // ⑤ 闸门自身抛异常 → 不挡用户（放行）
+  state.calls.length = 0
+  await p.pause()
+  p._saGate = async () => { throw new Error('boom') }
+  await p.toggle()
+  ok('闸门抛异常时放行（不因管控代码故障拦死用户）', p.playing === true, `playing=${p.playing}`)
+  await p.stop()
 }
 
 console.log('\n==============================================')

@@ -107,6 +107,13 @@ export class BookPlayer {
     this.buffering = false       // 正在缓冲（UI 显示加载态，而不是装作在播）
     this._loading = false        // load() 进行中（装载完成前 toggle/seek 一律忽略，防止与装载竞争）
     this._loadChain = Promise.resolve() // load 串行队列：上一次装载（含清理）完成后才开始下一次
+    /**
+     * 家长管控兜底闸门（2026-09-27）：`async () => boolean`，由 app.js 注入。
+     * toggle() 在「当前没在播、意图也不是播放」时先问它 —— 拦下即不开播，
+     * 并顺带由它弹家长加时面板。为什么不在 player 里直接 import parental.js：
+     * lib 层不该反向依赖 app 的 UI 流程（同 onBeforeAdvance 的做法）。
+     */
+    this._saGate = null
   }
 
   /**
@@ -478,12 +485,33 @@ export class BookPlayer {
     })
   }
 
+  /**
+   * 恢复播放的兜底闸门（2026-09-27 家长加时轮）。
+   * 所有「从暂停/停止恢复出声」的路径都该走这里，而不是裸 `play()`：
+   * toggle()、锁屏/通知栏播放键（remotePlay + web mediaSession）。
+   * 闸门由 app.js 注入（`_saGate`）；没注入时直接放行（行为与旧版一致）。
+   * @returns {Promise<boolean>} false = 被家长管控拦下（闸门自己负责提示）
+   */
+  async gatedPlay() {
+    if (this._saGate) {
+      let ok = false
+      try { ok = await this._saGate() } catch (_) { ok = true }   // 闸门自身出错不挡用户
+      if (!ok) return false
+    }
+    return this.play()
+  }
+
   async toggle() {
     // 装载闸门（老板 2026-09-20 报「历史记录点了等不到声音」的一部分）：
     // load() 还在进行时（preload 定位尚未完成）点播放/暂停，会和装载交叉 ——
     // play 抢在 preload 之前执行就会 reject，用户看到的就是「点了没反应」。
     // 装载中的点击直接忽略（最多几百 ms，比出错误反馈好）。
     if (this._loading) return
+    // 家长管控兜底闸门（2026-09-27）：playItem() 只拦「新起播」，而恢复播放的
+    // 入口（迷你条/播放页大播放键）都走这里。到点被自停后孩子点播放键必须被拦住
+    // —— 否则家长的加时限制形同虚设。
+    // 已在播（toggle = 想暂停）不受影响：只拦「从停到播」这一次。
+    if (!this._wantPlaying && !this.playing) return this.gatedPlay()
     return this._wantPlaying ? this.pause() : this.play()
   }
 
@@ -936,9 +964,23 @@ export class BookPlayer {
     // （_wantPlaying=false）→ 立刻压回去：下发原生 pause + UI 维持暂停态。
     // ⚠️ 顺序铁律：remotePlay（用户在锁屏/通知栏按了播放）必须**先**处理 ——
     //   它到达时 JS 还没来得及设 _wantPlaying，先落护栏会被误杀（点了不出声）。
-    //   它是明确的用户意图：把意图标志跟上，让之后的 toggle() 语义正确。
+    //   它是明确的用户意图，意图标志照旧跟上；家长闸门（2026-09-27）用注入的
+    //   _saGate 单独复核：被拦就压停 + 弹加时，到点后锁屏按播放也绕不过去。
+    //   不复用 gatedPlay() 是有意的 —— 那会重复下发 play() 把播放位置重置。
     if (playing && ev?.reason === 'remotePlay') {
+      // 锁屏播放键 = 用户明确要听：照常把意图标志跟上（原生层已经在播了，
+      // 不再重复下发 play —— 那会把播放位置重置）。
+      // 家长闸门在闸门注入时补查：被拦（到点自停后锁屏按播放也要家长解锁）
+      // 就立刻压停 + 弹加时面板；没注入 _saGate（旧测试/无管控）则零行为变化。
       this._wantPlaying = true
+      if (this._saGate) {
+        this._saGate().then(ok => {
+          if (!ok) {
+            this._wantPlaying = false
+            this._forcePauseGhost(ev.assetId || this._assetId(this.trackIndex))
+          }
+        }).catch(() => {})
+      }
     } else if (playing && !this._wantPlaying
                && (ev?.reason === 'audioFocusGain' || ev?.reason === 'appResume')) {
       const assetId = (ev.assetId && this._indexFromAssetId(ev.assetId) !== null)
@@ -1138,7 +1180,7 @@ export class BookPlayer {
         title: n.title || '', artist: n.artist || '', album: n.album || '',
         artwork: n.artworkUrl ? [{ src: n.artworkUrl, sizes: '400x400' }] : [],
       })
-      navigator.mediaSession.setActionHandler('play', () => this.play())
+      navigator.mediaSession.setActionHandler('play', () => this.gatedPlay())
       navigator.mediaSession.setActionHandler('pause', () => this.pause())
       navigator.mediaSession.setActionHandler('previoustrack', () => this.prevTrack())
       navigator.mediaSession.setActionHandler('nexttrack', () => this.nextTrack())

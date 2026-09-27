@@ -17,7 +17,7 @@ import { renderSettings } from './views/settings.js'
 import { renderAbout } from './views/about.js'
 import { openVoiceOverlay } from './lib/voice-ui.js'
 import { startListening, stopListening } from './lib/stats.js'
-import { playbackBlockedReason, volumeCap } from './lib/parental.js'
+import { playbackGate, volumeCap } from './lib/parental.js'
 import { onTrackCompleted, clearTrackSleepOnBookEnd } from './lib/sleep.js'
 import { localTrackUriLazy } from './lib/offline.js'
 import { recordContinue, removeContinueLocal } from './lib/continue-local.js'
@@ -249,13 +249,57 @@ function _armGuardTimer() {
     const p = state.player
     if (!p?.playing) return
     try {
-      const blocked = await playbackBlockedReason()
-      if (blocked) {
+      const g = await playbackGate()
+      if (g.blocked) {
         await p.pause()
-        toast(blocked)
+        // 到点自停后立刻给家长一个续时的机会（老板 2026-09-27）：
+        // 孩子正听着被掐，家长在旁边就能马上输密码续上，不用再点一次播放。
+        // 只有「时长用完」能续（时段问题给提示即可，加时无意义）。
+        if (g.kind === 'quota') {
+          if (await _offerExtend(g)) {
+            // 家长真的加了时 → 原地续播（不断在这集位置，孩子无感）
+            try { await p.play() } catch (_) {}
+          }
+          // 没加时（取消/输错）→ _offerExtend 里已 toast 过原因，不再重复
+        } else {
+          toast(g.message)
+        }
       }
     } catch (_) {}
   }, 60000)
+}
+
+/**
+ * 闸门拦下 → 先告诉用户原因，再问家长「要不要加时」。
+ * 加成了返回 true（调用方放行），否则 false（维持原判）。
+ *
+ * 只对 quota（今日时长用完）开放：时段限制是「几点能听」的问题，
+ * 家长要改的是时段不是时长 —— 老板 2026-09-27 原话是「达到时间后可以输入
+ * 家长密码继续设置时间」，即时长到点续时。
+ * 没设家长密码直接返回 false（锁都开不了，照旧提示即可）。
+ */
+async function _offerExtend(gate) {
+  toast(gate.message)              // 先说清为什么被拦（孩子/家长都要看到）
+  if (!state.kidPin) return false  // 没设密码 = 没人能解锁
+  const { openParentalExtend } = await import('./lib/parental-extend.js')
+  return !!(await openParentalExtend(gate))
+}
+
+/**
+ * 恢复播放前的闸门（注入给 BookPlayer.toggle()，2026-09-27）。
+ * 迷你条 / 播放页大播放键都走 toggle()，这里是它们唯一的拦截点。
+ * @returns {Promise<boolean>} true=放行播放；false=维持暂停（原因已提示）
+ */
+export async function resumeGate() {
+  let gate = await playbackGate()
+  if (gate.blocked && gate.kind === 'quota' && await _offerExtend(gate)) {
+    gate = await playbackGate()   // 加时后重判
+  }
+  if (gate.blocked) {
+    if (gate.kind !== 'quota') toast(gate.message)   // 时段类原因在这里补提示
+    return false
+  }
+  return true
 }
 
 // ---------------- 播放器装配 ----------------
@@ -299,6 +343,9 @@ export function initPlayer() {
   })
   state.player = p
   window.__saPlayer = p   // voice.js 在语音结束后需要它恢复播放
+  // 家长管控兜底闸门（2026-09-27）：恢复播放的唯一入口 toggle() 的守门人。
+  // 到点被自停后点播放键 = 触发家长加时流程（时长用完时），拦住孩子绕过。
+  p._saGate = resumeGate
   p.init()
   return p
 }
@@ -308,10 +355,17 @@ export async function playItem(item, { startTime } = {}) {
   // 家长管控闸门（老板 2026-09-13）：不在允许时段 / 当天时长用完 → 直接拦下，
   // 连"加载中"都不显示，避免孩子以为坏了反复点。播放中途到点由 onState 里那个
   // 定时检查负责（见 initPlayer 的 guard 定时器）。
-  const blocked = await playbackBlockedReason()
-  if (blocked) {
-    toast(blocked)
-    throw new Error(blocked)
+  // 2026-09-27 起拦下时多一步：若是「今日时长用完」，弹家长加时面板——
+  // 输对家长密码 + 选加时分钟数 → 余额落盘 → 同一次点击继续完成起播；
+  // 取消/输错 → 走原来的 toast 拦截路径（孩子无感差别）。
+  let gate = await playbackGate()
+  if (gate.blocked && gate.kind === 'quota') {
+    const added = await _offerExtend(gate)
+    if (added) gate = await playbackGate()   // 重新判定（加时后应放行；仍不够就再拦）
+  }
+  if (gate.blocked) {
+    toast(gate.message)
+    throw new Error(gate.message)
   }
   const player = initPlayer()
   const meta = item.media?.metadata || {}
