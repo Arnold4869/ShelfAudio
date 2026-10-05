@@ -144,7 +144,7 @@ def handler(route):
             return nd({'starred2': {'album': [ND_ALBUM]}})
         if p == '/rest/getBookmarks':
             return nd({'bookmarks': {'bookmark': [
-                {'id': 'nds1', 'position': 40, 'updated': '2026-09-19T10:00:00Z'}]}})
+                {'entry': {'id': 'nds1', 'albumId': 'ndpl1'}, 'position': 40, 'changed': '2026-09-19T10:00:00Z'}]}})
         if p == '/rest/getSong':
             return nd({'song': PLAYLIST_SONG})
         if p == '/rest/getCoverArt':

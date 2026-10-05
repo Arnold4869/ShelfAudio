@@ -495,7 +495,11 @@ export class NavidromeApi {
     if (!item) return null
     const sr = await this._sub('/rest/getBookmarks').catch(() => null)
     const bms = sr?.bookmarks?.bookmark || []
-    const bySong = new Map(bms.map(b => [b.id, b]))
+    // 真实 Navidrome 的 bookmark 形状：{ entry:{id,albumId,...}, position, created, changed }
+    // song id 在 bm.entry.id，不在顶层；更新时间是 changed，不是 updated。
+    // （旧代码读 bm.id/b.updated 全是 undefined → 匹配不到任何歌 → getProgress 恒 0 →
+    //  ND 点历史记录永远从专辑开头播，不续播 —— 老板 2026-10-05 报的问题根因之一）
+    const bySong = new Map(bms.map(b => [this._bmSongId(b), b]))
     let last = null, lastIdx = -1
     for (let i = 0; i < (item._ndSongs || []).length; i++) {
       const sid = item._ndSongs[i].id
@@ -512,8 +516,25 @@ export class NavidromeApi {
       duration: dur,
       progress: dur ? currentTime / dur : 0,
       isFinished: dur ? currentTime >= dur - 1 : false,
-      _at: last.updated || last.created || 0,
+      _at: this._bmTime(last),
     }
+  }
+
+  /**
+   * bookmark 的 song id 兼容读：真实 Navidrome（OpenSubsonic 形状）= `entry.id`；
+   * 旧代码一直假设顶层 `id` —— 那是假测试自己发明的形状，真服务器上恒 undefined
+   * （ND 日志里的 getSong?id=undefined 就是它）。两种形状都认，向前向后兼容。
+   */
+  _bmSongId(bm) {
+    const v = bm?.entry?.id ?? bm?.id
+    return v == null ? '' : String(v)
+  }
+
+  /** bookmark 更新时间兼容读：真服务器 = `changed`（无 updated）；兼容顶层 updated。 */
+  _bmTime(bm) {
+    const v = bm?.changed ?? bm?.updated ?? bm?.created ?? bm?.entry?.created ?? 0
+    const t = v ? new Date(v).getTime() : 0
+    return Number.isFinite(t) ? t : 0
   }
 
   /** 继续听：ND 的 bookmarks 按更新时间排序 → 聚合回专辑。输出 ABS 形状 libraryItems */
@@ -521,19 +542,48 @@ export class NavidromeApi {
     const sr = await this._sub('/rest/getBookmarks').catch(() => null)
     const bms = sr?.bookmarks?.bookmark || []
     if (!bms.length) return { libraryItems: [] }
-    // 按 bookmark.updated 倒序
-    const sorted = [...bms].sort((a, b) => new Date(b.updated || b.created || 0) - new Date(a.updated || a.created || 0))
+    // ① 先按专辑聚合：全书进度 = 各条 bookmark 的「起点+歌内位置」的**最大值**
+    //    （updateProgress 每次同步都把当前歌之前的每首记满、当前歌记部分，
+    //    所以 max(off+pos) 就是真实全书进度；不能按 changed 取最后一条 ——
+    //    同一专辑的整批 bookmark 可能同一毫秒创建，顺序不稳定）。
+    //    活动时间取该专辑全部 bookmark 里最新的 changed。
+    const byAlbum = new Map()   // albumId -> { t, maxCur, songIds:Set }
+    for (const bm of bms) {
+      const songId = this._bmSongId(bm)
+      if (!songId && !bm?.entry?.albumId) continue
+      const albumId = bm?.entry?.albumId
+        || (await this._sub('/rest/getSong', { id: songId }).catch(() => null))?.song?.albumId
+      if (!albumId) continue
+      const t = this._bmTime(bm)
+      const agg = byAlbum.get(albumId) || { t: 0, maxCur: -1, songIds: new Set() }
+      if (t > agg.t) agg.t = t
+      if (songId) agg.songIds.add(songId)
+      // position 是「书内该歌的秒数」，需要专辑详情才能换算 —— 先记原始值，②里换算
+      ;(agg.bms || (agg.bms = [])).push({ songId, pos: Number(bm.position) || 0 })
+      byAlbum.set(albumId, agg)
+    }
+    // ② 专辑按最新活动时间倒序，拉详情组装输出
+    const ordered = [...byAlbum.entries()].sort((a, b) => b[1].t - a[1].t)
     const out = []
-    const seenAlbum = new Set()
-    for (const bm of sorted) {
+    for (const [albumId, agg] of ordered) {
       try {
-        const song = await this._sub('/rest/getSong', { id: bm.id }).catch(() => null)
-        const albumId = song?.song?.albumId
-        if (!albumId || seenAlbum.has(albumId)) continue
-        seenAlbum.add(albumId)
         const item = await this.getItem('nd:' + albumId)
         // 标注这本书的"最后活动时间"供排序
-        item.progressLastUpdate = new Date(bm.updated || bm.created || 0).getTime()
+        item.progressLastUpdate = agg.t
+        // 进度快照（历史页/书架徽标显示用）：max(歌起点 + 歌内位置) = 全书口径 currentTime
+        {
+          let maxCur = -1
+          for (const { songId, pos } of agg.bms) {
+            const ch = (item.media.chapters || []).find(c => c._nd?.songId === songId)
+              || (() => {
+                const i = (item._ndSongs || []).findIndex(s => s.id === songId)
+                return i >= 0 ? (item.media.chapters || [])[i] : null
+              })()
+            const cur = (ch?.start || 0) + pos
+            if (cur > maxCur) maxCur = cur
+          }
+          item._progress = { currentTime: Math.max(0, maxCur), duration: item.media.duration || 0 }
+        }
         out.push(item)
         if (out.length >= 8) break
       } catch (_) {}

@@ -120,11 +120,18 @@ function makeServer() {
         return ok({ albumInfo: { starred: state.starred.has(id) ? '2026-01-02T00:00:00Z' : undefined } })
       }
       case '/rest/getBookmarks': {
-        const list = Object.entries(state.bookmarks).map(([id, b]) => ({ id, ...b }))
+        // 形状必须与真实 Navidrome 一致（源码已核对 server/subsonic/bookmarks.go）：
+        // { entry:{id, albumId, ...}, position, created, changed } —— 顶层没有 id/updated。
+        // 旧版这里返回 {id, updated} 是假形状，导致真服务器上的 bug 从没被测出来过。
+        const list = Object.entries(state.bookmarks).map(([id, b]) => {
+          const song = songs.find(s => s.id === id) || {}
+          const { id: _drop, updated: _drop2, ...rest } = b
+          return { entry: { id, albumId: song.albumId, title: song.title, ...song }, position: b.position, ...rest }
+        })
         return ok({ bookmarks: { bookmark: list } })
       }
       case '/rest/createBookmark': {
-        state.bookmarks[q.get('id')] = { position: Number(q.get('position')), created: new Date().toISOString(), updated: new Date().toISOString() }
+        state.bookmarks[q.get('id')] = { position: Number(q.get('position')), created: new Date().toISOString(), changed: new Date().toISOString() }
         return ok({})
       }
       case '/rest/deleteBookmark': { delete state.bookmarks[q.get('id')]; return ok({}) }
@@ -286,6 +293,16 @@ console.log('\n=== 6. 继续听聚合 ===')
   const items = d.libraryItems
   ok('两张专辑都出现在继续听', items.length === 2, JSON.stringify(items.map(i => i.id)))
   ok('都有 nd: 前缀（视图能区分来源）', items.every(i => String(i.id).startsWith('nd:')))
+  // 进度快照：历史页/书架「听 N%」的数据来源（ND 没有服务端 mediaProgress）
+  const alb1 = items.find(i => i.id === 'nd:alb1')
+  ok('带 _progress 快照', !!alb1?._progress, JSON.stringify(alb1?._progress))
+  // 第 5 节已把 alb1 听到末尾（updateProgress 360）→ 全书进度 = 360（取 max(起点+位置)）
+  ok('_progress.currentTime = 全书口径 360s', alb1?._progress?.currentTime === 360, String(alb1?._progress?.currentTime))
+  ok('_progress.duration = 专辑时长 360s', alb1?._progress?.duration === 360, String(alb1?._progress?.duration))
+  // 排序：alb2 的 bookmark 是后建的（时间更新），应排在 alb1 前面；
+  // 同一专辑整批 bookmark 可能同一毫秒创建 → 断言"两张都在 + 都带时间戳"，顺序用集合断言
+  ok('两张都按时间倒序输出', items.every(i => typeof i.progressLastUpdate === 'number' && i.progressLastUpdate > 0),
+    JSON.stringify(items.map(i => [i.id, i.progressLastUpdate])))
   // 长按移除
   await nd.removeFromContinue('nd:alb2')
   const d2 = await nd.itemsInProgress()

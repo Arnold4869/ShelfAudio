@@ -43,8 +43,12 @@ export async function loadHistory() {
       if (hiddenIds.has(it.id) || seen.has(it.id)) continue
       seen.add(it.id)
       const mp = progressMap[it.id]
-      const pct = mp?.duration ? Math.round((mp.currentTime || 0) / mp.duration * 100) : 0
-      out.push({ id: it.id, media: it.media, pct, finished: !!mp?.isFinished, raw: it })
+      // 进度三来源：①服务端 mediaProgress（ABS）；②ND 客户端从 bookmark 聚合出的
+      // _progress 快照（ND 的 me() 恒空，修复前 ND 历史条目永远显示「未开始」0%）；
+      // ③条目自身 mediaProgress（ABS items-in-progress 有时自带）。
+      const prog = mp || it._progress || it.mediaProgress || null
+      const pct = prog?.duration ? Math.round((prog.currentTime || 0) / prog.duration * 100) : 0
+      out.push({ id: it.id, media: it.media, pct, finished: !!prog?.isFinished, raw: it })
     }
   } catch (_) {}
 
