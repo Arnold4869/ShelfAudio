@@ -11,7 +11,7 @@
 import { hub as abs, sourceOfId } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
 import { goBack, state, go, toast, esc, fmtDur, requireParentPin, updateMini } from '../app.js'
 import { icon } from '../lib/icons.js'
-import { t } from '../lib/terms.js'
+import { t, count as countN } from '../lib/terms.js'
 import { haptic } from '../lib/haptics.js'
 import { artistLink, artistIdOf } from '../lib/artist-links.js'
 import {
@@ -57,7 +57,7 @@ export async function renderCache(root) {
             <div class="setting-ic">${icon('download', 22)}</div>
             <div class="setting-main">
               <div class="setting-label">${esc(b.title || '未命名')}</div>
-              <div class="setting-value">${b.count} 集 · ${fmtBytes(b.bytes)}</div>
+              <div class="setting-value">${b.count} ${t('chapter')} · ${fmtBytes(b.bytes)}</div>
             </div>
             <button class="row-del" data-del="${esc(b.id)}" aria-label="删除">${icon('trash', 20)}</button>
           </div>`).join('')}
@@ -72,7 +72,7 @@ export async function renderCache(root) {
         <span style="font-size:13px">缓存后在没网的地方也能听</span>
       </div>`}
 
-    <div class="section-h">下载书籍 <small>${all.length} 本</small></div>
+    <div class="section-h">${t('all')} <small>${countN(all.length)}</small></div>
     <div class="settings-group" id="dlList">
       ${all.length ? all.map(it => {
         const m = it.media?.metadata || {}
@@ -131,9 +131,16 @@ export async function renderCache(root) {
   if (ca) ca.onclick = async () => {
     haptic.tap()
     if (state.kidPin) { if (!(await requireParentPin())) return }
-    await clearAll()
-    haptic.success()
-    toast('缓存已清空')
+    // 2026-10-10 审计修：原生桥批量删文件可能抛（文件被占用等），
+    // 之前直接 unhandled rejection，按钮像坏的。对齐单本删除的错误处理。
+    try {
+      await clearAll()
+      haptic.success()
+      toast('缓存已清空')
+    } catch (e) {
+      haptic.error()
+      toast('清空失败：' + (e?.message || e))
+    }
     await go('cache')
   }
 

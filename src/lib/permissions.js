@@ -81,10 +81,17 @@ export async function openSystemSettings() {
   }
 }
 
-/** iOS 跳设置后回到前台时，系统权限可能已变，需要重新查 */
+/** iOS 跳设置后回到前台时，系统权限可能已变，需要重新查。
+ *  2026-10-10 审计修：返回解绑函数 —— 之前每次调用都往 document 上叠加一组
+ *  监听器（无 remove），反复进出「关于」页后一个 resume 触发 N 次回调。 */
 export function onAppResume(cb) {
   try {
+    const onVis = () => { if (!document.hidden) cb() }
     document.addEventListener('resume', cb)
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) cb() })
-  } catch (_) {}
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      document.removeEventListener('resume', cb)
+      document.removeEventListener('visibilitychange', onVis)
+    }
+  } catch (_) { return () => {} }
 }

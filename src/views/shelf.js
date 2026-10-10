@@ -163,7 +163,7 @@ export async function renderShelf(root) {
     const cover = abs.coverUrl(it.id, { width: big ? 420 : 200 })
     const done = prog?.isFinished
     return `
-      <div class="book-card" data-id="${it.id}">
+      <div class="book-card" data-id="${esc(it.id)}">
         <div class="cover-slot">
           ${fallbackCover({ title, author: m.authorName || m.narratorName, cls: 'cover-ph-card' })}
           <img class="book-cover" data-cover src="${cover}" alt="" loading="lazy">
@@ -223,7 +223,7 @@ export async function renderShelf(root) {
     const who = m.authorName || m.narratorName || ''
     const tail = done ? '已听完' : (pct > 0 ? pct + '%' : icon('play', 15))
     return `
-      <div class="list-item" data-id="${it.id}">
+      <div class="list-item" data-id="${esc(it.id)}">
         <div class="cover-slot">
           ${fallbackCover({ title, author: who, cls: 'cover-ph-list' })}
           <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">

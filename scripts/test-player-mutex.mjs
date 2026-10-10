@@ -299,8 +299,12 @@ console.log('\n=== 10. 启动看门狗：play 后从未出声（缓存损坏卡�
   const p = new BookPlayer({})
   p._watchdogMs = 500   // 测试注入：500ms 触发，不用真等 12s
   await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 900, startBookTime: 150 })
-  // 替身里 asset 永远不发 currentTime（模拟坏缓存卡死）
+  // 替身里 asset 永远不发 currentTime（模拟坏缓存卡死）。
+  // 2026-10-10 修复后看门狗先 isPlaying 反查：真实坏缓存场景里 play 根本没让
+  // asset 出声（isPlaying=false），替身必须复刻这个行为——把 play 置的 playing 压回
+  // false，模拟「调了 play 但原生层没真正起来」。
   await p.play()
+  state.assets.forEach(a => { a.playing = false })
   ok('看门狗定时器已布防', p._startWatchdog !== null)
   await new Promise(r => setTimeout(r, 1400))   // 500ms 触发 + 自愈余量
   ok('看门狗触发：调用了 clearCache', state.cacheCleared === true,

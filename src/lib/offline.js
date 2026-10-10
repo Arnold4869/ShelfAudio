@@ -18,6 +18,7 @@
 import { Filesystem, Directory } from '@capacitor/filesystem'
 import { store, CONFIG_KEYS } from './store.js'
 import { hub } from './servers.js'
+import { t } from './terms.js'
 
 const INDEX_KEY = 'offlineIndex'
 const ROOT = 'audio'          // 相对 Directory.Data 的根目录
@@ -62,6 +63,20 @@ async function index() {
 }
 async function setIndex(idx) { await store.setJSON(INDEX_KEY, idx) }
 
+// 2026-10-10 审计修：索引 read-modify-write 无并发保护 —— downloadBook 开头读一次
+// idx、整本下完（可能几分钟）后整体写回，期间并发的其它写入（另一本书下载完、
+// localTrackUri 自愈、removeBook）都会被覆盖 → 磁盘文件在而索引没有，永久泄漏。
+// 所有索引变更走这条串行队列：每次都重新读最新索引、改完立即写回。
+let _idxQueue = Promise.resolve()
+function mutateIndex(fn) {
+  _idxQueue = _idxQueue.then(async () => {
+    const idx = await index()
+    await fn(idx)
+    await setIndex(idx)
+  }).catch(() => {})
+  return _idxQueue
+}
+
 /** 已缓存信息（没有则 null） */
 export async function offlineInfo(bookId) {
   const idx = await index()
@@ -92,7 +107,7 @@ export async function localTrackUri(bookId, idx) {
     return uri
   } catch (_) {
     // 文件没了 → 顺手把索引里的这条抹掉，避免一直返回坏路径
-    if (info) { delete info.tracks[idx]; await setIndex({ ...(await index()), [bookId]: info }) }
+    if (info) { await mutateIndex(ix => { const r = ix[bookId] || (ix[bookId] = { title: info.title, at: info.at, bytes: info.bytes, tracks: {} }); r.tracks = r.tracks || {}; delete r.tracks[idx] }) }
     return null
   }
 }
@@ -126,7 +141,7 @@ export async function cacheSize() {
 export async function downloadBook(book, onProgress = () => {}) {
   if (!native()) throw new Error('离线下载只在手机 App 里可用')
   const tracks = book.tracks || []
-  if (!tracks.length) throw new Error(t('noAudio'))
+  if (!tracks.length) throw new Error(t('noAudio'))  // 2026-10-10 修：t 未导入会抛 ReferenceError
 
   const dir = bookDir(book.id)
   // 建目录（已存在会抛，忽略）
@@ -147,9 +162,11 @@ export async function downloadBook(book, onProgress = () => {}) {
     onProgress({ done: i, total: tracks.length, pct: Math.round((i / tracks.length) * 100), label: t.title || `第${n + 1}集` })
 
     // 已下过且文件在 → 跳过
+    // 2026-10-10 审计修：只看 size>0 会把强杀 App 留下的半截文件当「已缓存」
+    // （离线听到一半就断）。孤儿文件必须与索引记录的大小吻合才算完整。
     try {
       const st = await Filesystem.stat({ path, directory: Directory.Data })
-      if (st?.size > 0) {
+      if (rec.tracks[n] && st?.size === rec.tracks[n].size && st.size > 0) {
         rec.tracks[n] = { path, size: st.size }
         totalBytes += st.size
         ok++
@@ -184,8 +201,8 @@ export async function downloadBook(book, onProgress = () => {}) {
 
   rec.bytes = totalBytes
   rec.at = Date.now()
-  idx[book.id] = rec
-  await setIndex(idx)
+  // 走串行队列：与并发的 removeBook / localTrackUri 自愈互不覆盖
+  await mutateIndex(ix => { ix[book.id] = rec })
   onProgress({ done: tracks.length, total: tracks.length, pct: 100, label: '完成' })
   return { ok, fail }
 }
@@ -199,8 +216,7 @@ export async function removeBook(bookId) {
     try { await Filesystem.deleteFile({ path: rec.tracks[k].path, directory: Directory.Data }) } catch (_) {}
   }
   try { await Filesystem.rmdir({ path: bookDir(bookId), directory: Directory.Data, recursive: true }) } catch (_) {}
-  delete idx[bookId]
-  await setIndex(idx)
+  await mutateIndex(ix => { delete ix[bookId] })
 }
 
 /** 清空全部缓存 */
@@ -208,7 +224,7 @@ export async function clearAll() {
   const idx = await index()
   for (const id of Object.keys(idx)) await removeBook(id)
   try { await Filesystem.rmdir({ path: ROOT, directory: Directory.Data, recursive: true }) } catch (_) {}
-  await setIndex({})
+  await mutateIndex(ix => { for (const k of Object.keys(ix)) delete ix[k] })
 }
 
 /** 已缓存的书列表 */

@@ -47,7 +47,7 @@ export async function renderPlaylists(root) {
   }
 
   body.innerHTML = `<div class="settings-group" style="padding:4px 0">
-    ${pls.map(p => `<div class="list-item" data-pl="${p.id}">
+    ${pls.map(p => `<div class="list-item" data-pl="${esc(p.id)}">
       <div class="cover-slot">
         ${fallbackCover({ title: p.name, cls: 'cover-ph-list' })}
         <img class="list-cover" data-cover src="${hub.nd.coverUrl(p._ndPlaylistId, { width: 160 })}" alt="" loading="lazy">

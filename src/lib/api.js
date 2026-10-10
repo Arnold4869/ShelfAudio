@@ -308,10 +308,9 @@ export class AbsApi {
     return this.post(`/api/collections/${collectionId}/book`, { id: itemId })
   }
   removeFromCollection(collectionId, itemId) {
-    return request(`${this.baseUrl}/api/collections/${collectionId}/book/${itemId}`, {
-      method: 'DELETE',
-      headers: { Authorization: 'Bearer ' + this.token },
-    })
+    // 2026-10-10 审计修：之前绕过 _fetch 直接调底层 request()，403/404 被原样
+    // resolve → 界面 toast「已取消收藏」但服务器没删，还丢了 _fetch 的友好错误映射。
+    return this._fetch(`/api/collections/${collectionId}/book/${itemId}`, { method: 'DELETE' })
   }
 
   // ---- 进度 ----

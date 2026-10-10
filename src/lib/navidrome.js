@@ -469,10 +469,44 @@ export class NavidromeApi {
    * 这样书架上"听 N%"的换算才能对上。
    */
   async updateProgress(ndItemId, bookTime, duration) {
+    // 2026-10-10 审计修（NaN 穿透）：bookTime 为 NaN 时 Math.max(0, Math.min(NaN, x))
+    // === NaN，inTrack>0 恒 false → 一条 bookmark 都不写也不报错，进度静默停住。
+    const bt = Number(bookTime)
+    if (!Number.isFinite(bt)) return null
     const item = await this.getItem(ndItemId).catch(() => null)
     if (!item) return null
     const tracks = item.media.chapters || []
-    let remain = Math.max(0, Math.min(bookTime, duration || item.media.duration))
+    // 三审修正：duration 与 media.duration 双缺时 Math.min(bt, undefined)=NaN，
+    // remain=NaN 会让 lastNeeded=-1 → 删除全部 bookmark 且一条不写（进度静默清零）。
+    // duration 无效就退回不限长（clamp 只在有真实总时长时做）。
+    const durN = Number(duration) || Number(item.media?.duration)
+    const durOk = Number.isFinite(durN) && durN > 0
+    let remain = durOk ? Math.max(0, Math.min(bt, durN)) : Math.max(0, bt)
+    // 2026-10-10 审计修：进度往回退（重听）时，之前写的「满进度」bookmark 残留 ——
+    // getProgress/itemsInProgress 按 max(起点+位置) 聚合，会跳回旧位置续播。
+    // 复审修正（避免海量 delete）：updateProgress 由 syncSession 每 ~10s 调一次，
+    // 不能盲目对 lastNeeded 之后的全部歌发 delete（正常前进时那些歌没有 bookmark，
+    // 1546 轨的书每次同步发 1541 个白请求）。先 getBookmarks 拿实际存在的，
+    // 只删「实际存在且越位」的；bookTime=0（重置重听）时 lastNeeded=-1 也能删全部。
+    let lastNeeded = -1
+    for (let i = 0; i < tracks.length; i++) {
+      const t = tracks[i]
+      if (remain > (t.start || 0)) lastNeeded = i
+      else break
+    }
+    const existingIds = new Set()
+    try {
+      const sr = await this._sub('/rest/getBookmarks').catch(() => null)
+      for (const bm of (sr?.bookmarks?.bookmark || [])) {
+        const sid = this._bmSongId(bm)
+        if (sid) existingIds.add(sid)
+      }
+    } catch (_) {}
+    for (let i = lastNeeded + 1; i < tracks.length; i++) {
+      const songId = item._ndSongs?.[i]?.id || tracks[i]?._nd?.songId
+      if (!songId || !existingIds.has(songId)) continue   // 只删实际存在的，不发白请求
+      await this._sub('/rest/deleteBookmark', { id: songId }).catch(() => null)
+    }
     for (let i = 0; i < tracks.length; i++) {
       const t = tracks[i]
       const songId = item._ndSongs?.[i]?.id || t._nd?.songId

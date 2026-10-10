@@ -121,7 +121,8 @@ export async function renderAbout(root) {
   }
 
   refreshMic()
-  onAppResume(() => { if (document.body.dataset.view === 'about') refreshMic() })
+  const offResume = onAppResume(() => { if (document.body.dataset.view === 'about') refreshMic() })
+  root._cleanup = () => { try { offResume() } catch (_) {} }
 
   // ---- 检测更新：查本仓库最新 Release，有新版就给下载入口 ----
   // 老板要求「有更新放到指定位置就能检测到」→ 指定位置 = 本仓库 GitHub Release（CI 自动发布）

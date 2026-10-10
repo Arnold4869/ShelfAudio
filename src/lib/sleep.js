@@ -83,25 +83,27 @@ function watchTimeDeadline() {
 // ---------- 设定接口 ----------
 
 /** 设定时间定时（minutes=0 表示关闭全部定时）。voice-ui 传分钟进来走这里。 */
-export function setSleepTimer(minutes) {
+export async function setSleepTimer(minutes) {
   clearSleepTimer()
   if (!minutes) { toast('已关闭睡眠定时'); return }
   watchTimeDeadline()
-  armed = true
   sleepAt = Date.now() + minutes * 60000
   // 持久化到 store：锁屏久了 WebView 可能被系统整个回收重建，恢复后定时仍在
-  try { store.set(CONFIG_KEYS.sleepAt, String(sleepAt)) } catch (_) {}
+  // 2026-10-10 审计修：之前不 await —— 设完立刻被杀进程的话 sleepAt 没落盘，
+  // 重启后 restoreSleepTimer 恢复不到，用户设的定时凭空消失。先落盘再起定时器。
+  try { await store.set(CONFIG_KEYS.sleepAt, String(sleepAt)) } catch (_) {}
+  armed = true
   timeTimer = setTimeout(() => firePause(), minutes * 60000)
   toast('已设定 ' + minutes + ' 分钟后暂停')
 }
 
 /** 设定章节定时：听完 remain 集/首后暂停（remain 必须 ≥1） */
-export function setSleepTracks(remain, unit = '集') {
+export async function setSleepTracks(remain, unit = '集') {
   clearSleepTimer()
   if (!remain || remain < 1) { toast('已关闭睡眠定时'); return }
-  armed = true
   tracksLeft = remain
-  try { store.set(CONFIG_KEYS.sleepTracks, String(remain)) } catch (_) {}
+  try { await store.set(CONFIG_KEYS.sleepTracks, String(remain)) } catch (_) {}
+  armed = true
   toast(`听完这 ${remain} ${unit}后暂停`)
 }
 

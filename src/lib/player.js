@@ -420,6 +420,7 @@ export class BookPlayer {
       // 场景：App 被杀时 ExoPlayer 的磁盘流缓存（getCacheDir()/media）留下损坏条目，
       // 重开后同一本书的同一集永远缓冲不出来 —— 表现为「继续听第一本一直正在播放
       // 却加载不出来，其它书都正常」。清缓存 + 重载能救回来。
+      this._watchdogRechecks = 0   // 新一次起播，反查配额重置
       this._armStartWatchdog()
     })
   }
@@ -440,6 +441,22 @@ export class BookPlayer {
       if (this._watchdogFired || !this._wantPlaying) return
       // 收到过时间事件 = 真的在播，看门狗无事可做
       if (this._lastTimeEventAt && Date.now() - this._lastTimeEventAt < 5000) return
+      // ⚠️ 2026-10-10 审计：currentTime 事件在后台/锁屏时不投递（_startNativeTicker
+      //   注释自认）——「很久没收到事件」≠「从未出声」。开播后 12s 内切后台，回前台
+      //   定时器恢复即触发本看门狗，把正在正常播放的 asset 杀掉重载（声音中断+进度回跳）。
+      //   先反查原生真值（reconcilePaused 的同款手法）：真在播就刷新时间戳收队走人。
+      try {
+        const r = await NativeAudio.isPlaying({ assetId: this._assetId(this.trackIndex) })
+        if (r && r.isPlaying) {
+          this._lastTimeEventAt = Date.now()
+          // 复审修正（后台耗电）：后台正常播放时事件不投递，每 12s 反查 + re-arm
+          // 会整晚循环。最多反查 3 次：3 次都确认在播 = 后台播放无疑，停手。
+          // 回前台有 sa:time / reconcile 恢复观察，不需要看门狗一直盯着。
+          this._watchdogRechecks = (this._watchdogRechecks || 0) + 1
+          if (this._watchdogRechecks < 3) this._armStartWatchdog()
+          return
+        }
+      } catch (_) { /* 反查失败：走原自愈路径（宁可错杀也不能不出声） */ }
       this._watchdogFired = true
       console.warn('启动看门狗触发：play 后从未出声，清缓存重载')
       this.onState({ state: 'buffering', isPlaying: true, reason: 'start-watchdog' })
@@ -1046,9 +1063,15 @@ export class BookPlayer {
         // 不清的话（旧 bug）_wantPlaying 残留 true，之后别的 App 用完音频焦点
         // 插件自动 resume（audioFocusGain）时，焦点护栏会因「意图=播放」放行 →
         // 老板报的「暂停后用别的软件，悦耳自己又响起来」。
-        // 注意：系统抢占（audioFocusLossTransient 等）**不能**清 —— 那种情况
-        // 意图仍是播放，焦点回来由插件自动续上是 Android 惯例（也是期望行为）。
-        if (ev?.reason === 'remotePause') this._wantPlaying = false
+        // ⚠️ 2026-10-10 审计发现死键 bug：真停原因不止 remotePause 一种 ——
+        //   永久焦点丢失（audioFocusLoss / 电话）、拔耳机（becomingNoisy）等
+        //   系统确认的真停同样停在 _wantPlaying=true + playing=false 的撕裂态，
+        //   之后 toggle() 会走 pause() 分支 → 播放键第一下没反应（要按两下）。
+        //   audioFocusGain 护栏（:984）只挡「意图=暂停却自动恢复」，挡不住这种
+        //   「意图=播放但已真停」的撕裂。所以：凡核实为真停，统一清意图标志 ——
+        //   瞬态抢占（transient）不清：焦点回来由插件自动续上，那是 Android 惯例。
+        const transient = /transient/i.test(String(ev?.reason || ''))
+        if (!transient) this._wantPlaying = false
         this.onState({ state: 'paused', isPlaying: false, reason: ev?.reason || 'native-confirmed-pause' })
       } else {
         // 还在播：抖动，维持播放态

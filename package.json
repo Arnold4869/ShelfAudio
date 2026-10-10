@@ -1,6 +1,6 @@
 {
   "name": "shelf-audio",
-  "version": "0.1.0",
+  "version": "0.14.0",
   "private": true,
   "description": "ShelfAudio - 儿童友好的 Audiobookshelf 有声书播放器",
   "type": "module",

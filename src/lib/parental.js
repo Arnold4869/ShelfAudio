@@ -103,9 +103,11 @@ export async function timeWindowLabel() {
 
 /** 当天已听秒数（直接复用收听统计的真实记录，不用孩子能篡改的另一份） */
 export async function listenedSecondsToday() {
-  const { dayRecords } = await import('./stats.js')
+  const { dayRecords, pendingSeconds } = await import('./stats.js')
   const recs = await dayRecords()
-  return recs.reduce((s, r) => s + (r.sec || 0), 0)
+  // 2026-10-10 审计修：dayRecords 只含已落盘记录（30s flush 周期），在播中最近
+  // 30s 是盲区 → 孩子听完一段立刻来点播放，闸门误判没超量。把未落盘的也算上。
+  return recs.reduce((s, r) => s + (r.sec || 0), 0) + (pendingSeconds?.() || 0)
 }
 
 /** 每日上限分钟数（0 = 不限） */

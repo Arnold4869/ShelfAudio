@@ -59,7 +59,7 @@ export async function renderSearch(root, params = {}) {
   const albumRow = it => {
     const m = it.media?.metadata || {}
     const aid = artistIdOf(it)
-    return `<div class="list-item" data-id="${it.id}">
+    return `<div class="list-item" data-id="${esc(it.id)}">
       <div class="cover-slot">
         ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
         <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">
@@ -242,14 +242,14 @@ export async function renderSearch(root, params = {}) {
     }
     results.innerHTML = items.map(it => {
       const m = it.media?.metadata || {}
-      return `<div class="list-item" data-id="${it.id}">
+      return `<div class="list-item" data-id="${esc(it.id)}">
         <div class="cover-slot">
           ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
           <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">
         </div>
         <div class="list-main">
           <div class="list-title">${esc(m.title || '未命名')}</div>
-          <div class="list-sub">${artistLink(m.authorName || m.narratorName, artistIdOf(it))} · ${fmtDur(it.media?.duration)}</div>
+          <div class="list-sub">${artistLink(m.authorName || m.narratorName, artistIdOf(it))}${it.media?.duration ? ' · ' + fmtDur(it.media.duration) : ''}</div>
         </div>
         <div class="list-pct">${icon('play', 15)}</div>
       </div>`
@@ -274,14 +274,14 @@ export async function renderSearch(root, params = {}) {
       results.innerHTML = `<div class="section-h">${t('all')} <small>${countN(all.length)}</small></div>`
         + all.map(it => {
           const m = it.media?.metadata || {}
-          return `<div class="list-item" data-id="${it.id}">
+          return `<div class="list-item" data-id="${esc(it.id)}">
             <div class="cover-slot">
               ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
               <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">
             </div>
             <div class="list-main">
               <div class="list-title">${esc(m.title || '未命名')}</div>
-              <div class="list-sub">${artistLink(m.authorName || m.narratorName, artistIdOf(it))} · ${fmtDur(it.media?.duration)}</div>
+              <div class="list-sub">${artistLink(m.authorName || m.narratorName, artistIdOf(it))}${it.media?.duration ? ' · ' + fmtDur(it.media.duration) : ''}</div>
             </div>
             <div class="list-pct">${icon('play', 15)}</div>
           </div>`
@@ -298,9 +298,13 @@ export async function renderSearch(root, params = {}) {
     } catch (_) { /* 拉不到就保持空白，不打扰用户 */ }
   }
 
+  // 2026-10-10 审计修（搜索竞态）：连搜两个词，第一次请求慢后到会把新结果
+  // 覆盖回旧结果。序列号守卫：只有最新一次发起的渲染才允许写 results。
+  let _searchSeq = 0
   const doSearch = async (q) => {
     q = (q || '').trim()
     if (!q) return
+    const my = ++_searchSeq
     lastQuery = q
     results.innerHTML = `<div class="empty"><div class="glyph">${icon('loader', 40, 'spin')}</div>搜索中…</div>`
     try {
@@ -308,17 +312,21 @@ export async function renderSearch(root, params = {}) {
       // ND：分类搜索（专辑/歌手/歌曲分开显示，老板 2026-09-14）
       if (hub.active === 'nd') {
         const g = await abs.search3(state.libraryId, q)
+        if (my !== _searchSeq) return
         renderGrouped(g, q)
         return
       }
       let items = await abs.searchAll(state.libraries, q)
+      if (my !== _searchSeq) return
       if (!items.length) {
         // 兜底：本地标题子串匹配（ABS 搜索对中文分词有时不给力）
         const all = state.items.length ? state.items : (await abs.getLibraryItems(state.libraryId, { limit: 2000 }))?.results || []
         items = all.filter(it => (it.media?.metadata?.title || '').toLowerCase().includes(q.toLowerCase()))
       }
+      if (my !== _searchSeq) return
       renderList(items, q)
     } catch (e) {
+      if (my !== _searchSeq) return
       results.innerHTML = `<div class="empty"><div class="glyph">${icon('warning', 44)}</div>${esc(e.message)}</div>`
     }
   }

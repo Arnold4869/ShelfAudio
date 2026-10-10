@@ -33,7 +33,7 @@ export async function renderAlbum(root, params = {}) {
         <button class="icon-btn" id="btnBack" aria-label="返回">${icon('back', 22)}</button>
         <div class="page-title">专辑</div>
       </div>
-      <div class="empty"><div class="glyph">${icon('warning', 44)}</div>${e.message || '打不开这张专辑'}</div>`
+      <div class="empty"><div class="glyph">${icon('warning', 44)}</div>${escH(e.message || '打不开这张专辑')}</div>`
     root.querySelector('#btnBack').onclick = () => { haptic.tap(); goBack('kidhome') }
     return
   }

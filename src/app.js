@@ -52,7 +52,9 @@ export function fmtTime(sec) {
 
 export function fmtDur(sec) {
   // 先整体四舍五入到分钟再拆分，否则 7199s 会算成「1 小时 60 分」（分钟进位没同步到小时）
-  const s = Math.max(0, Math.round(sec || 0))
+  // 2026-10-10 审计修：NaN/undefined 直接进来会输出「NaN 秒」—— Number 先归一。
+  const n = Number(sec)
+  const s = Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0
   if (s < 60) return `${s} 秒`            // 避免出现「0 分钟」
   const totalMin = Math.round(s / 60)
   const hh = Math.floor(totalMin / 60)
@@ -96,8 +98,16 @@ export function viewHistory() {
 
 function rememberView(name, params, opts) {
   if (opts.replace) {
-    // 原地替换（返回时用）：栈深度不变
-    if (viewStack.length) viewStack[viewStack.length - 1] = { name, params }
+    // 原地替换（返回时用）：栈深度不变。
+    // 2026-10-10 审计修：replace 一律整体覆盖 params 会把栈顶的深链参数洗掉
+    // （album 的 id、stats 的 day/cal）——go(x, {}, {replace:true}) 一旦走到
+    // 带参页，返回后就丢状态。改成合并：新参数覆盖同名键，旧键保留。
+    if (viewStack.length) {
+      viewStack[viewStack.length - 1] = {
+        name,
+        params: { ...viewStack[viewStack.length - 1].params, ...params },
+      }
+    }
     else viewStack = [{ name, params }]
     return
   }
@@ -120,27 +130,42 @@ function rememberView(name, params, opts) {
  * @param {string} fallback 兜底视图名
  */
 export async function goBack(fallback = 'kidhome') {
-  if (viewStack.length > 1) {
-    viewStack.pop()
-    const prev = viewStack[viewStack.length - 1]
-    // ⚠️ 返回时必须把一次性参数剥掉：album 页的 songId 是「点歌跳转时」的一次性
-    // 起播指令（0.7.2 引入，老板「我自己选个单曲播放」）。不剥的话：从搜索/歌手页
-    // 点歌 → 专辑页自动起播 → 进播放页 → 按返回 → 回专辑页 → 又自动起播 →
-    // 立刻被踢回播放页 = **在播放页按返回永远出不去**（老板 2026-09-20 实测卡死）。
-    // album 页起播过一次后这条指令已经消费掉了，返回必须是「安静地看专辑」。
-    if (prev.name === 'album' && prev.params?.songId) {
-      const { songId, ...rest } = prev.params
-      prev.params = rest
+  // 2026-10-10 审计修（P0）：无防重入 —— 连点两下返回，第一次 pop 后 go() 进入
+  // await fn（专辑/歌手页拉网络，窗口 1~3 秒），第二次点击又 pop 一层且两个 go()
+  // 并发跑，后者把前者刚渲染一半的 DOM 清掉 → 栈多弹一层 + 视图错乱。
+  // 导航进行中直接忽略多余的返回点击。
+  if (goBack._busy) return
+  goBack._busy = true
+  try {
+    if (viewStack.length > 1) {
+      viewStack.pop()
+      const prev = viewStack[viewStack.length - 1]
+      // ⚠️ 返回时必须把一次性参数剥掉：album 页的 songId 是「点歌跳转时」的一次性
+      // 起播指令（0.7.2 引入，老板「我自己选个单曲播放」）。不剥的话：从搜索/歌手页
+      // 点歌 → 专辑页自动起播 → 进播放页 → 按返回 → 回专辑页 → 又自动起播 →
+      // 立刻被踢回播放页 = **在播放页按返回永远出不去**（老板 2026-09-20 实测卡死）。
+      // album 页起播过一次后这条指令已经消费掉了，返回必须是「安静地看专辑」。
+      if (prev.name === 'album' && prev.params?.songId) {
+        const { songId, ...rest } = prev.params
+        prev.params = rest
+      }
+      await go(prev.name, prev.params, { replace: true })
+      return
     }
-    await go(prev.name, prev.params, { replace: true })
-    return
+    await go(fallback, {}, { replace: true })
+  } finally {
+    goBack._busy = false
   }
-  await go(fallback, {}, { replace: true })
 }
 
 export async function go(name, params = {}, opts = {}) {
   const fn = routes[name]
   if (!fn) { console.warn('no route', name); return }
+  // 2026-10-10 审计修（P0 返回栈错位）：rememberView 先压栈，但 parents 路由在
+  // PIN 取消时直接 return —— 视图没变、栈却已经把 parents 压进去了。之后返回会
+  // 弹进一个「已经放弃进入」的家长设置页，还再弹一次 PIN。快照栈，路由返回 false
+  // （PIN 取消 / 主动放弃进入）就回滚，等价于这次导航没发生过。
+  const stackSnapshot = viewStack.slice()
   rememberView(name, params, opts)
 
   // 卸载上一个视图的监听，否则每次进播放页都会累加 window 事件监听
@@ -164,7 +189,27 @@ export async function go(name, params = {}, opts = {}) {
   // 期间 dock 空一下，切页签时底栏「闪一下」（老板 2026-09-12 报告）。
   const root = $('#view')
   root.innerHTML = ''
-  await fn(root, params)
+  // 复审修正：渲染崩溃要留痕（console.error），不能静默混同于「主动放弃」。
+  const r = await fn(root, params).catch(e => { console.error('render failed', name, e); return false })
+  if (r === false) {
+    // 路由主动放弃（家长 PIN 取消等）或渲染失败：回滚返回栈并重渲染上一个视图
+    // （复审修正：旧视图 DOM 已被清空，只回滚栈不重渲染 = 白屏）。
+    // 三审修正（无限递归防护）：若回滚目标的渲染也崩溃，再回滚再 go 会无限递归
+    // → 栈溢出。回滚重渲染只允许一层；第二层失败直接渲染静态错误页兜底。
+    viewStack = stackSnapshot
+    const top = viewStack[viewStack.length - 1]
+    if (opts._rollbackRender) {
+      // 我们已经是「回滚中的重渲染」且又失败了：别再递归，给用户一个能看的页面
+      root.innerHTML = `<div class="empty" style="margin-top:40vh"><div class="glyph">${icon('warning', 44)}</div>
+        页面出错了，点返回或重试<br>
+        <button class="btn" id="_errBack" style="margin-top:12px">返回</button></div>`
+      const b = root.querySelector('#_errBack')
+      if (b) b.onclick = () => goBack('kidhome')
+      return
+    }
+    if (top) await go(top.name, top.params, { replace: true, _rollbackRender: true })
+    return
+  }
   currentCleanup = typeof root._cleanup === 'function' ? root._cleanup : null
   // 演唱者可点（老板 2026-09-19）：所有视图统一在这里挂一次委托。
   // 视图内部再各自 wireArtistLinks() 会叠加监听器（go() 不清理 #view 上的监听），
@@ -702,7 +747,7 @@ route('parents', async (root) => {
   // _parentUnlockedAt：本次解锁的有效期（进入后 10 分钟内不再重复要密码，
   // 否则在家长设置里点每一项都要输一次；离开 App 由进程结束自然失效）。
   if (state.kidPin && !(Date.now() - (state._parentUnlockedAt || 0) < 600000)) {
-    if (!(await requireParentPin())) return
+    if (!(await requireParentPin())) return false
     state._parentUnlockedAt = Date.now()
   }
   document.body.dataset.view = 'parents'

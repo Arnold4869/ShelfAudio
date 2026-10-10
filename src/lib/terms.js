@@ -11,6 +11,11 @@
  */
 import { hub } from './servers.js'
 
+/** HTML 转义（noResult 的 q 来自输入框/语音识别，不能裸进 innerHTML） */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+}
+
 const WORDS = {
   abs: {
     book: '书', books: '本',              // 「没有收藏的书」「3 本」
@@ -18,7 +23,7 @@ const WORDS = {
     library: '书库', libraryEmpty: '这个账号没有可用的书库',
     shelf: '书架', shelfEmpty: '书架是空的', shelfLoading: '正在加载书架…',
     all: '全部书籍',
-    noResult: q => `没找到${q ? '「' + q + '」' : ''}相关的书`,
+    noResult: q => `没找到${q ? '「' + esc(q) + '」' : ''}相关的书`,
     noAudio: '这本书没有音频文件',
     openFail: '打不开这本书',
     notPlaying: '还没有在播放的书',
@@ -42,7 +47,7 @@ const WORDS = {
     library: '音乐库', libraryEmpty: '这个账号没有可用的音乐库',
     shelf: '音乐库', shelfEmpty: '音乐库是空的', shelfLoading: '正在加载音乐…',
     all: '全部专辑',
-    noResult: q => `没找到${q ? '「' + q + '」' : ''}相关的专辑或歌曲`,
+    noResult: q => `没找到${q ? '「' + esc(q) + '」' : ''}相关的专辑或歌曲`,
     noAudio: '这张专辑没有音频文件',
     openFail: '打不开这张专辑',
     notPlaying: '还没有在播放的歌曲',

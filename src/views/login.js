@@ -152,6 +152,9 @@ export async function renderLogin(root) {
   const absBtn = $('#absLogin')
   if (absBtn) {
     const doAbs = async () => {
+      // 2026-10-10 审计修：Enter 键直调这里，disabled 只挡 click 不挡 keydown →
+      // 弱网下连按 Enter 会发两次登录请求。函数内自检防重入。
+      if (absBtn.disabled) return
       const server = $('#aServer').value.trim()
       const user = $('#aUser').value.trim()
       const pass = $('#aPass').value
@@ -174,6 +177,7 @@ export async function renderLogin(root) {
   const ndBtn = $('#ndLogin')
   if (ndBtn) {
     const doNd = async () => {
+      if (ndBtn.disabled) return   // 同 doAbs：Enter 路径防重入（2026-10-10 审计修）
       const server = $('#nServer').value.trim()
       const user = $('#nUser').value.trim()
       const pass = $('#nPass').value

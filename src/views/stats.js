@@ -122,7 +122,7 @@ export async function renderStats(root, params = {}) {
 
   // ---- 日期切换：前 / 后 ±1 天，可连点（老板原话：右边按钮可以连续切换到更往后的日子）----
   // 未来日期允许切换，只是那天还没有记录（页面显示"这天没有收听记录"）。
-  const goDay = d => go('stats', { day: dayKey(d) })
+  const goDay = d => go('stats', { day: dayKey(d), cal: calOpen ? 1 : undefined })
   $('#dayPrev').onclick = () => { haptic.select(); const d = parseDay(day); d.setDate(d.getDate() - 1); goDay(d) }
   $('#dayNext').onclick = () => { haptic.select(); const d = parseDay(day); d.setDate(d.getDate() + 1); goDay(d) }
 
@@ -160,12 +160,12 @@ export async function renderStats(root, params = {}) {
     calWrap.querySelectorAll('[data-cal]').forEach(b => {
       b.onclick = () => {
         if (b.classList.contains('dis')) return
-        haptic.select(); go('stats', { day: b.dataset.cal })
+        haptic.select(); go('stats', { day: b.dataset.cal, cal: 1 })
       }
     })
     $('#calPrevM').onclick = () => { haptic.select(); calYM = shiftMonth(-1); renderCalendar() }
     $('#calNextM').onclick = () => { haptic.select(); calYM = shiftMonth(1); renderCalendar() }
-    $('#calToday').onclick = () => { haptic.select(); go('stats', { day: todayKey() }) }
+    $('#calToday').onclick = () => { haptic.select(); go('stats', { day: todayKey(), cal: 1 }) }
   }
   function shiftMonth(delta) {
     const d = new Date(calYM.y, calYM.m + delta, 1)

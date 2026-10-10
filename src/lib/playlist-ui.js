@@ -50,7 +50,7 @@ export async function openAddToPlaylist(songs, opts = {}) {
       box.innerHTML = `<div class="empty" style="padding:14px 0"><div class="glyph">${icon('playlist', 34)}</div>还没有歌单，点下面新建一个</div>`
       return
     }
-    box.innerHTML = pls.map(p => `<div class="list-item" data-pl="${p.id}">
+    box.innerHTML = pls.map(p => `<div class="list-item" data-pl="${esc(p.id)}">
         <div class="list-main">
           <div class="list-title">${esc(p.name)}</div>
           <div class="list-sub">${p.songCount} 首${p.duration ? ' · ' + fmtDur(p.duration) : ''}</div>

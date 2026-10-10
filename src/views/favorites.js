@@ -22,14 +22,25 @@ export async function renderFavorites(root) {
   root.innerHTML = `<div class="empty"><div class="glyph">${icon('loader', 40, 'spin')}</div>正在读取收藏…</div>`
 
   let cols = []
+  let loadErr = null
   try {
     cols = (await abs.collections()) || []
-  } catch (_) { }
+  } catch (e) { loadErr = e }
   // 本机收藏：服务器账号没有 update 权限时收藏会存在这里（见 lib/favs.js），
   // 不显示出来的话用户会以为收藏丢了。
   // ⚠️ 多源（2026-09-14）：本机收藏只属于 ABS 链路，ND 激活时不展示
   //（ND 的收藏是 star，直接从服务器拉，见 collections()）。
   const localList = hub.active === 'nd' ? [] : await listLocal()
+
+  // 2026-10-10 审计修：服务器错误之前被吞成「空收藏」，用户以为收藏全丢了。
+  // 弱网/反代挂了要明确显示错误 + 重试，空态只在真的没有收藏时出现。
+  if (loadErr && !cols.length && !localList.length) {
+    root.innerHTML = `<div class="empty"><div class="glyph">${icon('warning', 44)}</div>
+      <div>${esc(loadErr.message || '读取收藏失败')}</div>
+      <button class="btn" id="favRetry" style="margin-top:12px">重试</button></div>`
+    root.querySelector('#favRetry').onclick = () => { haptic.tap(); renderFavorites(root) }
+    return
+  }
 
   // 每个收藏夹补上完整书籍信息（列表返回的是精简对象，缺 media/duration）
   const groups = []

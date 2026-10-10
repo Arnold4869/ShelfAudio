@@ -56,7 +56,7 @@ export async function renderHistory(root, params = {}) {
       const m = e.media?.metadata || {}
       const pct = e.pct || 0
       const tail = e.finished ? '已听完' : (pct > 0 ? `已听 ${pct}%` : '未开始')
-      return `<div class="list-item" data-id="${e.id}" data-hist="1">
+      return `<div class="list-item" data-id="${esc(e.id)}" data-hist="1">
         <div class="cover-slot">
           ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
           <img class="list-cover" data-cover src="${abs.coverUrl(e.id, { width: 160 })}" alt="" loading="lazy">

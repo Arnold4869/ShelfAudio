@@ -84,7 +84,11 @@ async function tick() {
   // 上限设 MAX_GAP 是为了防止极端情况（比如定时器被系统延迟很久）把时长算爆。
   // 暂停时会走 stopListening()，cur 已清空，所以"暂停着放一夜"不会被算进来。
   if (delta > 0) {
-    const MAX_GAP = 30 * 60
+    // 2026-10-10 审计修：MAX_GAP=30 分钟把「锁屏连播超 30 分钟」的部分全部漏记
+    // （孩子整晚锁屏听书是最常见场景）。上限提高到 12 小时 —— 防的只是
+    // 定时器被系统延迟的极端值，真实后台播放的整段时长应该计入。
+    // 暂停时会走 stopListening()，cur 已清空，"暂停着放一夜"不会被算进来。
+    const MAX_GAP = 12 * 3600
     cur.sec += Math.min(delta, MAX_GAP)
   }
   // 只落 ≥1 秒的量：否则每次开始播放都会写一条 sec≈0.0001 的垃圾记录
@@ -101,6 +105,14 @@ export async function stopListening() {
   if (timer) { clearInterval(timer); timer = null }
   try { await tick() } catch (_) { }
   cur = null
+}
+
+/** 正在累积但还没落盘的秒数（30s flush 周期内的盲区）。家长 quota 闸门用 */
+export function pendingSeconds() {
+  if (!cur) return 0
+  // 只算真实在播的：从上次 tick 基准到现在（暂停时 stopListening 已清 cur）
+  const delta = (Date.now() - cur.lastAt) / 1000
+  return Math.max(0, Math.min(cur.sec + (Number.isFinite(delta) ? delta : 0), 1800))
 }
 
 /** 切换作品时用（内部会先结算上一本） */
