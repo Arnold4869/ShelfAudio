@@ -1,0 +1,15 @@
+# ShelfAudio 本地补丁（2026-10-11 老板拍板）：播放器磁盘缓存 100MB → 20MB
+# 应用方式：package.json postinstall 自动跑 patch-package（CI 与本地 npm install 都生效）
+# 只改 RemoteAudioAsset.MAX_CACHE_SIZE；iOS（AVPlayer）无此缓存，无需补。
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java
+--- a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java
++++ b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java
+@@ -31,7 +31,7 @@ public class RemoteAudioAsset extends AudioAsset {
+     private float volume;
+     private boolean isPrepared = false;
+     private static SimpleCache cache;
+-    private static final long MAX_CACHE_SIZE = 100 * 1024 * 1024; // 100MB cache
++    private static final long MAX_CACHE_SIZE = 20 * 1024 * 1024; // 20MB cache (ShelfAudio 2026-10-11)
+     protected AudioCompletionListener completionListener;
+     private static final float FADE_STEP = 0.05f;
+     private static final int FADE_DELAY_MS = 80; // 80ms between steps

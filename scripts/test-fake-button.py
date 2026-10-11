@@ -12,14 +12,18 @@
 跑法：python3 scripts/test-fake-button.py
 前置：本机装了 chromium（~/.cache/ms-playwright/），脚本自己拉起来 + 起静态服务。
 """
-import base64, json, os, socket, struct, subprocess, sys, time, urllib.request, shutil
+import base64, glob, json, os, socket, struct, subprocess, sys, time, urllib.request, shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, 'dist')
 PORT = 8910
 CDP_PORT = 9334
 CHROME_CANDIDATES = [
-    os.path.expanduser('~/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome'),
+    # 版本目录会随升级变（1234→1243…），按 glob 找最新的；glob 结果已按字典序排好
+    *sorted(
+        glob.glob(os.path.expanduser('~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome')),
+        reverse=True,
+    ),
     shutil.which('chromium') or '', shutil.which('google-chrome') or '',
 ]
 

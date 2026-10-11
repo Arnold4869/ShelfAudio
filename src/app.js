@@ -21,6 +21,7 @@ import { playbackGate, volumeCap } from './lib/parental.js'
 import { onTrackCompleted, clearTrackSleepOnBookEnd } from './lib/sleep.js'
 import { localTrackUriLazy } from './lib/offline.js'
 import { recordContinue, removeContinueLocal } from './lib/continue-local.js'
+import { loadHistory } from './lib/history.js'
 import { initHaptics } from './lib/haptics.js'
 import { syncToServer } from './lib/favs.js'
 import { t } from './lib/terms.js'
@@ -641,6 +642,8 @@ function updateMini() {
 async function resetForSourceSwitch() {
   state.libraryId = null
   state.items = []
+  // 切源 = 直链域名/凭据全变：当前预热作废（不同服务器的 URL，磁盘缓存不命中）
+  try { await state.player?.stopWarmup?.() } catch (_) {}
   try {
     state.libraries = await hub.libraries()
     state.libraryId = state.libraries[0]?.id || null
@@ -649,7 +652,71 @@ async function resetForSourceSwitch() {
   }
 }
 
-export { updateMini, resetForSourceSwitch }
+export { updateMini, resetForSourceSwitch, warmupFirstContinue }
+
+// ---------------- 冷启动预热（老板 2026-10-11 拍板：只做预热，不做内网直连）----------------
+/**
+ * App 启动后在后台对「继续听第一本」做 ExoPlayer 预热：提前拉元数据+首块数据
+ * 进插件的磁盘缓存（SimpleCache 100MB LRU）。用户点历史记录/继续听时，正式装载
+ * 的 preload 会命中这份磁盘缓存（按 URL 键控）→ 省掉冷启动的握手+元数据+缓冲，
+ * 出声从数秒压到接近秒开。
+ *
+ * 安全边界（每条都要守住，缺一不可）：
+ * - 只预热，绝不 play —— 不出声、不占音频焦点（configure 时 focus:false，预热不碰焦点）
+ * - 前置等待 playbackGate：孩子额度用完/时段外时绝不发起任何网络+预热
+ * - 静音开关：设置项 warmupEnabled，默认开（本机化而非「替老板做决定」的静默行为）
+ * - 失败全静默：预热是纯增益，任何异常都不能影响正常播放路径
+ * - 正式 load / 换书 / 切源时预热判据作废（player._loadBody / stop / finish 已兜底）
+ */
+async function warmupFirstContinue() {
+  try {
+    if ((await store.get(CONFIG_KEYS.warmupEnabled, '1')) !== '1') return
+    if ((await playbackGate()).blocked) return   // 孩子 到点/额度用完 → 不发起预热
+    const h = await loadHistory()
+    const first = h[0]
+    if (!first || first.finished) return
+    // 已在播/装载的就是这本书 → 无需预热
+    const p = state.player
+    if (!p) return
+    if ((p.playing || p._wantPlaying) && p.itemId === first.id) return
+    // 只处理当前激活源在听的（ND 听的预热走 ND 直链，别源历史条目不碰）
+    if (String(first.id || '').startsWith('nd:') !== (hub.active === 'nd')) return
+    const detail = await hub.getItem(first.id)
+    const audioFiles = detail?.media?.audioFiles || []
+    if (!audioFiles.length) return
+    // 续播落点 → 音轨下标（与 _loadBody 的 _trackIndexForBookTime 同口径）：
+    // 累计时长扫描，落点越界（清数据残留/进度写坏）→ 归 0 从头
+    let start = Number(
+      detail.mediaProgress?.currentTime
+      ?? first.raw?.mediaProgress?.currentTime
+      ?? first.raw?._progress?.currentTime
+      ?? first.pct * 0.01 * (Number(detail.media?.duration) || 0)
+      ?? 0
+    ) || 0
+    if (!(start > 0)) start = 0
+    let acc = 0, idx = 0
+    for (let i = 0; i < audioFiles.length; i++) {
+      const d = Number(audioFiles[i].duration) || 0
+      if (start < acc + d || d <= 0) { idx = i; break }   // d<=0：数据缺时长时按顺序兜底
+      acc += d
+    }
+    const track = audioFiles[idx]
+    if (!track) return
+    const rawId = String(track.ino ?? '').trim()
+    if (!rawId) return
+    const isNd = String(first.id).startsWith('nd:')
+    const url = isNd
+      ? hub.downloadUrl(first.id, `/rest/stream?id=${encodeURIComponent(rawId)}`)
+      : hub.trackUrl(`/api/items/${first.id}/file/${rawId}`)
+    if (!url) return
+    await p.warmup({
+      itemId: first.id,
+      url,
+      headers: isNd ? null : hub.authHeaders(first.id),
+      trackIndex: idx,
+    })
+  } catch (_) { /* 预热失败静默：不影响任何正常路径 */ }
+}
 
 // ---------------- 启动 ----------------
 async function boot() {
@@ -678,6 +745,9 @@ async function boot() {
       state.sources = avail
       initPlayer()
       await go('kidhome')
+      // 冷启动预热（不阻塞）：对「继续听第一本」提前暖 ExoPlayer，
+      // 点历史记录时几乎秒响（老板 2026-10-11 报「第一次打开要缓存好久」）
+      warmupFirstContinue()
       // 本机收藏补齐到 ABS 服务器：用户若在 ABS 后台补了 update 权限，
       // 之前只能存本机的收藏会自动同步过去（失败就算了，不打扰用户）
       syncToServer(hub.abs).catch(() => {})

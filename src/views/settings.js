@@ -9,7 +9,7 @@
 import { store, CONFIG_KEYS } from '../lib/store.js'
 import { hub } from '../lib/servers.js'
 import { t } from '../lib/terms.js'
-import { state, go, toast, esc, requireParentPin, updateMini } from '../app.js'
+import { state, go, toast, esc, requireParentPin, updateMini, warmupFirstContinue } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { kidTabsHTML, wireKidTabs } from '../lib/nav.js'
 import { haptic } from '../lib/haptics.js'
@@ -49,6 +49,13 @@ export async function renderSettings(root, { firstRun = false } = {}) {
           <div class="setting-value">${cacheCount ? `已缓存 ${cacheCount} 本 · ${fmtBytes(cacheUsed)}` : ''}</div>
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
+      </div>
+      <div class="setting-row" id="rowWarmup">
+        <div class="setting-ic">${icon('sparkle', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">快速起播</div>
+          <div class="setting-value" id="warmupVal"></div>
+        </div>
       </div>
       <div class="setting-row" id="rowServers">
         <div class="setting-ic">${icon('server', 22)}</div>
@@ -105,6 +112,21 @@ export async function renderSettings(root, { firstRun = false } = {}) {
 
   $('#rowFav').onclick = () => { haptic.tap(); go('favorites') }
   $('#rowCache').onclick = () => { haptic.tap(); go('cache') }
+
+  // 快速起播（冷启动预热开关）：点行切换，落盘立即生效（下次启动读取）
+  const paintWarmup = async () => {
+    const on = (await store.get(CONFIG_KEYS.warmupEnabled, '1')) === '1'
+    $('#warmupVal').textContent = on ? '已开启' : '已关闭'
+  }
+  paintWarmup()
+  $('#rowWarmup').onclick = async () => {
+    haptic.tap()
+    const cur = (await store.get(CONFIG_KEYS.warmupEnabled, '1')) === '1'
+    await store.set(CONFIG_KEYS.warmupEnabled, cur ? '0' : '1')
+    await paintWarmup()
+    toast(cur ? '已关闭快速起播' : '已开启快速起播')
+    if (!cur) warmupFirstContinue()
+  }
 
   // 家长设置：进之前验密码。没设过密码就直接进（否则用户永远进不去）。
   $('#rowParent').onclick = async () => {

@@ -31,8 +31,8 @@ const playingSet = () => [...state.assets.entries()].filter(([, a]) => a.playing
 const FakeAudio = {
   async configure(o) { state.calls.push(['configure', o?.background, o?.focus]); state.lastConfigure = o },
   async addListener(name, cb) { (state.events[name] ||= []).push(cb); return { remove() {} } },
-  async preload({ assetId, volume }) {
-    state.calls.push(['preload', assetId])
+  async preload({ assetId, volume, assetPath, headers }) {
+    state.calls.push(['preload', assetId, assetPath, headers])
     // ⚠️ 忠于真实插件（NativeAudio.preloadAsset）：
     //     assetId 已存在时直接 reject ERROR_AUDIO_EXISTS，不是覆盖！
     //     真实代码见 node_modules/@capgo/capacitor-native-audio/.../NativeAudio.java
@@ -921,6 +921,96 @@ console.log('\n=== 20. 家长闸门注入 toggle()：到点后点播放键必须
   await p.toggle()
   ok('闸门抛异常时放行（不因管控代码故障拦死用户）', p.playing === true, `playing=${p.playing}`)
   await p.stop()
+}
+
+console.log('\n=== 21. 冷启动预热：preload 在 pre- 前缀位、正式装载清理、作废幂等（2026-10-11）===')
+{
+  // ① 基本预热：assetId 必须是 pre-0，且绝不触发 play（只准备不出声）
+  state.assets.clear(); state.calls.length = 0
+  const p = new BookPlayer({})
+  p._watchdogMs = 500
+  await p.warmup({ itemId: 'bookA', url: 'http://srv/f1.m4a', trackIndex: 0 })
+  ok('预热 asset 用 pre- 前缀（不占正式位）', state.assets.has('pre-0') && !state.assets.has('sa-0'),
+     `assets=${[...state.assets.keys()]}`)
+  ok('预热绝不 play（只 preload）', !state.calls.some(c => c[0] === 'play'), JSON.stringify(state.calls))
+  ok('预热后 playing/意图仍为 false（不出声）', p.playing === false && p._wantPlaying === false)
+  ok('预热期间 tracks 未被污染（保持空表）', p.tracks.length === 0, `len=${p.tracks.length}`)
+  ok('预热状态已登记', p._warmBookId === 'bookA' && p._warmTrackIdx === 0 && p._warmUrl === 'http://srv/f1.m4a')
+
+  // ② 正式 load 命中：设计上不做「搬移」（磁盘缓存按 URL 自动命中），但
+  //    pre-0 asset 必须被 load 路径清掉（互斥铁律：同一时刻原生层只留正式音轨）
+  state.calls.length = 0
+  await p.load({ itemId: 'bookA', tracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  ok('命中预热：pre-0 已被 load 路径清掉', !state.assets.has('pre-0'), `assets=${[...state.assets.keys()]}`)
+  ok('命中预热：正式位 sa-0 就位', state.assets.has('sa-0'))
+  ok('预热判据已随 load 清空', p._warmBookId === null && p._warmTrackIdx === null)
+  await p.play()
+  ok('命中后正常起播', playingSet().join() === 'sa-0', `实际=${playingSet()}`)
+  await p.stop()
+
+  // ③ 未命中（换了 URL，如 token 刷新）：正常装载，预热 asset 被清理、绝不残留
+  state.assets.clear(); state.calls.length = 0
+  const p3 = new BookPlayer({})
+  p3._watchdogMs = 500
+  await p3.warmup({ itemId: 'bookA', url: 'http://srv/f1.m4a', trackIndex: 0 })
+  ok('第二次预热就位', state.assets.has('pre-0'))
+  const staleTracks = [{ ...tracks[0], url: 'http://srv/f1-NEW.m4a' }, tracks[1], tracks[2]]
+  await p3.load({ itemId: 'bookA', tracks: staleTracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  ok('URL 变了不算命中（按新 URL 常规装载）', state.assets.get('sa-0') !== undefined && !state.assets.get('sa-0')?.stale,
+     '')
+  ok('未命中路径：pre-0 残留被 stop/load 清掉', !state.assets.has('pre-0'), `assets=${[...state.assets.keys()]}`)
+  await p3.play()
+  ok('未命中后正常起播且用新 URL', playingSet().join() === 'sa-0', `实际=${playingSet()}`)
+  await p3.stop()
+
+  // ④ 换书预热：旧的 pre-0 先被顶掉（同一时刻最多一个预热）
+  state.assets.clear(); state.calls.length = 0
+  const p4 = new BookPlayer({})
+  p4._watchdogMs = 500
+  await p4.warmup({ itemId: 'bookA', url: 'http://srv/f1.m4a', trackIndex: 0 })
+  await p4.warmup({ itemId: 'bookB', url: 'http://srv/g9.m4a', trackIndex: 0 })
+  ok('换书预热：判据指向新书', p4._warmBookId === 'bookB' && p4._warmUrl === 'http://srv/g9.m4a')
+  ok('换书预热：原生层仍只有 pre-0 一条', [...state.assets.keys()].filter(k => k.startsWith('pre-')).length === 1,
+     `assets=${[...state.assets.keys()]}`)
+
+  // ⑤ 同书同址重复预热：不重复 preload（幂等）
+  state.calls.length = 0
+  await p4.warmup({ itemId: 'bookB', url: 'http://srv/g9.m4a', trackIndex: 0 })
+  ok('同书同址预热幂等（无新 preload 调用）', !state.calls.some(c => c[0] === 'preload'), JSON.stringify(state.calls))
+
+  // ⑥ 播放中预热请求：直接忽略（绝不干扰正式会话）
+  state.calls.length = 0
+  await p4.load({ itemId: 'bookB', tracks, sessionId: 's2', duration: 900, startBookTime: 0 })
+  await p4.play()
+  state.calls.length = 0
+  await p4.warmup({ itemId: 'bookC', url: 'http://srv/h1.m4a', trackIndex: 0 })
+  ok('播放中预热请求被忽略（无 preload/stop/unload 桥调用）',
+     !state.calls.some(c => ['preload', 'stop', 'unload'].includes(c[0])), JSON.stringify(state.calls))
+  ok('播放中预热请求不影响在播状态', playingSet().join() === 'sa-0', `实际=${playingSet()}`)
+
+  // ⑦ stop 清掉预热残留：预热后直接换书 load（stop 路径兜底）
+  await p4.stop()
+  await p4.warmup({ itemId: 'bookC', url: 'http://srv/h1.m4a', trackIndex: 0 })
+  ok('stop 前预热在位', state.assets.has('pre-0'))
+  await p4.stop()
+  ok('stop() 兜底清掉预热 asset', !state.assets.has('pre-0'), `assets=${[...state.assets.keys()]}`)
+  ok('stop() 清掉预热判据', p4._warmBookId === null && p4._warmTrackIdx === null)
+
+  // ⑧ 预热 trackIndex 非第 0 集（预热下标登记与正式装载的第 2 集对上）
+  state.assets.clear(); state.calls.length = 0
+  const p8 = new BookPlayer({})
+  p8._watchdogMs = 500
+  await p8.warmup({ itemId: 'bookA', url: 'u1', trackIndex: 1 })   // tracks[1].url = 'u1'
+  ok('预热第 2 集登记成功', p8._warmTrackIdx === 1 && p8._warmUrl === 'u1')
+  await p8.load({ itemId: 'bookA', tracks, sessionId: 's', duration: 900, startBookTime: 400 })
+  await p8.play()
+  ok('预热第 2 集后正式装载正常起播', playingSet().join() === 'sa-1', `实际=${playingSet()}`)
+  ok('起播位置正确（全书 400s → 第2集内 100s）', state.assets.get('sa-1')?.time === 100,
+     `time=${state.assets.get('sa-1')?.time}`)
+  ok('预热 asset 已随正式装载清掉（第 2 集场景）', !state.assets.has('pre-0'))
+  await p8.stop()
+
+  console.log(`  —— 互斥总览：${playingSet().length === 0 ? '收尾干净' : '❌ 有残留 ' + playingSet()}`)
 }
 
 console.log('\n==============================================')

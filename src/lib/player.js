@@ -107,6 +107,13 @@ export class BookPlayer {
     this.buffering = false       // 正在缓冲（UI 显示加载态，而不是装作在播）
     this._loading = false        // load() 进行中（装载完成前 toggle/seek 一律忽略，防止与装载竞争）
     this._loadChain = Promise.resolve() // load 串行队列：上一次装载（含清理）完成后才开始下一次
+    // ---- 冷启动预热（2026-10-11，老板拍板：不做内网直连，只做预热）----
+    // 预热的 assetId 用独立前缀 'pre-'（_assetId 用 'sa-'，_indexFromAssetId 只认 'sa-'）
+    // → 预热轨的所有残留事件（currentTime/complete）都会被现有过滤直接丢掉，零侵入。
+    this.warmPrefix = 'pre-'
+    this._warmBookId = null       // 当前预热的是哪本书（换书/切源时失效判据）
+    this._warmTrackIdx = null
+    this._warmIdxPromise = null   // 防并发：同一时刻最多一个预热在进行
     /**
      * 家长管控兜底闸门（2026-09-27）：`async () => boolean`，由 app.js 注入。
      * toggle() 在「当前没在播、意图也不是播放」时先问它 —— 拦下即不开播，
@@ -294,6 +301,11 @@ export class BookPlayer {
   }
 
   async _loadBody({ itemId, tracks, sessionId, duration, startBookTime = 0, notification, localMap = null, localResolver = null }) {
+    // 冷启动预热作废，必须赶在任何 await 之前：预热串行队列可能正拿着
+    // _warmupInner 的同步检查（playing/_loading 全 false）往前走，这一刻
+    // 先同步判死预热判据，间隙里用户点播 → load 排队 → 预热继续把 pre-0
+    // 装上也不会被误登记成「可用预热」（_warmupInner 完成后会复查判据）。
+    this._warmBookId = null
     await this.stop({ silent: true })
     // 加载前把「上次被杀时残留的播放意图」清干净：
     // App 被杀时 _wantPlaying 可能还是 true，重开后这里不清，
@@ -800,6 +812,18 @@ export class BookPlayer {
       this._audio.load()
       this._audio = null
     }
+    // 预热兜底清理（2026-10-11）：stop 是换书/停播的必经之路，
+    // 这里扫一次预热 assetId，防任何路径漏掉 stopWarmup 后残留出声。
+    // 幂等：没有预热时也只多两次桥调用。
+    this._warmBookId = null
+    this._warmTrackIdx = null
+    this._warmUrl = null
+    this._warmIdxPromise = null
+    if (this.isNativeEngine) {
+      const warmId = `${this.warmPrefix}0`
+      try { await NativeAudio.stop({ assetId: warmId }) } catch (_) {}
+      try { await NativeAudio.unload({ assetId: warmId }) } catch (_) {}
+    }
     this.playing = false
     this._stopWebTicker()
     if (!silent) this.onState({ state: 'stopped', isPlaying: false })
@@ -813,6 +837,7 @@ export class BookPlayer {
       this.sessionId = null
     }
     this._timeListened = 0
+    await this.stopWarmup()   // 听完整本收工：预热判据一并作废（下次启动会重新预热新书）
   }
 
   position() {
@@ -881,6 +906,83 @@ export class BookPlayer {
     }
   }
 
+  // ---------- 冷启动预热（老板 2026-10-11 拍板：只做预热，不做内网直连）----------
+  /**
+   * 为什么存在：第一次打开 → 点历史记录 → 出声，慢的一环是 ExoPlayer 冷启动
+   * （TCP/TLS + 拉 moov 元数据 + 缓冲首块数据，公网 + 大元数据能到数秒）。
+   * 预热 = app 启动后在后台对「继续听第一本」的续播集先 preload（只准备不出声），
+   * ExoPlayer 会把拉到的数据写进它的磁盘缓存（SimpleCache 100MB LRU，按 URL 键控）。
+   * 用户真点播放时，正式 load 的 preload 走**同一个 URL**（app.js 保证两端用
+   * hub.trackUrl 的同一拼法）→ 磁盘缓存直接命中，几乎秒响。
+   *
+   * 设计要点（回归测试 §21 全覆盖）：
+   * - assetId 用独立前缀 `pre-`：`_indexFromAssetId` 只认 `sa-` 前缀，预热轨的所有
+   *   事件（currentTime/complete/playbackState）会被现有过滤直接丢掉 —— 零侵入。
+   * - 不做「搬移到正式位」的花活：正式 load 里 stop() 会清掉 pre-0 asset，
+   *   但磁盘缓存不随 unload 消失 —— 同 URL 的常规 preload 自动命中，效果等价、
+   *   路径唯一、无竞态。
+   * - 不走 _loadChain：预热绝不阻塞正式装载，失败静默（纯增益）。
+   * - 失效安全：换书/切源 stopWarmup 主动作废；stop()/finish() 兜底清理。
+   */
+
+  /** 后台预热一本书的续播集。任何失败都静默（预热只是优化，绝不能引入新故障）。
+   *  trackIndex 由调用方（app.js）按章节表算好——预热时 player.tracks 还是空的，
+   *  player 自己算不了落点。串行化：多次 warmup 排队，后到的赢。
+   */
+  warmup({ itemId, url, headers = null, trackIndex = 0 }) {
+    if (!this.isNativeEngine) return Promise.resolve()   // web 引擎无原生缓存可暖
+    if (!itemId || !url) return Promise.resolve()
+    const run = Promise.resolve(this._warmIdxPromise).catch(() => {})
+      .then(() => this._warmupInner({ itemId, url, headers, trackIndex }))
+      .catch(() => {})                                   // 预热失败绝不外抛
+    this._warmIdxPromise = run
+    return run
+  }
+
+  async _warmupInner({ itemId, url, headers, trackIndex }) {
+    // 正式会话进行中/装载中 → 不抢（预热只是锦上添花）
+    if (this.playing || this._wantPlaying || this._loading) return
+    // 已有同书同址的预热在位 → 不重复
+    if (this._warmBookId === itemId && this._warmTrackIdx === trackIndex && this._warmUrl === url) return
+    await this.stopWarmup()                     // 作废上一本书/上一版 URL 的预热
+    try { await this.init() } catch (_) {}      // 必须等 init 收尾（deinitPlugin 竞态，见 init 注释）
+    // init 间隙用户点播了 → 收手（重新查，init 是第一个 await，状态可能已变）
+    if (this.playing || this._wantPlaying || this._loading) return
+    await this._warmPreload(url, headers)
+    // ⚠️ preload 完成后必须复查：预热期间用户可能已点播放（_loadBody 同步判死了
+    // 预热判据），此时不能再把判据登记回去 —— 否则下一次 warmup 的防重复检查
+    // 会被污染，且「可用预热」与原生层现实不符。
+    if (this._warmBookId != null) return
+    if (this.playing || this._wantPlaying || this._loading) return
+    this._warmBookId = itemId
+    this._warmTrackIdx = trackIndex
+    this._warmUrl = url
+  }
+
+  /** 预热专用 preload：固定 assetId 'pre-0'，只准备不出声，不带通知元数据。 */
+  async _warmPreload(url, headers) {
+    const assetId = `${this.warmPrefix}0`
+    // ERROR_AUDIO_EXISTS 兜底：残留的预热 asset 先卸再装（同 _nativeLoadTrack 的手法）
+    try { await NativeAudio.preload({ assetId, assetPath: url, isUrl: true, headers: headers || undefined }) }
+    catch (_) {
+      try { await NativeAudio.unload({ assetId }) } catch (_) {}
+      try { await NativeAudio.stop({ assetId }) } catch (_) {}
+      await NativeAudio.preload({ assetId, assetPath: url, isUrl: true, headers: headers || undefined })
+    }
+  }
+
+  /** 作废当前预热：换书/切源/听完整本收工时调用。幂等、静默。 */
+  async stopWarmup() {
+    if (this._warmTrackIdx == null && this._warmBookId == null) return
+    this._warmBookId = null
+    this._warmTrackIdx = null
+    this._warmUrl = null
+    this._warmIdxPromise = null
+    if (!this.isNativeEngine) return
+    try { await NativeAudio.stop({ assetId: `${this.warmPrefix}0` }) } catch (_) {}
+    try { await NativeAudio.unload({ assetId: `${this.warmPrefix}0` }) } catch (_) {}
+  }
+
   async _nativeLoadTrack(idx, fileTime) {
     const t = this.tracks[idx]
     if (!t) return
@@ -891,6 +993,8 @@ export class BookPlayer {
     await this._keepOnly(idx)
     // 同一条音轨重新载入（seek/重播）也要先彻底停，避免重影
     await this._killAsset(idx)
+    // （预热命中不在这里体现：冷启动预热已把同 URL 数据写进 ExoPlayer 磁盘缓存，
+    //  下面的常规 preload 自动命中，无需搬移 —— 见 warmup 注释的设计要点。）
 
     // 有本地缓存就用本地文件：不耗流量、无网也能听。
     // 优先走懒解析器（每次一次桥调用），没有才回落整本映射。

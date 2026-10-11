@@ -11,7 +11,7 @@
  */
 import { hub } from '../lib/servers.js'
 import { store, CONFIG_KEYS } from '../lib/store.js'
-import { go, toast, state, initPlayer } from '../app.js'
+import { go, toast, state, initPlayer, warmupFirstContinue } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { haptic } from '../lib/haptics.js'
 
@@ -145,6 +145,7 @@ export async function renderLogin(root) {
     initPlayer()
     if (who) toast(who)
     await go('kidhome')
+    warmupFirstContinue()   // 刚登录完成 = 冷启动：立即对「继续听第一本」预热
     return ''
   }
 

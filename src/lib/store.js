@@ -82,4 +82,5 @@ export const CONFIG_KEYS = {
   playMode: 'playMode',                   // 播放模式 'order'|'repeat'|'shuffle'（老板 2026-09-14）
   sleepKind: 'sleepKind',                 // 睡眠定时类型 'time'（倒计时，默认）| 'tracks'（听 N 首/集后停，老板 2026-09-16）
   sleepTracks: 'sleepTracks',             // 按章节定时：还剩几首/集后暂停（'0'=未设定）
+  warmupEnabled: 'warmupEnabled',         // 冷启动预热开关 '1'|'0'（默认开；预热「继续听第一本」省起播等待）
 }
