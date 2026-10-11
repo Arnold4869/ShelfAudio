@@ -390,7 +390,30 @@ export class BookPlayer {
           await NativeAudio.play(this._playArgs(this._assetId(this.trackIndex), fileTime))
           this._playingAssetIdx = this.trackIndex
         } else if (this._audio) {
-          await this._audio.play().catch(e => console.warn('play 失败', e))
+          // 2026-10-10：web 引擎分支 —— play() 的 Promise 在音频真正出声前挂起
+          // （缓冲期间），所以**乐观置位必须放 await 之前**（和原生分支一致），
+          // 否则缓冲期间 UI 无任何反馈；且成功后回到主体又把 buffering=true
+          // 盖回去，play 事件监听器清掉的 buffering 会被复活（审计抓到的真 bug）。
+          this.playing = true
+          this.buffering = true
+          try {
+            await this._audio.play()
+          } catch (e) {
+            // play 失败（源不支持/网络断/自动播放策略拒绝）必须把起播缓冲收掉，
+            // 并 return —— 否则下面的乐观置位会把复位整个盖回去（转圈永不消失）。
+            console.warn('play 失败', e)
+            this.buffering = false
+            this.playing = false
+            this._wantPlaying = false
+            this._starting = false
+            this.onState({ state: 'error', isPlaying: false, reason: 'play-failed' })
+            return
+          }
+          // web 引擎：await play() 在真正出声时才 resolve，此时缓冲已结束 ——
+          // 直接 return 跳过下方原生分支的乐观置位（否则会把 play 事件监听器
+          // 刚清掉的 buffering 又置回去，转圈永不消失）。
+          this._starting = false
+          return
         }
       } catch (e) {
         // play 调用失败（asset 没装上/被系统打断）：重装一条再试一次。
@@ -412,7 +435,13 @@ export class BookPlayer {
       // 乐观置位：声音起没起以原生 playbackState 事件为准；
       // 网络音频冷启动要缓冲几秒，期间 UI 不该显示"已暂停"（那是"没按上"的观感来源）
       this.playing = true
-      this.onState({ state: 'playing', isPlaying: true })
+      // 起播缓冲可见（老板 2026-10-10 报「点播放后等一会儿才响、不知在干嘛」）：
+      // 远程音轨 ExoPlayer 要先拉一段数据才出声，插件又不发缓冲事件给 JS ——
+      // 这里主动置 buffering=true（播放键变转圈），收到**第一条 currentTime 事件**
+      // （_onNativeTime 里更新 _lastTimeEventAt 处）或 isPlaying 反查为真时才清掉。
+      // 本地缓存/秒回的音轨首条事件几十毫秒就到，转圈一闪而过无感。
+      this.buffering = true
+      this.onState({ state: 'buffering', isPlaying: true, reason: 'starting' })
       this._startWebTickerIfNeeded()
       this._startNativeTicker()
       // 启动看门狗：如果到 _startDeadline 还没收到任何 currentTime 事件
@@ -931,6 +960,11 @@ export class BookPlayer {
       return
     }
     this._lastTimeEventAt = Date.now()   // 供启动看门狗判断"真的出过声"
+    // 首条 currentTime = ExoPlayer 真的开始出声了（play() 置的起播缓冲到此结束）
+    if (this.buffering) {
+      this.buffering = false
+      this.onState({ state: 'playing', isPlaying: true, reason: 'first-time-event' })
+    }
     const off = this.tracks[idx]?.startOffset || 0
     this.currentBookTime = off + (ev.currentTime || 0)
     this._timeListened += 1     // currentTime 事件约 1s 一次，近似累计
@@ -1033,7 +1067,10 @@ export class BookPlayer {
     }
 
     this._starting = false
-    this.buffering = false
+    // 原生确认"在播"（play() 后的确认事件 / 看门狗自愈后的重播）→ 起播缓冲结束。
+    // 注意：这里 playing 分支只在事件明确说 playing 时进 —— paused/stopped 走下面
+    // 的 _resolveRealPause 反查，不会误清。
+    if (playing && this.buffering) this.buffering = false
     this.playing = playing
     this.onState({ state: ev?.state || (playing ? 'playing' : 'paused'), isPlaying: playing, reason: ev?.reason })
   }
@@ -1178,7 +1215,12 @@ export class BookPlayer {
         this.currentBookTime = off + (this._audio.currentTime || 0)
         this._emitTime()
       })
-      this._audio.addEventListener('play', () => { this.playing = true; this.onState({ state: 'playing', isPlaying: true }) })
+      this._audio.addEventListener('play', () => {
+        this.playing = true
+        // web 引擎版"首条 currentTime"：真出声了，起播缓冲（play() 置位）到此结束
+        if (this.buffering) this.buffering = false
+        this.onState({ state: 'playing', isPlaying: true })
+      })
       this._audio.addEventListener('pause', () => { this.playing = false; this.onState({ state: 'paused', isPlaying: false }) })
     }
     this._audio.src = t.url

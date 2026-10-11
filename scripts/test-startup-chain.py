@@ -108,8 +108,26 @@ with sync_playwright() as pw:
     ok('播放页章节标题正常（第一章）', '第一章' in chTitle, chTitle)
 
     # 播放态健康：UI 进入播放而不是「点了没反应」
-    isPlaying = pg.evaluate("() => window.__saPlayer?.playing ?? null")
-    ok('起播后处于播放态', isPlaying is True, f'{isPlaying}')
+    # 2026-10-10 导航前置（乐观导航）：view 变 player 的时机**早于**装载完成
+    # （playItem 在 load 前就 go('player')）——固定 600ms 不再够用，改为
+    # 轮询播放器状态（最多 8s）：要么 playing，要么明确失败（playing=false 且不在装载）。
+    isPlaying = None
+    for _ in range(40):
+        st = pg.evaluate("""() => {
+            const p = window.__saPlayer
+            if (!p) return 'no-player'
+            if (p.playing) return 'playing'
+            if (p._loading || p.buffering) return 'busy'
+            return 'idle'
+        }""")
+        if st == 'playing':
+            isPlaying = True
+            break
+        if st in ('idle', 'no-player'):
+            isPlaying = False
+            break
+        pg.wait_for_timeout(200)
+    ok('起播后处于播放态', isPlaying is True, f'state={st}')
 
     # ===== ND：专辑页点歌 → 进度+开会话并行（2 个 rest 请求阶段）=====
     log2 = []
@@ -124,7 +142,11 @@ with sync_playwright() as pw:
         const row = document.querySelector('[data-song], .song-row, .list-item');
         row?.click();
     }""")
-    pg2.wait_for_timeout(2600)
+    # 2026-10-11：窗口缩到 1.2s —— 起播成功后 _syncProgress 首次 timeupdate 就会
+    # 上报进度（getAlbum+getBookmarks+createBookmark，正常功能）。以前音频播不起
+    # 来、sync 从不触发，所以 2.6s 窗口只看到开会话那 1 次。断言的本意是
+    # 「起播只发 1 次 getAlbum 开会话，不重复拉专辑详情」，用短窗口区分两者。
+    pg2.wait_for_timeout(1200)
     ok('ND 点歌进入播放页', pg2.evaluate('document.body.dataset.view') == 'player')
     ndPaths = [path_of(r) for r in log2 if '/rest/' in r.url]
     albums = [p for p in ndPaths if p == '/rest/getAlbum']

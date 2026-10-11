@@ -224,7 +224,11 @@ export async function renderPlayer(root) {
     // 必须用 innerHTML：textContent 会把上面注入的 SVG 抹掉，播放键会变空白
     // 缓冲中显示 loader（自带 .spin 旋转），比"暂停图标"诚实 —— 不然用户
     // 以为"点了没反应"再点一次（小米 8SE 冷启动缓冲要几秒）。
-    $('#btnPlay').innerHTML = p.buffering ? icon('loader', 46, 'spin') : icon(p.playing ? 'pause' : 'play', 46)
+    // 2026-10-10：装载中（playItem 乐观导航后 load/play 还在跑）也转圈 ——
+    // 否则导航前置后播放页先出现的是"播放键"，用户再点一下会和正在进行的
+    // 装载竞争（toggle 里 _loading 会忽略它，但"点了没反应"的观感又回来了）。
+    const busy = p.buffering || p._loading
+    $('#btnPlay').innerHTML = busy ? icon('loader', 46, 'spin') : icon(p.playing ? 'pause' : 'play', 46)
     // ND 下没有倍速按钮（老板 2026-09-14 去掉）→ 判空，别对 null 赋值
     const rateBtn = $('#btnRate')
     if (rateBtn) rateBtn.textContent = (p.rate || 1).toFixed(1).replace(/\.0$/, '.0') + '×'
@@ -252,7 +256,14 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
   }
 
   $('#btnBack').onclick = () => { haptic.tap(); goBack('kidhome') }
-  $('#btnPlay').onclick = () => { haptic.tap(); p.toggle() }
+  // 2026-10-10 导航前置后新增的边界：装载中（playItem 后 load 还在跑）播放键是转圈，
+  // 此时点它会被 toggle 的装载闸门静默忽略 —— 行为正确（装载完自动播），但静默
+  // 会让孩子以为"点了没反应"。这里补一句人话反馈。
+  $('#btnPlay').onclick = () => {
+    haptic.tap()
+    if (p._loading) { toast('正在加载，马上就好'); return }
+    p.toggle()
+  }
   $('#btnPrev').onclick = () => { haptic.tap(); p.prevTrack() }
   $('#btnNext').onclick = () => { haptic.tap(); p.nextTrack() }
   $('#btnFavTop').onclick = () => { haptic.tap(); toggleFav() }

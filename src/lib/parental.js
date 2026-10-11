@@ -76,16 +76,20 @@ export async function hasTimeWindowConfig() {
  * → 时段与每日时长各自独立开关，开哪个哪个生效。
  */
 export async function withinTimeWindow(d = new Date()) {
-  if (!(await timeWindowEnabled())) return true
-  const weekend = isWeekend(d)
-  const fromS = await store.get(weekend ? CONFIG_KEYS.timeWeekendFrom : CONFIG_KEYS.timeWeekdayFrom, '')
-  const toS = await store.get(weekend ? CONFIG_KEYS.timeWeekendTo : CONFIG_KEYS.timeWeekdayTo, '')
-  const from = parseHM(fromS), to = parseHM(toS)
+  // 2026-10-10 起播提速：3 个键并行读（原来是 3 次串行桥调用）。
+  // playbackGate 每次点播放都会走这里 —— 串行时弱机上白叠几百毫秒。
+  const [enabledS, wdS, weS] = await Promise.all([
+    timeWindowEnabled(),
+    store.get(isWeekend(d) ? CONFIG_KEYS.timeWeekendFrom : CONFIG_KEYS.timeWeekdayFrom, ''),
+    store.get(isWeekend(d) ? CONFIG_KEYS.timeWeekendTo : CONFIG_KEYS.timeWeekdayTo, ''),
+  ])
+  if (!enabledS) return true
+  const from = parseHM(wdS), to = parseHM(weS)
   if (from == null || to == null) return true   // 没配时段 = 不限时段
-  const now = nowMinutes(d)
   if (from === to) return true                  // 零长度窗 = 不限
+  const now = nowMinutes(d)
   if (from < to) return now >= from && now < to
-  return now >= from || now < to                // 跨午夜
+  return now >= from || now < to                 // 跨午夜
 }
 
 /** 时段摘要文案（家长设置里显示） */
@@ -157,10 +161,11 @@ export async function dailyQuota() {
   // 判断的是 Promise 对象（恒为真值）→ 上限设成 0（不限）时会掉到下面按 0 额度算，
   // 变成「已听任何时长都被拒」。老测试里那条「时长不限 → Infinity」就是这个。
   if (!(await dailyLimitMinutes())) return { allowed: true, remainingSec: Infinity, bonusSec: 0 }
-  const limitSec = await dailyLimitSecWithBonus()
+  // 2026-10-10 起播提速：上限与加时余额互不依赖 → 并行（原来串行 2 次桥调用）
+  const [limitSec, bonusSec] = await Promise.all([dailyLimitSecWithBonus(), dailyBonusSeconds()])
   const used = await listenedSecondsToday()
   const remain = limitSec - used
-  return { allowed: remain > 0, remainingSec: Math.max(0, remain), bonusSec: await dailyBonusSeconds() }
+  return { allowed: remain > 0, remainingSec: Math.max(0, remain), bonusSec }
 }
 
 /**
@@ -184,24 +189,30 @@ export async function playbackBlockedReason(now = new Date()) {
  */
 export async function playbackGate(now = new Date()) {
   const miss = { blocked: false, kind: null, message: '', usedSec: 0, limitSec: 0, bonusSec: 0 }
-  if (!(await withinTimeWindow(now))) {
+  // 2026-10-10 起播提速：时段窗（3 个键）与每日配额（开关+上限+加时+今日用量，
+  // 其中今日用量要解析最多 60 天的 listeningLog JSON）互不依赖 → 并行。
+  // 原来 6+ 个串行 await（每个都是一次原生桥往返），弱机上每次点播放白叠几百毫秒
+  // —— 老板报「点了播放要等一会儿才响」的一部分就是它。
+  const [inWindow, quota] = await Promise.all([withinTimeWindow(now), dailyQuota()])
+  if (!inWindow) {
     const weekend = isWeekend(now)
     const label = weekend ? '周末' : '周一至周五'
-    const from = await store.get(weekend ? CONFIG_KEYS.timeWeekendFrom : CONFIG_KEYS.timeWeekdayFrom, '')
-    const to = await store.get(weekend ? CONFIG_KEYS.timeWeekendTo : CONFIG_KEYS.timeWeekdayTo, '')
+    const [from, to] = await Promise.all([
+      store.get(weekend ? CONFIG_KEYS.timeWeekendFrom : CONFIG_KEYS.timeWeekdayFrom, ''),
+      store.get(weekend ? CONFIG_KEYS.timeWeekendTo : CONFIG_KEYS.timeWeekdayTo, ''),
+    ])
     return {
       ...miss, blocked: true, kind: 'window',
       message: `现在不在收听时间（${label} ${from || '…'}–${to || '…'}），到点再来吧`,
     }
   }
-  const q = await dailyQuota()
-  if (!q.allowed) {
+  if (!quota.allowed) {
     return {
       ...miss, blocked: true, kind: 'quota',
       message: '今天的收听时间用完啦，明天再来吧',
       usedSec: Math.round(await listenedSecondsToday()),
-      limitSec: (await dailyLimitMinutes()) * 60 + (q.bonusSec || 0),
-      bonusSec: q.bonusSec || 0,
+      limitSec: (await dailyLimitMinutes()) * 60 + (quota.bonusSec || 0),
+      bonusSec: quota.bonusSec || 0,
     }
   }
   return miss

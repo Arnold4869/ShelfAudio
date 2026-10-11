@@ -519,17 +519,27 @@ export async function playItem(item, { startTime } = {}) {
   // 真机 0.5~3 秒纯等待、期间界面上什么都没发生。播放器换集时按需再查。
   const localResolver = (idx) => localTrackUriLazy(item.id, idx)
 
+  // 乐观导航（老板 2026-10-10 报「点历史记录要卡一下才进播放页」）：
+  // session 已到手、书名/封面/音轨表全齐 —— 到这里用户等的是「装载+起播」
+  // （真机网络+桥调用 1~3 秒），却还盯着历史列表干等。先 go('player') 让
+  // 播放页骨架立刻出来（播放键转圈由 play() 置的 buffering 驱动），装载在后台继续。
+  // ⚠️ 只有当前不在播放页才跳：已在播放页（如从选集弹窗连续操作）时跳了会
+  // 把页面重渲染一遍，正在听的封面/进度闪一下 —— 反而是倒退。
+  if (document.body.dataset.view !== 'player') {
+    await go('player')
+  }
+
   // 第一时间补记「继续听」（老板 2026-09-13：播放就该立刻出现在列表最上面，
   // 不能等服务端 items-in-progress 慢慢更新）。
   // 放在 load 之前记，load 失败时在下面 catch 里撤销 —— 只留真正播起来的。
-  try {
-    await recordContinue({
-      id: item.id,
-      title,
-      author: meta.authorName || meta.author || '',
-      duration: item.media?.duration || duration || 0,
-    })
-  } catch (_) {}
+  // 2026-10-10：不再 await —— 导航已前置，这里 3 次串行 Preferences 桥调用
+  // （最多 100ms 级）不该再挡在起播前面；失败路径（撤回补记）仍在 catch 里。
+  const recordP = recordContinue({
+    id: item.id,
+    title,
+    author: meta.authorName || meta.author || '',
+    duration: item.media?.duration || duration || 0,
+  }).catch(() => {})
 
   try {
     await player.load({
@@ -557,7 +567,7 @@ export async function playItem(item, { startTime } = {}) {
     updateMini()
     throw new Error('加载失败，请再点一次试试')
   }
-  await go('player')
+  await recordP
 }
 
 /** 播放完成后 / 切书时的收尾 */

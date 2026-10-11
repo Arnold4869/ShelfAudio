@@ -82,7 +82,7 @@ function emit(name, payload) {
   (state.events[name] || []).forEach(cb => cb(payload))
 }
 
-console.log('\n=== 1. 点播放后应立刻显示暂停键 ===')
+console.log('\n=== 1. 点播放后应立刻显示转圈（起播缓冲可见），首条 currentTime 后变暂停键 ===')
 {
   state.assets.clear(); state.calls.length = 0
   const p = new BookPlayer({})
@@ -90,7 +90,13 @@ console.log('\n=== 1. 点播放后应立刻显示暂停键 ===')
   await p.load({ itemId: 'x', tracks, sessionId: 's', duration: 600, startBookTime: 0 })
   ok('装载后显示播放键', iconOf(p) === 'play', iconOf(p))
   await p.play()
-  ok('播放后立刻显示暂停键（不等原生确认）', iconOf(p) === 'pause', iconOf(p))
+  // 2026-10-10 行为变更（老板报「点播放后等一会儿才响、不知在干嘛」）：
+  // play() 主动置 buffering —— 远程音轨要缓冲几秒才出声，插件又不发缓冲事件，
+  // 旧版这段窗口显示"暂停键"（假装在播）会让孩子反复点。
+  ok('播放后立刻转圈（起播缓冲可见，不再假装在播）', iconOf(p) === 'loading', iconOf(p))
+  // 首条 currentTime 事件 = 真出声了 → 转圈结束、变暂停键
+  emit('currentTime', { assetId: 'sa-0', currentTime: 0.4, duration: 300 })
+  ok('首条 currentTime 后显示暂停键（真出声了）', iconOf(p) === 'pause', iconOf(p))
   await p.stop()
 }
 
