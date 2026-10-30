@@ -1,7 +1,7 @@
 /** 搜索页：文字 + 语音（语音走同一入口，识别结果可当指令也可当关键词） */
 import { hub, hub as abs } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
 import { voiceHidden, uiPrefsReady } from '../lib/ui-prefs.js'
-import { goBack, state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini } from '../app.js'
+import { goBack, state, go, toast, esc, fmtDur, playItem, requireParentPin, updateMini, cachedLibraryItems } from '../app.js'
 import { voiceSupported } from '../lib/voice.js'
 import { openVoiceOverlay } from '../lib/voice-ui.js'
 import { fallbackCover, wireCoverFallback } from '../lib/cover.js'
@@ -62,7 +62,7 @@ export async function renderSearch(root, params = {}) {
     return `<div class="list-item" data-id="${esc(it.id)}">
       <div class="cover-slot">
         ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
-        <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">
+        <img class="list-cover" data-cover src="${esc(abs.coverUrl(it.id, { width: 160 }))}" alt="" loading="lazy">
       </div>
       <div class="list-main">
         <div class="list-title">${esc(m.title || '未命名')}</div>
@@ -245,7 +245,7 @@ export async function renderSearch(root, params = {}) {
       return `<div class="list-item" data-id="${esc(it.id)}">
         <div class="cover-slot">
           ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
-          <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">
+          <img class="list-cover" data-cover src="${esc(abs.coverUrl(it.id, { width: 160 }))}" alt="" loading="lazy">
         </div>
         <div class="list-main">
           <div class="list-title">${esc(m.title || '未命名')}</div>
@@ -268,7 +268,8 @@ export async function renderSearch(root, params = {}) {
   // 没输入关键词时不要留一大片空白：显示可浏览的书籍列表（主流播放器的做法）
   const showBrowse = async () => {
     try {
-      let all = state.items.length ? state.items
+      // 只复用「当前源 + 当前库」的书目缓存（P1 §3.6）：切源/登出后旧缓存作废重拉
+      let all = cachedLibraryItems().length ? cachedLibraryItems()
         : (await abs.getLibraryItems(state.libraryId, { limit: 2000 }))?.results || []
       if (!all.length) return
       results.innerHTML = `<div class="section-h">${t('all')} <small>${countN(all.length)}</small></div>`
@@ -277,7 +278,7 @@ export async function renderSearch(root, params = {}) {
           return `<div class="list-item" data-id="${esc(it.id)}">
             <div class="cover-slot">
               ${fallbackCover({ title: m.title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
-              <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">
+              <img class="list-cover" data-cover src="${esc(abs.coverUrl(it.id, { width: 160 }))}" alt="" loading="lazy">
             </div>
             <div class="list-main">
               <div class="list-title">${esc(m.title || '未命名')}</div>
@@ -320,7 +321,8 @@ export async function renderSearch(root, params = {}) {
       if (my !== _searchSeq) return
       if (!items.length) {
         // 兜底：本地标题子串匹配（ABS 搜索对中文分词有时不给力）
-        const all = state.items.length ? state.items : (await abs.getLibraryItems(state.libraryId, { limit: 2000 }))?.results || []
+        //（同样只认当前源的缓存，P1 §3.6）
+        const all = cachedLibraryItems().length ? cachedLibraryItems() : (await abs.getLibraryItems(state.libraryId, { limit: 2000 }))?.results || []
         items = all.filter(it => (it.media?.metadata?.title || '').toLowerCase().includes(q.toLowerCase()))
       }
       if (my !== _searchSeq) return

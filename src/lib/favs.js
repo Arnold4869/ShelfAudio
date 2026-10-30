@@ -29,21 +29,25 @@ export async function hasLocal(id) {
 
 export async function addLocal(item) {
   if (!item?.id) return
-  const list = await listLocal()
-  if (list.some(x => x.id === item.id)) return
-  list.unshift({
-    id: item.id,
-    title: item.title || '未命名',
-    author: item.author || '',
-    duration: item.duration || 0,
-    at: Date.now(),
+  // §4.7（2026-10-12）：RMW 走 store.mutateJSON 串行队列 —— addLocal 可能在
+  // 收藏页批量操作/播放页连点时并行触发，无队列会互相覆盖丢条目。
+  await store.mutateJSON(KEY, list => {
+    const cur = Array.isArray(list) ? list : []
+    if (cur.some(x => x.id === item.id)) return undefined
+    cur.unshift({
+      id: item.id,
+      title: item.title || '未命名',
+      author: item.author || '',
+      duration: item.duration || 0,
+      at: Date.now(),
+    })
+    return cur
   })
-  await store.setJSON(KEY, list)
 }
 
 export async function removeLocal(id) {
-  const list = (await listLocal()).filter(x => x.id !== id)
-  await store.setJSON(KEY, list)
+  await store.mutateJSON(KEY, list =>
+    (Array.isArray(list) ? list : []).filter(x => x.id !== id))
 }
 
 /** 本机收藏的 id 集合（给播放页判断心形状态用） */
@@ -74,7 +78,15 @@ export async function syncToServer(abs) {
       ok++
     } catch (_) { break }   // 还是没权限，别再试了
   }
-  // 全部补齐了才清掉本机记录，否则保留（没同步成功的不能丢）
-  if (ok >= list.length) await store.setJSON(KEY, [])
+  // 全部补齐了才清掉本机记录，否则保留（没同步成功的不能丢）。
+  // NF-4（复审 2026-10-12）：原来的 `() => []` 虽然走了串行队列，但队列只保证
+  // 读写不交错，挡不住「清空整个键」把快照之后并发 addLocal 的新收藏一并冲掉
+  // （last-write-wins）。改成**只删快照里已同步的那些 id**：并发新增天然保留，
+  // 注释宣称的「不冲掉并发新增」这才真成立。
+  if (ok >= list.length) {
+    const synced = new Set(list.map(x => x.id))
+    await store.mutateJSON(KEY, cur =>
+      (Array.isArray(cur) ? cur : []).filter(x => !synced.has(x.id)))
+  }
   return ok
 }

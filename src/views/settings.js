@@ -46,7 +46,7 @@ export async function renderSettings(root, { firstRun = false } = {}) {
         <div class="setting-ic">${icon('download', 22)}</div>
         <div class="setting-main">
           <div class="setting-label">缓存管理</div>
-          <div class="setting-value">${cacheCount ? `已缓存 ${cacheCount} 本 · ${fmtBytes(cacheUsed)}` : ''}</div>
+          <div class="setting-value">${cacheCount ? `${t('cached', cacheCount)} · ${fmtBytes(cacheUsed)}` : ''}</div>
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>

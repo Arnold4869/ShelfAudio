@@ -123,10 +123,14 @@ function makeServer() {
         // 形状必须与真实 Navidrome 一致（源码已核对 server/subsonic/bookmarks.go）：
         // { entry:{id, albumId, ...}, position, created, changed } —— 顶层没有 id/updated。
         // 旧版这里返回 {id, updated} 是假形状，导致真服务器上的 bug 从没被测出来过。
+        // stripAlbumId：模拟旧客户端/异构写入的 bookmark（entry 不带 albumId，
+        // §4.3 的 getSong 补齐路径靠它触发）。
         const list = Object.entries(state.bookmarks).map(([id, b]) => {
           const song = songs.find(s => s.id === id) || {}
-          const { id: _drop, updated: _drop2, ...rest } = b
-          return { entry: { id, albumId: song.albumId, title: song.title, ...song }, position: b.position, ...rest }
+          const { id: _drop, updated: _drop2, albumId: _drop3, ...rest } = song
+          const entry = { id, title: song.title, ...rest }
+          if (!state.stripAlbumId) entry.albumId = song.albumId
+          return { entry, position: b.position, ...b }
         })
         return ok({ bookmarks: { bookmark: list } })
       }
@@ -194,12 +198,29 @@ let code = SRC
   .replace(/import \{ md5, randomSalt \} from '\.\/md5\.js'/, 'const { md5, randomSalt } = globalThis.__ND_MD5__')
   .replace(/function isNativeShell\(\)[\s\S]*?\n\}/, 'function isNativeShell() { return false }')
   .replace(/const ctrl = new AbortController\(\)[\s\S]*?finally \{ clearTimeout\(timer\) \}/,
-    `const r = globalThis.__ND_SERVER__(url)
+    `const r = await globalThis.__ND_SERVER__(url)
      return { status: r.status, ok: r.status >= 200 && r.status < 300, headers: {}, data: r.data }`)
 fs.writeFileSync(stubPath, code)
 
+// 网络层包装：记录每个请求的 path（§4.1/§4.2/§4.3 的调用次数断言），
+// getSong 加 15ms 延迟并跟踪并发数（§4.3 小批量并发的可观测断言：
+// 串行 = maxInFlight 1；4 条一批 = maxInFlight ≤ 4 且 > 1）。
+const REQ = []
+const GETSONG = { inFlight: 0, maxInFlight: 0 }
 globalThis.__ND_MD5__ = await import(pathToFileURL(path.join(ROOT, 'src/lib/md5.js')).href)
-globalThis.__ND_SERVER__ = url => srv.handle(url)
+globalThis.__ND_SERVER__ = async url => {
+  const p = new URL(url, 'http://x').pathname
+  REQ.push(p)
+  let release = null
+  if (p === '/rest/getSong') {
+    GETSONG.inFlight++
+    GETSONG.maxInFlight = Math.max(GETSONG.maxInFlight, GETSONG.inFlight)
+    release = () => { GETSONG.inFlight-- }
+    await new Promise(r => setTimeout(r, 15))
+  }
+  try { return srv.handle(url) }
+  finally { if (release) release() }
+}
 const { NavidromeApi } = await import(pathToFileURL(stubPath).href)
 
 // ---------- 断言 ----------
@@ -408,6 +429,132 @@ console.log('\n=== 11. 歌手详情（老板 2026-09-17/19：所有演唱者可�
     ok(`getArtist(${input}) 合作曲被 artistId 过滤`, !a.songs.some(s => s.songId === 'coop1'),
        JSON.stringify(a.songs.map(s => s.songId)))
   }
+}
+
+console.log('\n=== 12. 增量进度写入 / 章节缓存 / 聚合批量化（§4.1 §4.2 §4.3）===')
+// 用新实例：_ndWritten/_chaptersCache 都是实例级会话状态，不能被前面章节污染。
+{
+  const nd2 = new NavidromeApi()
+  nd2.configure('http://127.0.0.1:4533', 'bin', 'pw123')
+  srv.state.bookmarks = {}          // 清场
+  const bm = srv.state.bookmarks
+  const reqs = p => REQ.filter(x => x === p).length
+
+  // §4.2：startPlayback 把章节表随会话缓存 → 之后每轮 updateProgress 不再拉专辑详情
+  REQ.length = 0
+  await nd2.startPlayback('nd:alb1', 0)
+  ok('§4.2 startPlayback 拉一次 getAlbum（缓存预热）', reqs('/rest/getAlbum') === 1, String(reqs('/rest/getAlbum')))
+  REQ.length = 0
+  await nd2.updateProgress('nd:alb1', 160, 360)   // 听到第 2 首中部
+  await nd2.updateProgress('nd:alb1', 170, 360)   // 前进 10 秒（仍在第 2 首）
+  ok('§4.2 会话内两轮同步 0 次 getAlbum（修复前每轮 1 次）', reqs('/rest/getAlbum') === 0, String(reqs('/rest/getAlbum')))
+  ok('位置正确：第 1 首记满 110', bm['song-a1-1']?.position === 110, JSON.stringify(bm))
+  ok('位置正确：第 2 首 = 170-110 = 60（增量写的位置口径）', bm['song-a1-2']?.position === 60, String(bm['song-a1-2']?.position))
+
+  // §4.1：第二轮起只写增量（不再从第 0 首重写一遍）
+  REQ.length = 0
+  await nd2.updateProgress('nd:alb1', 170, 360)
+  ok('§4.1 原地同步只写 1 条（当前首；修复前 2 条）', reqs('/rest/createBookmark') === 1, String(reqs('/rest/createBookmark')))
+  REQ.length = 0
+  await nd2.updateProgress('nd:alb1', 250, 360)   // 推进到第 3 首（起点 230）
+  ok('§4.1 跨首推进写增量 2 条（第 2 首补满 + 第 3 首部分；修复前 3 条）',
+     reqs('/rest/createBookmark') === 2, String(reqs('/rest/createBookmark')))
+  ok('第 2 首补满 120', bm['song-a1-2']?.position === 120, String(bm['song-a1-2']?.position))
+  ok('第 3 首 = 250-230 = 20', bm['song-a1-3']?.position === 20, String(bm['song-a1-3']?.position))
+  // 读取口径不受增量写影响（max 聚合）
+  const prog = await nd2.getProgress('nd:alb1')
+  ok('回读 currentTime=250（全书口径）', Math.round(prog.currentTime) === 250, String(prog.currentTime))
+
+  // removeFromContinue 作废会话基准：bookmark 全删后，下一轮必须能全量重写
+  await nd2.removeFromContinue('nd:alb1')
+  ok('bookmark 已全删', Object.keys(bm).length === 0, JSON.stringify(Object.keys(bm)))
+  REQ.length = 0
+  await nd2.updateProgress('nd:alb1', 160, 360)
+  ok('删除后重听 → 全量重写 2 条（会话基准已作废，不残留 prev）',
+     reqs('/rest/createBookmark') === 2, String(reqs('/rest/createBookmark')))
+  ok('重写的位置正确', bm['song-a1-1']?.position === 110 && bm['song-a1-2']?.position === 50, JSON.stringify(bm))
+
+  // §4.3：缺 entry.albumId 的 bookmark → 小批量并发 getSong 补齐；getItem 结果复用
+  // alb1 的 2 条 bookmark 已在；再给 alb2 造 2 条（服务端 stripAlbumId 模拟旧数据）。
+  // （不给 0 位置的 bookmark —— max(起点+位置) 聚合口径下它表示「听到第 N 首开头」。）
+  const now = new Date().toISOString()
+  bm['song-a2-1'] = { position: 40, created: now, changed: now }
+  bm['song-a2-2'] = { position: 30, created: now, changed: now }
+  srv.state.stripAlbumId = true
+  REQ.length = 0; GETSONG.maxInFlight = 0
+  const r1 = await nd2.itemsInProgress()
+  srv.state.stripAlbumId = false
+  const items1 = r1.libraryItems
+  ok('§4.3 缺 albumId 也能聚合（alb1 + alb2 都在）',
+     items1.length === 2 && items1.some(i => i.id === 'nd:alb1') && items1.some(i => i.id === 'nd:alb2'),
+     JSON.stringify(items1.map(i => i.id)))
+  ok('getSong 每条缺失 bookmark 恰好一次（4 条）', reqs('/rest/getSong') === 4, String(reqs('/rest/getSong')))
+  ok('getSong 是小批量并发（maxInFlight ∈ (1,4]；串行 = 1）',
+     GETSONG.maxInFlight > 1 && GETSONG.maxInFlight <= 4, String(GETSONG.maxInFlight))
+  const alb2 = items1.find(i => i.id === 'nd:alb2')
+  ok('alb2 进度快照 = max(40, 110+30) = 140（全书口径）', alb2?._progress?.currentTime === 140, JSON.stringify(alb2?._progress))
+  // 第二次聚合：getItem 命中章节缓存（首屏拉过一次后书架→历史不再重拉）
+  REQ.length = 0
+  const r2 = await nd2.itemsInProgress()
+  ok('第二次聚合结果一致', r2.libraryItems.length === 2, JSON.stringify(r2.libraryItems.map(i => i.id)))
+  ok('第二次聚合 0 次 getAlbum（getItem 缓存复用；修复前每次 1+ 次）',
+     reqs('/rest/getAlbum') === 0, String(reqs('/rest/getAlbum')))
+}
+
+console.log('\n=== 13. 会话缓存跨服务器隔离 + 生命周期清空（NF-3）===')
+// 场景（复审 NF-3）：同一 WebView 会话内登出 ND-A 再登录 ND-B。HEAD 用裸
+// albumId 做缓存键 → B 上同名专辑 id 命中 A 的章节表/增量写基准，给错误的
+// songId 发 createBookmark。修法三层：键带服务器标识 / configure 换服清空 /
+// logout 显式清空。以下逐一断言（HEAD 上全红）。
+{
+  srv.state.bookmarks = {}          // 清场
+  const nd3 = new NavidromeApi()
+  nd3.configure('http://a.example', 'bin', 'pw123')
+  const reqs = p => REQ.filter(x => x === p).length
+
+  // 预热：A 上听 alb1 → 章节表入缓存、增量写基准建立
+  REQ.length = 0
+  await nd3.startPlayback('nd:alb1', 0)
+  await nd3.updateProgress('nd:alb1', 160, 360)
+  ok('A 上预热：getAlbum 恰好 1 次', reqs('/rest/getAlbum') === 1, String(reqs('/rest/getAlbum')))
+  ok('章节缓存键带 服务器|用户|专辑 标识（HEAD 是裸 albumId，换服即串）',
+     [...nd3._chaptersCache.keys()].join() === 'http://a.example|bin|alb1',
+     JSON.stringify([...nd3._chaptersCache.keys()]))
+  ok('增量写基准的键同样带标识', [...nd3._ndWritten.keys()].every(k => k.startsWith('http://a.example|bin|')),
+     JSON.stringify([...nd3._ndWritten.keys()]))
+
+  // ① 换服（configure 到 B）：清空 + 键隔离双保险 → 同名专辑必须重拉
+  REQ.length = 0
+  nd3.configure('http://b.example', 'bin', 'pw123')
+  await nd3.updateProgress('nd:alb1', 170, 360)
+  ok('换到 B 后同名专辑不命中旧缓存（重拉 getAlbum；HEAD 裸键命中 → 0 次）',
+     reqs('/rest/getAlbum') === 1, String(reqs('/rest/getAlbum')))
+  ok('B 上的缓存键已是 B 的命名空间', [...nd3._chaptersCache.keys()].every(k => k.startsWith('http://b.example|bin|')),
+     JSON.stringify([...nd3._chaptersCache.keys()]))
+
+  // ② 同服务器重复 configure（探活/重连）：有效缓存不白扔（这是「变了才清」的另一半契约）
+  REQ.length = 0
+  nd3.configure('http://b.example', 'bin', 'pw123')
+  await nd3.updateProgress('nd:alb1', 180, 360)
+  ok('同服重配不清缓存（0 次 getAlbum）', reqs('/rest/getAlbum') === 0, String(reqs('/rest/getAlbum')))
+
+  // ③ 显式清空入口（logout('nd') 调的就是它）：重登同台也重建基准
+  if (typeof nd3.resetSessionCaches !== 'function') {
+    ok('resetSessionCaches 存在（logout 的清空入口）', false, '方法缺失')
+  } else {
+    nd3.resetSessionCaches()
+    REQ.length = 0
+    await nd3.updateProgress('nd:alb1', 190, 360)
+    ok('resetSessionCaches 后重新拉取（登出→重登同台不信任旧基准）',
+       reqs('/rest/getAlbum') === 1, String(reqs('/rest/getAlbum')))
+  }
+
+  // ④ 接线核对：servers.js 的 logout('nd') 分支确实调了清空（HEAD 不清）
+  const serversSrc = fs.readFileSync(path.join(ROOT, 'src/lib/servers.js'), 'utf8')
+  const li = serversSrc.indexOf('async logout(')
+  const logoutBody = li >= 0 ? serversSrc.slice(li, li + 900) : ''
+  ok("logout('nd') 分支调用 resetSessionCaches（一行接线，源码级核对）",
+     /this\.nd\.resetSessionCaches\(\)/.test(logoutBody), logoutBody.slice(0, 120))
 }
 
 try { fs.unlinkSync(stubPath) } catch (_) {}

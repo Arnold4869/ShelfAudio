@@ -1250,7 +1250,8 @@ export class BookPlayer {
     // ⚠️ 必须在**单曲循环/乱序分支之前**：放在后面时「单曲循环 + 按章节定时」
     // 会永远不计数（repeat 分支先 return 了），定时形同不存在（审计发现）。
     // 语义：每"听完一遍"算一次，无论接下来是循环本曲、随机跳还是顺序接下一集。
-    if (this.onBeforeAdvance && this.onBeforeAdvance()) {
+    // 带 itemId：sleep 模块靠它判定「换书/换源」并作废计数（P1 §3.1）。
+    if (this.onBeforeAdvance && this.onBeforeAdvance(this.itemId)) {
       // 本集已经自然播完，这里只需把状态收干净：不推进下一集、不让 UI 继续显示"播放中"。
       // 走 pause() 而不是只手改标志位 —— 它会真正下发原生 pause 并立刻回写进度，
       // 保证"停"是真的停（原生层不会再出声、服务器进度落在本集末尾）。
@@ -1414,7 +1415,11 @@ export class BookPlayer {
     if (!api) return
     const listened = this._timeListened
     this._timeListened = 0
-    api.syncSession(this.sessionId, this.currentBookTime, listened, this.duration)
+    // 故意不 await（_syncProgress 在播放循环上，不能被一次慢请求卡住），但显式
+    // 挂 .catch 标记「失败也无所谓，下一轮 10s 后会重写」（§5.7，2026-10-12）：
+    // 之前裸调用，若 syncSession 同步抛错就是 unhandled rejection。
+    try { Promise.resolve(api.syncSession(this.sessionId, this.currentBookTime, listened, this.duration)).catch(() => {}) }
+    catch (_) {}
   }
 
   _api() { return window.__abs || null }

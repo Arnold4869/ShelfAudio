@@ -101,7 +101,10 @@ export async function renderShelf(root) {
     root.innerHTML = `<div class="empty"><div class="glyph">${icon('warning', 44)}</div>${esc(e.message)}</div>`
     return
   }
+  // 书目缓存带源/库标识（P1 §3.6）：读取方（搜索/缓存页）据此判断能否复用。
   state.items = items
+  state.itemsSrc = hub.active
+  state.itemsLibraryId = state.libraryId
 
   if (!items.length) {
     root.innerHTML = `<div class="empty"><div class="glyph">${icon('books', 44)}</div>${t('shelfEmpty')}</div>`
@@ -166,7 +169,7 @@ export async function renderShelf(root) {
       <div class="book-card" data-id="${esc(it.id)}">
         <div class="cover-slot">
           ${fallbackCover({ title, author: m.authorName || m.narratorName, cls: 'cover-ph-card' })}
-          <img class="book-cover" data-cover src="${cover}" alt="" loading="lazy">
+          <img class="book-cover" data-cover src="${esc(cover)}" alt="" loading="lazy">
         </div>
         ${prog && (prog.currentTime > 30) ? `<div class="book-badge">${done ? '已听完' : '听 ' + pct + '%'}</div>` : ''}
         <div class="book-meta">
@@ -226,7 +229,7 @@ export async function renderShelf(root) {
       <div class="list-item" data-id="${esc(it.id)}">
         <div class="cover-slot">
           ${fallbackCover({ title, author: who, cls: 'cover-ph-list' })}
-          <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">
+          <img class="list-cover" data-cover src="${esc(abs.coverUrl(it.id, { width: 160 }))}" alt="" loading="lazy">
         </div>
         <div class="list-main">
           <div class="list-title">${esc(title)}</div>

@@ -81,14 +81,56 @@ export class NavidromeApi {
     this.password = ''  // Subsonic 协议要密码算 token，必须保存（存本机 Preferences）
     this.user = null    // 最近一次登录的用户信息对象（给 UI 看，不参与认证）
     this.kind = 'navidrome'
+    // 章节表缓存（§4.2，2026-10-12）：专辑的章节时间轴会话期间不变，
+    // updateProgress 每 10s 一次不该为此反复整张拉取。
+    // key = _sessKey(albumId)（带服务器/用户标识，NF-3），不是裸 albumId。
+    this._chaptersCache = new Map()
+    // 「上次进度写到的最大歌曲下标」（§4.1，2026-10-12）：增量写 createBookmark 用。
+    // key 同上（_sessKey），value = 上次写入时进度落在第几首（-1 = 全删过/重置）。
+    this._ndWritten = new Map()
+  }
+
+  /**
+   * 会话级缓存的键（NF-3，复审 2026-10-12）：带上服务器地址 + 用户名。
+   * 不同 ND 服务器（甚至同一服务器的不同账号）的 albumId 是两套命名空间，
+   * 裸 id 做键在「登出 A 再登录 B」时会串 —— 命中 A 的章节表/增量写基准
+   * = 给错误的 songId 发 createBookmark。
+   */
+  _sessKey(albumId) {
+    return `${this.baseUrl || '?'}|${this.username || '?'}|${String(albumId || '').replace(/^nd:/, '')}`
+  }
+
+  /**
+   * 显式清空会话级缓存（NF-3）。目前唯一调用方是 servers.logout('nd')：
+   * 登出即作废 —— 重登同一台也重建（登出期间别的设备可能改过服务端 bookmark，
+   * _ndWritten 这个「增量写基准」不能信旧值）。独立成公开方法而不是让
+   * servers.js 直捣两个私有 Map。
+   */
+  resetSessionCaches() {
+    this._chaptersCache.clear()
+    this._ndWritten.clear()
   }
 
   configure(baseUrl, user, password) {
-    this.baseUrl = (baseUrl || '').replace(/\/+$/, '')
-    if (!/^https?:\/\//.test(this.baseUrl)) throw new Error('服务器地址要以 http:// 或 https:// 开头')
+    const next = (baseUrl || '').replace(/\/+$/, '')
+    if (!/^https?:\/\//.test(next)) throw new Error('服务器地址要以 http:// 或 https:// 开头')
     // 只接受字符串：曾经把 this.user 直接当认证字段用，login() 又把它覆盖成对象，
     // 导致第二次请求 u=[object Object] → 全部 401（单测抓到）。
-    this.username = typeof user === 'string' ? user : (user?.username || '')
+    const nextUser = typeof user === 'string' ? user : (user?.username || '')
+    // NF-3：防「换服串缓存」做了两层，各有不可替代的一段 ——
+    // ① 键带服务器标识（_sessKey）：结构性保证。就算下面这层清空被某条新路径
+    //    漏掉，不同服务器/账号的 albumId 也命中不了彼此的缓存条目。
+    // ② 这里检测到 base/用户**变了**才清：login / boot restore / 直接换服，所有
+    //    换服路径最终都汇到 configure。重复 configure 同一服务器不清 —— 章节表
+    //    不可变，重登/探活重配时白扔 8 张有效缓存纯属浪费。
+    // 没选「只在 logout 清」：logout 只清 baseUrl 一处凭据（servers.js 直接赋值），
+    // restore/换服不经过它，单挂 logout 会漏；logout 的清空由 resetSessionCaches
+    // 补上（③，见上）—— 登出场景要的是「重登也重建」，比这里的「变了才清」更狠。
+    if (this.baseUrl !== next || this.username !== nextUser) {
+      this.resetSessionCaches()
+    }
+    this.baseUrl = next
+    this.username = nextUser
     this.password = password || ''
   }
 
@@ -463,6 +505,32 @@ export class NavidromeApi {
 
   // ---- 进度 ----
   /**
+   * 章节表缓存写入（§4.2）：startPlayback / 首次 updateProgress 时调用。
+   * 上限 8 张（写时把该键挪到「最新」端、超限删最旧端；命中读**不**挪 ——
+   * 是写时刷新的 FIFO，不是严格 LRU。复审 nit：原文说「最近使用在前」有夸大；
+   * 章节表不可变，淘汰先后不涉正确性，只为防长会话无限膨胀）。
+   */
+  _cacheChapters(item) {
+    const key = this._sessKey(item?._nd?.albumId || item?.id)
+    if (!key || !item?.media?.chapters?.length) return
+    this._chaptersCache.delete(key)
+    this._chaptersCache.set(key, item)
+    if (this._chaptersCache.size > 8) this._chaptersCache.delete(this._chaptersCache.keys().next().value)
+  }
+
+  /**
+   * 取专辑详情（优先章节缓存；返回浅拷贝，调用方往顶层挂 _progress 等不污染缓存）。
+   */
+  async _getItemCached(ndItemId) {
+    const key = this._sessKey(ndItemId)
+    const hit = this._chaptersCache.get(key)
+    if (hit) return { ...hit }
+    const item = await this.getItem(ndItemId)
+    this._cacheChapters(item)
+    return { ...item }
+  }
+
+  /**
    * ND 的进度粒度是"歌"（bookmark.position = 该歌内秒数）。
    * App 的口径是"全书累计秒"——这里做互转：传全书秒，算出落在哪首歌+歌内偏移，
    * 每首歌都建 bookmark（有进度的那首 + 它之前的全部歌记 completed 整首）。
@@ -473,8 +541,13 @@ export class NavidromeApi {
     // === NaN，inTrack>0 恒 false → 一条 bookmark 都不写也不报错，进度静默停住。
     const bt = Number(bookTime)
     if (!Number.isFinite(bt)) return null
-    const item = await this.getItem(ndItemId).catch(() => null)
+    // §4.2（2026-10-12）：章节表优先用 startPlayback 缓存的（会话期间不变），
+    // 没有才整张拉取。拉不到 → 返回 null，这一轮丢了但下一轮同步（~10s 后）
+    // 会重试 —— 与旧行为一致，但请求从「每轮一次」降到「会话内 0~1 次」。
+    let item = null
+    try { item = await this._getItemCached(ndItemId) } catch (_) { item = null }
     if (!item) return null
+    const albumKey = this._sessKey(item._nd?.albumId || ndItemId)
     const tracks = item.media.chapters || []
     // 三审修正：duration 与 media.duration 双缺时 Math.min(bt, undefined)=NaN，
     // remain=NaN 会让 lastNeeded=-1 → 删除全部 bookmark 且一条不写（进度静默清零）。
@@ -507,19 +580,37 @@ export class NavidromeApi {
       if (!songId || !existingIds.has(songId)) continue   // 只删实际存在的，不发白请求
       await this._sub('/rest/deleteBookmark', { id: songId }).catch(() => null)
     }
-    for (let i = 0; i < tracks.length; i++) {
+    // §4.1（2026-10-12）：增量写。旧实现对「当前歌之前的所有歌」每轮都重新
+    // createBookmark（O(已听歌曲数) 网络往返；20 首的专辑听到最后一首 = 每 10s
+    // 发 20 个请求，服务端幂等但纯浪费）。会话内记住上次写到哪一首：
+    //   前进（L ≥ prev）：从 prev 起 —— prev 那首要由「部分」补成「整首」，其后到 L 都是新写；
+    //   原地（L == prev）：只重写 L（位置在变）；
+    //   回退（L < prev）：只重写 L（之前满进度的越位 bookmark 已在上面删掉）。
+    // 0..L-1 的「整首」bookmark 上一轮已写过且值不变，跳过。
+    // 读取侧（getProgress/itemsInProgress）都按 max(起点+位置) 聚合，
+    // 中间某条万一写失败缺失也不影响进度读数（max 取的是当前这条）。
+    const prev = this._ndWritten.get(albumKey)
+    const from = (prev === undefined) ? 0 : Math.min(lastNeeded, prev)
+    // 从 from 起写 → remain 先扣掉 [0, from) 那些已记满整首的部分（= 该歌起点的
+    // 全书秒）。不扣的话当前歌会被写成 min(全书秒, 整首) = 整首 —— 位置凭空
+    // 跳到下一首开头（170s 的同步会把第 2 首写成 120 而不是 60）。
+    let pos = remain
+    for (let i = 0; i < from; i++) pos -= (tracks[i]?.duration || 0)
+    pos = Math.max(0, pos)
+    for (let i = Math.max(0, from); i < tracks.length; i++) {
       const t = tracks[i]
       const songId = item._ndSongs?.[i]?.id || t._nd?.songId
       if (!songId) continue
-      const inTrack = remain >= t.duration ? t.duration : remain
+      const inTrack = pos >= t.duration ? t.duration : pos
       if (inTrack > 0) {
         await this._sub('/rest/createBookmark', {
           id: songId,
           position: Math.round(Math.min(inTrack, t.duration)),
         }).catch(() => null)
-        remain -= t.duration
+        pos -= t.duration
       } else break
     }
+    this._ndWritten.set(albumKey, lastNeeded)
     return { currentTime: bookTime }
   }
 
@@ -581,12 +672,27 @@ export class NavidromeApi {
     //    所以 max(off+pos) 就是真实全书进度；不能按 changed 取最后一条 ——
     //    同一专辑的整批 bookmark 可能同一毫秒创建，顺序不稳定）。
     //    活动时间取该专辑全部 bookmark 里最新的 changed。
+    // §4.3（2026-10-12）：旧版 bookmark 缺 entry.albumId 时（老数据/异构客户端写入）
+    // 在聚合循环里**逐条串行** getSong，弱网首屏秒级等待。改为先收集、
+    // 小批量并发（4 条一批）补齐，聚合循环里纯查表。
+    const missing = []
+    for (const bm of bms) {
+      const songId = this._bmSongId(bm)
+      if (!songId && !bm?.entry?.albumId) continue
+      if (!bm?.entry?.albumId && songId) missing.push(songId)
+    }
+    const songAlbum = new Map()
+    for (let i = 0; i < missing.length; i += 4) {
+      await Promise.all(missing.slice(i, i + 4).map(async sid => {
+        const song = (await this._sub('/rest/getSong', { id: sid }).catch(() => null))?.song
+        if (song?.albumId) songAlbum.set(sid, String(song.albumId))
+      }))
+    }
     const byAlbum = new Map()   // albumId -> { t, maxCur, songIds:Set }
     for (const bm of bms) {
       const songId = this._bmSongId(bm)
       if (!songId && !bm?.entry?.albumId) continue
-      const albumId = bm?.entry?.albumId
-        || (await this._sub('/rest/getSong', { id: songId }).catch(() => null))?.song?.albumId
+      const albumId = bm?.entry?.albumId || songAlbum.get(songId)
       if (!albumId) continue
       const t = this._bmTime(bm)
       const agg = byAlbum.get(albumId) || { t: 0, maxCur: -1, songIds: new Set() }
@@ -596,12 +702,14 @@ export class NavidromeApi {
       ;(agg.bms || (agg.bms = [])).push({ songId, pos: Number(bm.position) || 0 })
       byAlbum.set(albumId, agg)
     }
-    // ② 专辑按最新活动时间倒序，拉详情组装输出
+    // ② 专辑按最新活动时间倒序，拉详情组装输出。
+    //    §4.3：详情走 _getItemCached —— 首屏拉过一次后（书架/历史页共用），
+    //    短时间内的重复调用（书架 → 历史）直接命中章节缓存，不再串行重拉。
     const ordered = [...byAlbum.entries()].sort((a, b) => b[1].t - a[1].t)
     const out = []
     for (const [albumId, agg] of ordered) {
       try {
-        const item = await this.getItem('nd:' + albumId)
+        const item = await this._getItemCached('nd:' + albumId)
         // 标注这本书的"最后活动时间"供排序
         item.progressLastUpdate = agg.t
         // 进度快照（历史页/书架徽标显示用）：max(歌起点 + 歌内位置) = 全书口径 currentTime
@@ -632,11 +740,16 @@ export class NavidromeApi {
     for (const s of (item._ndSongs || [])) {
       await this._sub('/rest/deleteBookmark', { id: s.id }).catch(() => null)
     }
+    // 增量写的会话基准一并作废（bookmark 已全删，别让 _ndWritten 骗下次同步）
+    this._ndWritten.delete(this._sessKey(item._nd?.albumId || ndItemId))
   }
 
   // ---- 播放会话（ND 无会话，合成为 ABS 会话形状；App 层无感）----
   async startPlayback(ndItemId, startTime = 0) {
     const item = await this.getItem(ndItemId)
+    // §4.2：章节时间轴随会话缓存 —— 之后每 ~10s 一次的 updateProgress
+    // 不再为拿时间轴整张拉专辑详情。
+    this._cacheChapters(item)
     const tracks = (item.media.chapters || []).map((ch, i) => {
       const t = ch._nd || {}
       const song = item._ndSongs?.[i]

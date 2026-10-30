@@ -12,7 +12,7 @@ import { openLyricsPage } from '../lib/lyrics-ui.js'
 // 睡眠定时状态（time / tracks 两种模式）抽到 lib/sleep.js（2026-09-16）
 import {
   setSleepTimer, setSleepTracks,
-  getSleepRemaining, getSleepTracksLeft, sleepKind, onTrackCompleted,
+  getSleepRemaining, getSleepTracksLeft, getSleepTracksUnit, sleepKind, onTrackCompleted,
 } from '../lib/sleep.js'
 // 纯计算（无 DOM/无 store，node 单测覆盖）
 import { formatCountdown, tracksCountdown, normalizeMinutes, normalizeTrackCount } from '../lib/sleep-core.js'
@@ -86,7 +86,7 @@ export async function renderPlayer(root) {
       <div class="player-cover-wrap">
         <div class="cover-slot">
           ${fallbackCover({ title: c.title, author: c.author, cls: 'cover-ph-player' })}
-          <img class="player-cover" id="pCover" data-cover src="${c.cover}" alt="">
+          <img class="player-cover" id="pCover" data-cover src="${esc(c.cover)}" alt="">
         </div>
       </div>
       <div class="player-title" id="pTitle">${esc(isNdItem ? (c.tracks[p.trackIndex]?.title || c.title) : c.title)}</div>
@@ -384,7 +384,9 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
   // ---- 睡眠定时（老板 2026-09-16 改版）----
   // 入口**只留播放页这一个「定时」chip**（⋯ 菜单里的睡眠入口已删）。
   // 设定后 chip 本身变成倒计时；按章节/歌曲定时那一档，倒计时 = 这几首的总时长。
-  const sleepUnit = isNdItem ? '首' : '集'
+  // 单位词：有按章节定时在跑时读**设定时落盘的单位**（ND 设的「3 首」切到 ABS
+  // 不能显示成「3 集」，2026-10-12 审计修）；没有定时才按当前内容的源现算。
+  const sleepUnit = () => getSleepTracksUnit() || (isNdItem ? '首' : '集')
 
   /** 把 chip 画成「定时」或倒计时（每秒由 sa:time 调用；值没变不写 DOM） */
   function paintSleepChip() {
@@ -398,7 +400,7 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
     } else if (kind === 'tracks') {
       // 剩余集数 + 这几首的总时长倒计时（老板原话：按章节那种就是对应几首歌曲的总时长倒计时）
       const left = getSleepTracksLeft()
-      txt = `${formatCountdown(tracksCountdown(p, left))} · ${left}${sleepUnit}`
+      txt = `${formatCountdown(tracksCountdown(p, left))} · ${left}${sleepUnit()}`
     } else {
       txt = '定时'
     }
@@ -422,13 +424,13 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
       <div class="lock-title">睡眠定时</div>
       <div class="lock-sub">${(() => {
         if (kind === 'time') return '倒计时中 · 剩余 ' + formatCountdown(getSleepRemaining())
-        if (kind === 'tracks') return '连播中 · 还剩 ' + getSleepTracksLeft() + ' ' + sleepUnit
+        if (kind === 'tracks') return '连播中 · 还剩 ' + getSleepTracksLeft() + ' ' + sleepUnit()
         return '到时间自动暂停'
       })()}</div>
 
       <div class="sleep-tabs">
         <button class="sleep-tab ${kind === 'tracks' ? '' : 'on'}" data-tab="time">时间</button>
-        <button class="sleep-tab ${kind === 'tracks' ? 'on' : ''}" data-tab="tracks">按${sleepUnit}数</button>
+        <button class="sleep-tab ${kind === 'tracks' ? 'on' : ''}" data-tab="tracks">按${sleepUnit()}数</button>
       </div>
 
       <div class="sleep-pane" data-pane="time" ${kind === 'tracks' ? 'hidden' : ''}>
@@ -445,12 +447,12 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
 
       <div class="sleep-pane" data-pane="tracks" ${kind === 'tracks' ? '' : 'hidden'}>
         <div class="sleep-grid">
-          ${trackPresets.map(n => `<button class="btn ghost sleep-opt" data-n="${n}">听 ${n} ${sleepUnit}</button>`).join('')}
+          ${trackPresets.map(n => `<button class="btn ghost sleep-opt" data-n="${n}">听 ${n} ${sleepUnit()}</button>`).join('')}
         </div>
         <div class="sleep-custom">
           <input class="time-input time-input-num" id="sleepTrackInput" type="text" inputmode="numeric"
                  placeholder="自定义" value="">
-          <span class="sleep-unit">${sleepUnit}后暂停</span>
+          <span class="sleep-unit">${sleepUnit()}后暂停</span>
           <button class="btn small" id="sleepTrackGo">确定</button>
         </div>
       </div>
@@ -493,7 +495,7 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
       const nb = e.target.closest('[data-n]')
       if (nb) {
         haptic.select()
-        setSleepTracks(parseInt(nb.dataset.n, 10), sleepUnit)
+        setSleepTracks(parseInt(nb.dataset.n, 10), sleepUnit(), c.item.id)
         paintSleepChip()
         close()
         return
@@ -510,8 +512,8 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
     }
     const submitTracks = () => {
       const v = normalizeTrackCount(modal.querySelector('#sleepTrackInput').value)
-      if (!v) { haptic.error(); toast('请输入 1~99 之间的' + sleepUnit + '数'); return }
-      setSleepTracks(v, sleepUnit)
+      if (!v) { haptic.error(); toast('请输入 1~99 之间的' + sleepUnit() + '数'); return }
+      setSleepTracks(v, sleepUnit(), c.item.id)
       paintSleepChip()
       close()
     }
@@ -531,9 +533,9 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
   function openEpisodeMenu() {
     const ch = chapters[p.trackIndex]
     const t = c.tracks[p.trackIndex]
-    const curCh = ch?.title || t?.title || `第 ${p.trackIndex + 1} 集`
     // ND（音乐库）用「首」，ABS 有声书用「集」——术语别写死
     const unitWord = isNdItem ? '首' : '集'
+    const curCh = ch?.title || t?.title || `第 ${p.trackIndex + 1} ${unitWord}`
     const modal = document.createElement('div')
     modal.className = 'lock'
     modal.innerHTML = `<div class="lock-card">
@@ -752,9 +754,11 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
       const files = detail?.media?.audioFiles || []
       const ndCh = detail?.media?.chapters || []
       const isNd = sourceOfId(c.item.id) === 'nd'
+      // 下载文案的单位词与 ⋯ 菜单同款：ND「首」、ABS「集」（§4.5，2026-10-12）
+      const unitWord = isNd ? '首' : '集'
       const tracks = files.map((af, i) => ({
         index: i + 1,
-        title: (c.chapters?.[i]?.title) || ndCh[i]?.title || `第${i + 1}集`,
+        title: (c.chapters?.[i]?.title) || ndCh[i]?.title || `第${i + 1} ${unitWord}`,
         contentUrl: isNd
           ? `/rest/stream?id=${encodeURIComponent(af.ino)}`
           : `/api/items/${c.item.id}/file/${af.ino}`,
@@ -774,8 +778,8 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
       )
       cachedNow = res.fail === 0
       modal.remove()
-      if (res.fail) { haptic.warn(); toast(`缓存完成：${res.ok} 集成功，${res.fail} 集失败`) }
-      else { haptic.success(); toast('已缓存 ' + res.ok + ' 集') }
+      if (res.fail) { haptic.warn(); toast(`缓存完成：${res.ok} ${unitWord}成功，${res.fail} ${unitWord}失败`) }
+      else { haptic.success(); toast('已缓存 ' + res.ok + ' ' + unitWord) }
     } catch (e) {
       modal.remove()
       haptic.error()
@@ -885,18 +889,10 @@ const onTime = () => { if (document.body.dataset.view === 'player') { paintProgr
       await p.seek(chapters[i].start || 0, { autoPlay: true })
     })
   }
-  /** 把播放区滚回视野中央：选完章节后用户应看到封面+播放按钮，而不是页面底部的列表 */
-  function scrollPlayerIntoView() {
-    const target = root.querySelector('.player-cover-wrap') || root.querySelector('.player-controls')
-    if (!target) return
-    // 等 DOM 更新完再滚，否则刚被清空的列表会让高度突变
-    requestAnimationFrame(() => {
-      try { target.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch (_) {}
-    })
-  }
-
   // 章节列表与书籍信息都是独立弹窗（老板 2026-09-13），
   // 播放页底部不再内联任何长列表 —— 之前会把控件挤出屏幕、选完还要滚回来。
+  //（2026-10-12 审计修 §5.4：删掉了从未被调用的 scrollPlayerIntoView() ——
+  //  内联列表移除后不再需要「选完章节滚回播放区」，留着只会误导。）
   function renderExtra() {
     const box = $('#extra')
     if (box) box.innerHTML = ''

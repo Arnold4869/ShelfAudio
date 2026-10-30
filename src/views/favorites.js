@@ -91,7 +91,7 @@ export async function renderFavorites(root) {
           return `<div class="list-item" data-id="${esc(it.id)}">
             <div class="cover-slot">
               ${fallbackCover({ title, author: m.authorName || m.narratorName, cls: 'cover-ph-list' })}
-              <img class="list-cover" data-cover src="${abs.coverUrl(it.id, { width: 160 })}" alt="" loading="lazy">
+              <img class="list-cover" data-cover src="${esc(abs.coverUrl(it.id, { width: 160 }))}" alt="" loading="lazy">
             </div>
             <div class="list-main">
               <div class="list-title">${esc(title)}</div>

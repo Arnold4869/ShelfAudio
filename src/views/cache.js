@@ -9,7 +9,7 @@
  * 所以这里下过的书，断网也能直接听。
  */
 import { hub as abs, sourceOfId } from '../lib/servers.js'   // 多源门面：按 id 前缀分派 ABS / Navidrome
-import { goBack, state, go, toast, esc, fmtDur, requireParentPin, updateMini } from '../app.js'
+import { goBack, state, go, toast, esc, fmtDur, requireParentPin, updateMini, cachedLibraryItems } from '../app.js'
 import { icon } from '../lib/icons.js'
 import { t, count as countN } from '../lib/terms.js'
 import { haptic } from '../lib/haptics.js'
@@ -21,11 +21,23 @@ import {
 export async function renderCache(root) {
   root.innerHTML = `<div class="empty"><div class="glyph">${icon('loader', 40, 'spin')}</div>正在读取…</div>`
 
-  const list = await cachedBooks()
-  const used = await cacheSize()
+  // 2026-10-12 审计修（P1 §3.5）：索引读取失败（Preferences 桥错误 / JSON 损坏）
+  // 必须与「真的没有缓存」区分开。之前一律按空列表渲染：占用显示 0、
+  // 「清空全部缓存」入口跟着消失，用户既看不到原因也无法自救。失败态渲染
+  // 「读取失败 · 重试」，且清空按钮照常出现（读不到索引 ≠ 没有缓存）。
+  let list = [], used = 0, idxFailed = false
+  try {
+    list = await cachedBooks()
+    used = await cacheSize()
+  } catch (e) {
+    idxFailed = true
+    list = []
+    used = 0
+  }
 
-  // 可下载的书（库里全部）
-  let all = state.items || []
+  // 可下载的书（库里全部）。只复用「当前源 + 当前库」的书目缓存（P1 §3.6）：
+  // 切源/登出后旧缓存里的条目会指向已登出的服务器（封面空白、下载报错）。
+  let all = cachedLibraryItems()
   if (!all.length) {
     try {
       if (!state.libraryId) {
@@ -35,6 +47,8 @@ export async function renderCache(root) {
       }
       all = (await abs.getLibraryItems(state.libraryId, { limit: 2000 }))?.results || []
       state.items = all
+      state.itemsSrc = abs.active
+      state.itemsLibraryId = state.libraryId
     } catch (_) { }
   }
 
@@ -44,33 +58,45 @@ export async function renderCache(root) {
       <div class="page-title">离线缓存</div>
     </div>
 
-    <div class="cache-hero">
-      <div class="cache-used">${fmtBytes(used)}</div>
-      <div class="cache-used-label">${t('cached', list.length)}</div>
-    </div>
-
-    ${list.length ? `
-      <div class="section-h">已缓存</div>
-      <div class="settings-group">
-        ${list.map(b => `
-          <div class="setting-row" data-cached="${esc(b.id)}">
-            <div class="setting-ic">${icon('download', 22)}</div>
-            <div class="setting-main">
-              <div class="setting-label">${esc(b.title || '未命名')}</div>
-              <div class="setting-value">${b.count} ${t('chapter')} · ${fmtBytes(b.bytes)}</div>
-            </div>
-            <button class="row-del" data-del="${esc(b.id)}" aria-label="删除">${icon('trash', 20)}</button>
-          </div>`).join('')}
+    ${idxFailed ? `
+      <div class="empty" style="margin-top:30px">
+        <div class="glyph">${icon('warning', 44)}</div>
+        缓存信息读取失败<br>
+        <span style="font-size:13px">缓存文件可能还在手机里，可重试读取，或清空后重新下载</span>
+        <div style="margin-top:18px"><button class="btn" id="btnRetryCache">重试</button></div>
       </div>
-      <div style="margin-top:10px">
+      <div class="settings-group" style="margin-top:14px">
         <button class="btn block ghost" id="btnClearAll" style="color:var(--danger)">清空全部缓存</button>
       </div>
     ` : `
-      <div class="empty" style="margin-top:30px">
-        <div class="glyph">${icon('download', 44)}</div>
-        ${t('cacheEmpty')}<br>
-        <span style="font-size:13px">缓存后在没网的地方也能听</span>
-      </div>`}
+      <div class="cache-hero">
+        <div class="cache-used">${fmtBytes(used)}</div>
+        <div class="cache-used-label">${t('cached', list.length)}</div>
+      </div>
+
+      ${list.length ? `
+        <div class="section-h">已缓存</div>
+        <div class="settings-group">
+          ${list.map(b => `
+            <div class="setting-row" data-cached="${esc(b.id)}">
+              <div class="setting-ic">${icon('download', 22)}</div>
+              <div class="setting-main">
+                <div class="setting-label">${esc(b.title || '未命名')}</div>
+                <div class="setting-value">${b.count} ${t('chapter')} · ${fmtBytes(b.bytes)}</div>
+              </div>
+              <button class="row-del" data-del="${esc(b.id)}" aria-label="删除">${icon('trash', 20)}</button>
+            </div>`).join('')}
+        </div>
+        <div style="margin-top:10px">
+          <button class="btn block ghost" id="btnClearAll" style="color:var(--danger)">清空全部缓存</button>
+        </div>
+      ` : `
+        <div class="empty" style="margin-top:30px">
+          <div class="glyph">${icon('download', 44)}</div>
+          ${t('cacheEmpty')}<br>
+          <span style="font-size:13px">缓存后在没网的地方也能听</span>
+        </div>`}
+    `}
 
     <div class="section-h">${t('all')} <small>${countN(all.length)}</small></div>
     <div class="settings-group" id="dlList">
@@ -90,12 +116,16 @@ export async function renderCache(root) {
               : `<button class="btn small" data-dl="${esc(it.id)}">下载</button>`}
           </div>
         </div>`
-      }).join('') : `<div class="hint">书库没拉到，检查网络后重进本页</div>`}
+      }).join('') : `<div class="hint">${esc(t('library'))}没拉到，检查网络后重进本页</div>`}
     </div>
   `
 
   const $ = s => root.querySelector(s)
   $('#btnBack').onclick = () => { haptic.tap(); goBack('settings') }
+
+  // 索引读取失败时的重试（P1 §3.5）
+  const retry = $('#btnRetryCache')
+  if (retry) retry.onclick = () => { haptic.tap(); go('cache', {}, { replace: true }) }
 
   // 删除单本
   root.querySelectorAll('[data-del]').forEach(b => {
@@ -118,9 +148,16 @@ export async function renderCache(root) {
       modal.querySelector('#dCancel').onclick = () => modal.remove()
       modal.querySelector('#dOk').onclick = async () => {
         modal.remove()
-        await removeBook(id)
-        haptic.success()
-        toast('已删除')
+        // 2026-10-12 审计修（§3.5）：removeBook 在索引读失败时会抛错，
+        // 之前不接 → unhandled rejection，界面像没反应。对齐全清的错误处理。
+        try {
+          await removeBook(id)
+          haptic.success()
+          toast('已删除')
+        } catch (e) {
+          haptic.error()
+          toast('删除失败：' + (e?.message || e))
+        }
         await go('cache')
       }
     }
@@ -188,7 +225,7 @@ async function startDownload(root, item) {
       const ndCh = ndTracks[i]
       return {
         index: i + 1,
-        title: af.metaTags?.title || af.title || ndCh?.title || `第${i + 1}集`,
+        title: af.metaTags?.title || af.title || ndCh?.title || `第${i + 1} ${t('chapter')}`,
         // ND 的 audioFiles[].ino 就是 songId → 拼 stream 直链；ABS 用 file/<ino>
         contentUrl: sourceOfId(item.id) === 'nd'
           ? `/rest/stream?id=${encodeURIComponent(af.ino)}`
@@ -209,8 +246,9 @@ async function startDownload(root, item) {
       }
     )
     modal.remove()
-    if (res.fail) { haptic.warn(); toast(`下载完成：${res.ok} 集成功，${res.fail} 集失败`) }
-    else { haptic.success(); toast('已缓存 ' + res.ok + ' 集') }
+    // 单位走 t('chapter')：ND 侧是「歌曲」不是「集」（§4.5，2026-10-12）
+    if (res.fail) { haptic.warn(); toast(`下载完成：${res.ok} ${t('chapter')}成功，${res.fail} ${t('chapter')}失败`) }
+    else { haptic.success(); toast('已缓存 ' + res.ok + ' ' + t('chapter')) }
     await go('cache')
   } catch (e) {
     modal.remove()

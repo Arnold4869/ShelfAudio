@@ -57,9 +57,44 @@ function extOf(contentUrl = '') {
 
 // ---------------- 索引（本机记录了哪些书已缓存） ----------------
 // 结构：{ [bookId]: { title, at, bytes, tracks: { [idx]: { path, size } } } }
+// 读失败（Preferences 桥错误 / JSON 解析失败）与「真空索引 {}」必须区分开：
+// 前者返回 null（调用方据此报「读取失败」而非「没缓存」，审计 §3.5）。
+// NF-1（复审 2026-10-12）：原修法用 store.getJSON——它把桥错误/解析失败全部
+// 吞成 fallback，null 分支在生产**不可达**。改走 getJSONStrict（抛错）后才真正生效。
+const INDEX_BAK_KEY = 'offlineIndex.bak'   // 损坏索引的备份（store 层会加 shelfaudio. 前缀）
+
+/** 严格读 + 形状归一：键不存在/坏形状 → {}；桥错误/解析失败 → 抛（带 kind/raw） */
+async function readIndexStrict() {
+  const v = await store.getJSONStrict(INDEX_KEY)
+  if (v === null || v === undefined) return {}
+  return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {}
+}
+
+/** 展示侧读取：读失败（桥错误/JSON 损坏）→ null —— 调用方报「读取失败」而非「没有」 */
 async function index() {
-  const v = await store.getJSON(INDEX_KEY, {})
-  return v && typeof v === 'object' ? v : {}
+  try { return await readIndexStrict() } catch (_) { return null }
+}
+
+/**
+ * 写入侧读取（mutateIndex / downloadBook / clearAll 的预读共用，NF-1）：
+ *  - 桥错误 → 抛（连原始串都拿不到，盲写等于丢数据）；
+ *  - JSON 损坏 → **先把损坏的原始串备份到 offlineIndex.bak，再返回 {} 重建**。
+ *    损坏串（如写入中途被杀留下的截断 JSON）里可能还有其它书的记录，直接覆写
+ *    = 永久丢失、磁盘文件成孤儿；备份后重建让写入总能推进、旧值留底可人工恢复。
+ *
+ * 与 index() 的分工：展示侧损坏要**报错**（用户得知道清单不可信），写入侧损坏
+ * 要**自愈**（备份 + 重建，否则损坏后永远下不了书/清不了缓存，没有自救出口）。
+ */
+async function readIndexForWrite() {
+  try {
+    return await readIndexStrict()
+  } catch (e) {
+    if (e?.kind === 'parse' && typeof e.raw === 'string' && e.raw) {
+      try { await store.set(INDEX_BAK_KEY, e.raw) } catch (_) { /* 备份失败也继续重建，至少不再覆盖后丢新进度 */ }
+      return {}
+    }
+    throw e
+  }
 }
 async function setIndex(idx) { await store.setJSON(INDEX_KEY, idx) }
 
@@ -67,19 +102,22 @@ async function setIndex(idx) { await store.setJSON(INDEX_KEY, idx) }
 // idx、整本下完（可能几分钟）后整体写回，期间并发的其它写入（另一本书下载完、
 // localTrackUri 自愈、removeBook）都会被覆盖 → 磁盘文件在而索引没有，永久泄漏。
 // 所有索引变更走这条串行队列：每次都重新读最新索引、改完立即写回。
+// NF-1（复审 2026-10-12）：改用写入侧严格读 —— 桥错误时本次变更跳过（不盲写）；
+// JSON 损坏时 readIndexForWrite 已把损坏串备份到 offlineIndex.bak，从空索引重建。
 let _idxQueue = Promise.resolve()
 function mutateIndex(fn) {
   _idxQueue = _idxQueue.then(async () => {
-    const idx = await index()
+    const idx = await readIndexForWrite()
     await fn(idx)
     await setIndex(idx)
   }).catch(() => {})
   return _idxQueue
 }
 
-/** 已缓存信息（没有则 null） */
+/** 已缓存信息（没有则 null；索引读取失败也返回 null —— 播放路径优先不报错） */
 export async function offlineInfo(bookId) {
   const idx = await index()
+  if (idx === null) return null
   return idx[bookId] || null
 }
 
@@ -126,9 +164,11 @@ export async function localTrackUriLazy(bookId, idx) {
 }
 
 // ---------------- 下载 ----------------
-/** 预估已占用空间（字节） */
+/** 预估已占用空间（字节）。索引读取失败时抛错（调用方据此显示「读取失败」
+ *  而不是误报 0，2026-10-12 审计修 §3.5）。 */
 export async function cacheSize() {
   const idx = await index()
+  if (idx === null) throw new Error('缓存信息读取失败')
   return Object.values(idx).reduce((a, b) => a + (b.bytes || 0), 0)
 }
 
@@ -142,12 +182,21 @@ export async function downloadBook(book, onProgress = () => {}) {
   if (!native()) throw new Error('离线下载只在手机 App 里可用')
   const tracks = book.tracks || []
   if (!tracks.length) throw new Error(t('noAudio'))  // 2026-10-10 修：t 未导入会抛 ReferenceError
+  // 进度条单位词（这里先取好：循环内的 `t` 是音轨变量，遮蔽了 terms 的 t）
+  const chapterWord = t('chapter')
 
   const dir = bookDir(book.id)
   // 建目录（已存在会抛，忽略）
   try { await Filesystem.mkdir({ path: dir, directory: Directory.Data, recursive: true }) } catch (_) {}
 
-  const idx = await index()
+  // 变更侧预读（NF-1，复审 2026-10-12）：
+  //  - 桥错误 → 抛（读不到就不能盲写：要么把已下载的集误判成没下，要么瞎写丢数据）；
+  //  - JSON 损坏 → readIndexForWrite 已备份损坏串，从空记录重建（本书全量重下，
+  //    旧数据在 .bak 留底）。原实现把损坏也当「读失败」抛 → 损坏后下载永远进不来、
+  //    索引永远修不好，用户没有自救出口。
+  let idx
+  try { idx = await readIndexForWrite() }
+  catch (_) { throw new Error('离线索引读取失败') }
   const rec = idx[book.id] || { title: book.title || '', at: 0, bytes: 0, tracks: {} }
   rec.tracks = rec.tracks || {}
   rec.title = book.title || rec.title
@@ -159,20 +208,25 @@ export async function downloadBook(book, onProgress = () => {}) {
     const n = typeof t.index === 'number' ? t.index - 1 : i   // tracks[].index 是 1-based
     const file = trackFile(n, t.title || `第${n + 1}集`, extOf(t.contentUrl))
     const path = `${dir}/${file}`
-    onProgress({ done: i, total: tracks.length, pct: Math.round((i / tracks.length) * 100), label: t.title || `第${n + 1}集` })
+    onProgress({ done: i, total: tracks.length, pct: Math.round((i / tracks.length) * 100), label: t.title || `第${n + 1} ${chapterWord}` })
 
     // 已下过且文件在 → 跳过
     // 2026-10-10 审计修：只看 size>0 会把强杀 App 留下的半截文件当「已缓存」
     // （离线听到一半就断）。孤儿文件必须与索引记录的大小吻合才算完整。
-    try {
-      const st = await Filesystem.stat({ path, directory: Directory.Data })
-      if (rec.tracks[n] && st?.size === rec.tracks[n].size && st.size > 0) {
-        rec.tracks[n] = { path, size: st.size }
-        totalBytes += st.size
-        ok++
-        continue
-      }
-    } catch (_) { /* 不存在，继续下 */ }
+    // 2026-10-12 审计修（§4.4）：stat 校验只对**索引里记过**的集做 —— 新集不可能
+    // 「已下过」，直接下载即可（downloadFile 本来就覆盖目标路径）。原来每集都先
+    // stat 一遍，536 集 = 536 次桥调用（真机 0.3~1.6 秒纯等待）。
+    if (rec.tracks[n]) {
+      try {
+        const st = await Filesystem.stat({ path, directory: Directory.Data })
+        if (st?.size === rec.tracks[n].size && st.size > 0) {
+          rec.tracks[n] = { path, size: st.size }
+          totalBytes += st.size
+          ok++
+          continue
+        }
+      } catch (_) { /* 文件不在（被清过数据）→ 重新下 */ }
+    }
 
     try {
       const res = await Filesystem.downloadFile({
@@ -207,29 +261,41 @@ export async function downloadBook(book, onProgress = () => {}) {
   return { ok, fail }
 }
 
-/** 删除一本书的缓存 */
+/** 删除一本书的缓存。桥错误时抛错 —— 静默当成功会让调用方 toast「已删除」
+ *  却什么都没删（2026-10-12 审计修 §3.5）。
+ *  JSON 损坏时**照删**（NF-1）：要删的目录名只由 bookId 决定，不依赖索引内容 ——
+ *  readIndexForWrite 先把损坏串备份到 .bak，再从空索引重建；递归 rmdir 把该书的
+ *  文件清干净（播放页的「删除缓存」在索引损坏时也给出路，不用先全清）。 */
 export async function removeBook(bookId) {
-  const idx = await index()
+  let idx
+  try { idx = await readIndexForWrite() }
+  catch (_) { throw new Error('离线索引读取失败，无法删除') }
   const rec = idx[bookId]
-  if (!rec) return
-  for (const k of Object.keys(rec.tracks || {})) {
+  if (rec) for (const k of Object.keys(rec.tracks || {})) {
     try { await Filesystem.deleteFile({ path: rec.tracks[k].path, directory: Directory.Data }) } catch (_) {}
   }
+  // 兜底删目录：索引里没记录（损坏重建 / 记录丢了）也能把文件清掉，不留孤儿
   try { await Filesystem.rmdir({ path: bookDir(bookId), directory: Directory.Data, recursive: true }) } catch (_) {}
   await mutateIndex(ix => { delete ix[bookId] })
 }
 
-/** 清空全部缓存 */
+/** 清空全部缓存。桥错误时抛错（连索引都读不到，盲删不可接受）。
+ *  JSON 损坏时**必须能清**（NF-1）：缓存页失败态给用户的自救出口就是「清空后
+ *  重新下载」—— readIndexForWrite 先备份损坏串，逐本循环为空，靠递归删 ROOT
+ *  把文件清光，再重置索引。 */
 export async function clearAll() {
-  const idx = await index()
+  let idx
+  try { idx = await readIndexForWrite() }
+  catch (_) { throw new Error('缓存信息读取失败') }
   for (const id of Object.keys(idx)) await removeBook(id)
   try { await Filesystem.rmdir({ path: ROOT, directory: Directory.Data, recursive: true }) } catch (_) {}
   await mutateIndex(ix => { for (const k of Object.keys(ix)) delete ix[k] })
 }
 
-/** 已缓存的书列表 */
+/** 已缓存的书列表。索引读取失败时抛错（调用方渲染「读取失败」态，§3.5） */
 export async function cachedBooks() {
   const idx = await index()
+  if (idx === null) throw new Error('缓存信息读取失败')
   return Object.entries(idx).map(([id, v]) => ({
     id, title: v.title, bytes: v.bytes || 0, at: v.at || 0,
     count: Object.keys(v.tracks || {}).length,

@@ -353,5 +353,6 @@ export async function forceStopCurrent() {
   try { await SpeechRecognition.stop() } catch (_) {}
 }
 
-/** 兼容旧调用名 */
-export const stopListening = forceStopCurrent
+// （2026-10-12 审计修 §5.3）删掉了 `export const stopListening = forceStopCurrent`
+// 兼容别名：仓库内已无调用方（stats.js 的 stopListening 是另一个函数，app.js
+// 从 stats 导入），同名导出只会误导「撞名了到底用哪个」。

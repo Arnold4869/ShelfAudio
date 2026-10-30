@@ -39,6 +39,11 @@ public class PlaybackService extends Service {
     public static final String EXTRA_TITLE = "title";
     public static final String EXTRA_TEXT = "text";
 
+    // 「上次由 App 写入的通知模式」——applyNotificationMode 用它区分
+    // 「级别还是我们写的」与「用户在系统设置里改过」（后者不覆盖）。
+    private static final String NOTIF_PREFS = "shelfaudio_playback";
+    private static final String PREF_LAST_MODE = "notif_mode";   // "normal" | "quiet"
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;
@@ -46,20 +51,24 @@ public class PlaybackService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        String action = intent != null ? intent.getAction() : ACTION_START;
+        // START_STICKY 的服务被系统杀掉后重启时 intent == null —— 此时播放早已不在，
+        // 重新走 START 分支会凭空拉起常驻通知。视为「重启即退出」。
+        if (intent == null) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        String action = intent.getAction();
         try {
             if (ACTION_NOTIFICATION_MODE.equals(action)) {
                 // 只切通知渠道的打扰级别，不动服务本身（后台播放照常）。
-                String mode = intent != null ? intent.getStringExtra(EXTRA_NOTIF_MODE) : null;
+                String mode = intent.getStringExtra(EXTRA_NOTIF_MODE);
                 applyNotificationMode("quiet".equals(mode));
                 return START_STICKY;
             }
             if (ACTION_STOP.equals(action)) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    stopForeground(true);
-                } else {
-                    stopForeground(true);
-                }
+                // minSdk=24，STOP_FOREGROUND_REMOVE 全版本可用（boolean 版在 API 33 已弃用；
+                // 原先 if/else 两个分支调用完全相同，属死分支）。
+                stopForeground(STOP_FOREGROUND_REMOVE);
                 stopSelf();
                 return START_NOT_STICKY;
             }
@@ -87,31 +96,48 @@ public class PlaybackService extends Service {
     }
 
     /**
-     * 通知渠道重要性。
+     * 通知渠道重要性（实例版转发，保持 Service 内原调用点不变）。
+     */
+    private void applyNotificationMode(boolean quiet) {
+        applyNotificationMode(this, quiet);
+    }
+
+    /**
+     * 通知渠道重要性（静态版：插件与 Service 共用，不需要为此拉起服务）。
      * normal → IMPORTANCE_LOW（在下拉栏可见，无声）
      * quiet  → IMPORTANCE_NONE（不显示，服务照常；Android 不允许前台服务无通知，
      *          所以这是能做到的"最静"档）
-     * 用户如果自己在系统设置里改过渠道级别，这里不再覆盖（尊重用户）。
+     *
+     * 级别只在两种情况下写入：①渠道首次创建时；②当前级别仍是 App 上次写入的值。
+     * 用户自己在系统设置里改过渠道级别（与上次写入值不同）→ 尊重用户，不再覆盖。
+     * 上次写入值记在本 App 私有 SharedPreferences，纯本机状态，不涉及其它组件。
      */
-    private void applyNotificationMode(boolean quiet) {
+    static void applyNotificationMode(Context ctx, boolean quiet) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
-        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
+        android.content.SharedPreferences sp =
+                ctx.getSharedPreferences(NOTIF_PREFS, Context.MODE_PRIVATE);
+        int want = quiet ? NotificationManager.IMPORTANCE_NONE : NotificationManager.IMPORTANCE_LOW;
         NotificationChannel ch = nm.getNotificationChannel(CHANNEL_ID);
         if (ch == null) {
-            ch = new NotificationChannel(CHANNEL_ID, "后台播放",
-                    quiet ? NotificationManager.IMPORTANCE_NONE : NotificationManager.IMPORTANCE_LOW);
+            // 首次创建：按当前模式定级别（重装/清数据后渠道重建，也在这一步生效）
+            ch = new NotificationChannel(CHANNEL_ID, "后台播放", want);
             ch.setDescription("听书在后台播放时的常驻通知（关闭后不影响播放与锁屏控制）");
             ch.setShowBadge(false);
             nm.createNotificationChannel(ch);
         } else {
-            int want = quiet ? NotificationManager.IMPORTANCE_NONE : NotificationManager.IMPORTANCE_LOW;
-            if (ch.getImportance() != want) {
+            // 渠道已存在：只在「级别还是 App 上次写入的值」时跟随模式更新。
+            int last = "quiet".equals(sp.getString(PREF_LAST_MODE, null))
+                    ? NotificationManager.IMPORTANCE_NONE
+                    : NotificationManager.IMPORTANCE_LOW;
+            if (ch.getImportance() == last && ch.getImportance() != want) {
                 ch.setImportance(want);
                 ch.setShowBadge(false);
                 nm.createNotificationChannel(ch);
             }
         }
+        sp.edit().putString(PREF_LAST_MODE, quiet ? "quiet" : "normal").apply();
     }
 
     private void createChannel() {
@@ -125,6 +151,9 @@ public class PlaybackService extends Service {
             ch.setDescription("听书在后台播放时的常驻通知（关闭后不影响播放与锁屏控制）");
             ch.setShowBadge(false);
             nm.createNotificationChannel(ch);
+            // 记录「这条 LOW 是我们写的」，applyNotificationMode 的用户保护判断才准
+            getSharedPreferences(NOTIF_PREFS, Context.MODE_PRIVATE)
+                    .edit().putString(PREF_LAST_MODE, "normal").apply();
         }
     }
 
@@ -152,7 +181,7 @@ public class PlaybackService extends Service {
     @Override
     public void onDestroy() {
         try {
-            stopForeground(true);
+            stopForeground(STOP_FOREGROUND_REMOVE);
         } catch (Throwable ignored) {
         }
         super.onDestroy();

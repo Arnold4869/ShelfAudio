@@ -136,7 +136,7 @@ export async function renderParent(root) {
       <div class="setting-row" id="rowReload">
         <div class="setting-ic">${icon('refresh', 22)}</div>
         <div class="setting-main">
-          <div class="setting-label">刷新书库</div>
+          <div class="setting-label">刷新${t('library')}</div>
         </div>
         <div class="setting-arrow">${icon('forward', 20)}</div>
       </div>

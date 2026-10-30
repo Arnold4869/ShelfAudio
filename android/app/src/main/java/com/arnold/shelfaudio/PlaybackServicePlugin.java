@@ -9,6 +9,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import android.content.Intent;
 import android.os.Build;
 
+import androidx.core.content.ContextCompat;
+
 /**
  * 前台服务控制插件（JS 可调用）
  *
@@ -55,7 +57,11 @@ public class PlaybackServicePlugin extends Plugin {
     @PluginMethod
     public void update(PluginCall call) {
         try {
-            getContext().startService(buildIntent(PlaybackService.ACTION_UPDATE, call));
+            // Android 8+ 后台时 startService() 抛 IllegalStateException（更新通知
+            // 常发生在锁屏/切后台后）。改 startForegroundService：服务已在跑时
+            // 等价于投递 onStartCommand；没在跑时 ACTION_UPDATE 分支会走 startForeground，合法。
+            ContextCompat.startForegroundService(getContext(),
+                    buildIntent(PlaybackService.ACTION_UPDATE, call));
             call.resolve();
         } catch (Throwable t) {
             call.reject("更新通知失败: " + t.getMessage());
@@ -67,10 +73,9 @@ public class PlaybackServicePlugin extends Plugin {
     public void setNotificationMode(PluginCall call) {
         try {
             String mode = call.getString("mode", "normal");
-            Intent i = new Intent(getContext(), PlaybackService.class);
-            i.setAction(PlaybackService.ACTION_NOTIFICATION_MODE);
-            i.putExtra(PlaybackService.EXTRA_NOTIF_MODE, mode);
-            getContext().startService(i);
+            // 渠道级别是 NotificationManager 的纯本机操作，不需要经过服务 ——
+            // 直接静态调用即可（也避免了后台 startService 抛错 / 为改渠道凭空拉起服务）。
+            PlaybackService.applyNotificationMode(getContext(), "quiet".equals(mode));
             call.resolve();
         } catch (Throwable t) {
             call.reject("设置通知模式失败: " + t.getMessage());
@@ -80,7 +85,11 @@ public class PlaybackServicePlugin extends Plugin {
     @PluginMethod
     public void stop(PluginCall call) {
         try {
-            getContext().startService(buildIntent(PlaybackService.ACTION_STOP, call));
+            // 停服务用 stopService()：①后台调用不受限（startService 在 O+ 后台必抛）；②不经过
+            // startForegroundService（那样要求服务随后必须 startForeground，ACTION_STOP
+            // 分支只 stopSelf，服务本来没在跑时会触发 DidNotStartInTime 崩溃）。
+            // 通知移除由 PlaybackService.onDestroy() 的 stopForeground(STOP_FOREGROUND_REMOVE) 兜底。
+            getContext().stopService(new Intent(getContext(), PlaybackService.class));
             call.resolve();
         } catch (Throwable t) {
             call.reject("停止前台服务失败: " + t.getMessage());

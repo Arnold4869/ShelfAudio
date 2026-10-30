@@ -59,7 +59,7 @@ export async function renderAlbum(root, params = {}) {
     <div class="album-hero">
       <div class="album-cover">
         ${fallbackCover({ title, author, cls: 'cover-ph-hero' })}
-        <img data-cover src="${cover}" alt="" loading="lazy">
+        <img data-cover src="${escH(cover)}" alt="" loading="lazy">
       </div>
       <div class="album-meta">
         <div class="album-title">${escH(title)}</div>
@@ -99,8 +99,13 @@ export async function renderAlbum(root, params = {}) {
   root.querySelector('#btnBack').onclick = () => { haptic.tap(); goBack('kidhome') }
 
   // 从搜索页点了某首歌进来：直接从那首开始播（老板「我自己选个单曲播放」）
+  // ⚠️ songId 是一次性起播指令，消费后**立刻**从 params 里删掉（params 与
+  // 返回栈里存的是同一个对象）：任何让本页带旧参数重渲染的路径（replace 合并、
+  // 回滚重渲染）都不该再起播一次跳回这首歌。app.js goBack() 里的剥离是第二道保险。
   if (params.songId) {
-    const i = songs.findIndex(ch => (ch?._nd?.songId === params.songId) || (ch?._nd?.id === params.songId))
+    const songId = params.songId
+    delete params.songId
+    const i = songs.findIndex(ch => (ch?._nd?.songId === songId) || (ch?._nd?.id === songId))
     if (i >= 0) await playFrom(i)
   }
 

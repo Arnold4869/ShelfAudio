@@ -100,11 +100,26 @@ class ServerHub {
   async setActivePersist(src) {
     this.setActive(src)
     try { await store.set(CONFIG_KEYS.activeSource, this.activeSource) } catch (_) {}
+    // 源变了 → app.state 里跨源共享的书目缓存必须作废（P1 §3.6，2026-10-12）：
+    // state.items 只由书架页写入、不带源标识，切源（含 logout 落源、首次登录）
+    // 后若不清空，搜索页浏览全部/缓存页可下载清单会拿到上一源的条目。
+    // 这里统一清（比散落各视图可靠）；读取方另有 cachedLibraryItems() 校验兜底。
+    // 动态 import 避免 lib → app 的模块环（sleep.js 同款手法）。
+    try {
+      const { state } = await import('../app.js')
+      if (state) {
+        state.items = []
+        state.itemsSrc = null
+        state.itemsLibraryId = null
+      }
+    } catch (_) { /* 测试/无 app 环境下静默跳过 */ }
   }
 
   /** 登录 ABS（原流程）+ 落盘 */
   async loginAbs(origin, username, password) {
-    const u = await AbsApi.prototype.login.call(this.abs, origin, username, password)
+    // 直接调实例方法（§5.1，2026-10-12）：原先写 AbsApi.prototype.login.call(...)
+    // 语义相同，但那是全仓库唯一的 prototype.method.call 用法，静态工具看不到调用关系。
+    const u = await this.abs.login(origin, username, password)
     await store.set(CONFIG_KEYS.server, this.abs.baseUrl)
     await store.set(CONFIG_KEYS.token, this.abs.token)
     await store.set(CONFIG_KEYS.username, username)
@@ -139,6 +154,11 @@ class ServerHub {
       await store.remove(CONFIG_KEYS.ndPassword)
       this.loggedIn.nd = false
       this.nd.baseUrl = ''
+      // NF-3（复审 2026-10-12）：会话级缓存（章节表 / 增量写基准）一并作废。
+      // 登出期间别的设备可能改过服务端 bookmark，重登同一台也不能信旧基准；
+      // 跨服务器串缓存另有 _sessKey 键隔离 + configure 换服清空兜底（见
+      // navidrome.js configure 注释的三层设计）。
+      this.nd.resetSessionCaches()
     }
     if (this.activeSource === src) await this.setActivePersist(this.available[0] || 'abs')
   }

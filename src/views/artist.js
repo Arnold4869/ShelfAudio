@@ -25,11 +25,13 @@ import { wireArtistLinks, artistLink, artistIdOf } from '../lib/artist-links.js'
 /** 当前视图：'albums' | 'songs'。会话内记住（老板要的\"右上角切换\"） */
 let view = 'albums'
 
-/** 歌手头像：ND 没抓到真实照片时（实测全库都是默认星图）用首字圆形占位兜底 */
+/** 歌手头像：ND 没抓到真实照片时（实测全库都是默认星图）用首字圆形占位兜底。
+ *  加载失败的处理交给 wireCoverFallback（img 带 data-cover，错误时隐藏图片、
+ *  露出占位首字）—— 不再写内联 onerror（CSP 收紧后内联处理器会被禁，§4.6）。 */
 function avatarHTML(name, url) {
   const ch = [...(String(name).trim() || '?')][0]
   return `<div class="artist-avatar">
-    ${url ? `<img src="${url}" alt="" loading="lazy" onerror="this.remove()">` : ''}
+    ${url ? `<img data-cover src="${esc(url)}" alt="" loading="lazy">` : ''}
     <span class="artist-avatar-ph">${esc(ch)}</span>
   </div>`
 }
@@ -75,7 +77,7 @@ export async function renderArtist(root, params = {}) {
         return `<div class="book-card" data-album="${esc(it.id)}">
           <div class="cover-slot">
             ${fallbackCover({ title: m.title || '', author: m.authorName || '', cls: 'cover-ph-card' })}
-            <img class="book-cover" data-cover src="${abs.coverUrl(it.id, { width: 420 })}" alt="" loading="lazy">
+            <img class="book-cover" data-cover src="${esc(abs.coverUrl(it.id, { width: 420 }))}" alt="" loading="lazy">
           </div>
           <div class="book-meta">
             <div class="book-title">${esc(m.title || '未命名')}</div>
@@ -151,6 +153,10 @@ export async function renderArtist(root, params = {}) {
   }
 
   wireBody()
+
+  // 头像兜底（§4.6）：头像在 hero 区（wireBody 只处理 #artistBody），
+  // 加载失败时隐藏 img、露出首字占位 —— 替代原先的内联 onerror。
+  wireCoverFallback(root.querySelector('.artist-hero'))
 
   root.querySelector('#btnBack').onclick = () => { haptic.tap(); goBack('kidhome') }
   btnView.onclick = () => {

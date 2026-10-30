@@ -424,8 +424,10 @@ body[data-view="player"] #extra { margin-bottom: auto; }
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; display: block; z-index: 1;
 }
-/* ND 全库歌手都没真实照片（实测 613 位返回同一张默认星图）→ 首字圆形占位兜底，
-   图加载失败时被 onerror 移除、占位自然露出（不闪白块）。 */
+/* ND 全库歌手都没真实照片（实测 613 位返回同一张默认星图）→ 首字圆形占位兜底。
+   加载失败不再用内联 onerror（CSP 收紧后内联处理器会被禁，§4.6）：img 带
+   data-cover 由 wireCoverFallback 委托处理，出错时把 img 藏起来、
+   下层首字占位自然露出（不闪白块）。 */
 .artist-avatar-ph {
   font-size: 34px; font-weight: 800; color: var(--accent);
   opacity: .9; user-select: none;

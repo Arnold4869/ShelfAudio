@@ -21,9 +21,10 @@ import { playbackGate, volumeCap } from './lib/parental.js'
 import { onTrackCompleted, clearTrackSleepOnBookEnd } from './lib/sleep.js'
 import { localTrackUriLazy } from './lib/offline.js'
 import { recordContinue, removeContinueLocal } from './lib/continue-local.js'
-import { loadHistory } from './lib/history.js'
+import { loadHistory, unhideHistoryEntry } from './lib/history.js'
 import { initHaptics } from './lib/haptics.js'
 import { syncToServer } from './lib/favs.js'
+import { onAppResume } from './lib/permissions.js'
 import { t } from './lib/terms.js'
 
 window.__abs = hub   // player.js 需要（多源门面，按 sessionId 前缀分派）
@@ -36,6 +37,11 @@ export const state = {
   player: null,
   current: null,      // { item, tracks, sessionId, title, cover, duration }
   items: [],
+  // items 的归属（P1 §3.6，2026-10-12）：state.items 是跨源共享的全局列表，
+  // 只由书架页写入。切源/登出/换库后必须连同这两个标记一起失效，
+  // 否则搜索页/缓存页会拿到上一源的条目（封面空白、点开报错）。
+  itemsSrc: null,        // 写入时 hub.active（'abs' | 'nd'）
+  itemsLibraryId: null,  // 写入时 state.libraryId
   kidPin: '',
 }
 
@@ -80,51 +86,15 @@ export function route(name, fn) { routes[name] = fn }
 let currentCleanup = null
 
 // ---------------- 视图历史栈 ----------------
-// 为什么需要（老板 2026-09-14 报「首页进收藏，返回没回首页」）：
-// 之前每个页面的返回键都**硬编码目标**（收藏页写死 go('settings')），
-// 从书架进去也回设置页，从设置进去也回设置页 —— 入口不同、返回不同，写死必错。
-// 现在记录真实的访问顺序，返回 = 回上一页；入口随便变都对。
-const TAB_VIEWS = new Set(['kidhome', 'search', 'settings'])
-let viewStack = []   // [{ name, params }]，栈顶 = 当前页
-
-/** 当前视图名（调试/测试用） */
-export function currentView() {
-  return viewStack.length ? viewStack[viewStack.length - 1].name : ''
-}
-
-/** 历史栈快照（测试断言用，别在业务里依赖） */
-export function viewHistory() {
-  return viewStack.map(v => v.name)
-}
-
-function rememberView(name, params, opts) {
-  if (opts.replace) {
-    // 原地替换（返回时用）：栈深度不变。
-    // 2026-10-10 审计修：replace 一律整体覆盖 params 会把栈顶的深链参数洗掉
-    // （album 的 id、stats 的 day/cal）——go(x, {}, {replace:true}) 一旦走到
-    // 带参页，返回后就丢状态。改成合并：新参数覆盖同名键，旧键保留。
-    if (viewStack.length) {
-      viewStack[viewStack.length - 1] = {
-        name,
-        params: { ...viewStack[viewStack.length - 1].params, ...params },
-      }
-    }
-    else viewStack = [{ name, params }]
-    return
-  }
-  if (TAB_VIEWS.has(name)) {
-    // 页签是「根」：切页签等于另起一条路径，清空历史
-    viewStack = [{ name, params }]
-    return
-  }
-  const top = viewStack[viewStack.length - 1]
-  if (top && top.name === name) {
-    // 同页换参数（如统计页切日期）不算新页面，否则历史会被灌满
-    viewStack[viewStack.length - 1] = { name, params }
-    return
-  }
-  viewStack.push({ name, params })
-}
+// 栈逻辑抽到 lib/view-stack.js（2026-10-12 审计修 §3.2 配套）：纯数据操作，
+// node 单测直接驱动（scripts/test-view-stack.mjs）。这里保留同名导出，
+// 原有引用（currentView/viewHistory）不受影响。
+import {
+  rememberView, popForBack, snapshotViewStack, restoreViewStack, topView,
+  currentView, viewHistory,
+} from './lib/view-stack.js'
+// 维持 app.js 原有的对外导出面（此前 currentView/viewHistory 由这里导出）
+export { currentView, viewHistory }
 
 /**
  * 返回上一页。没有历史（或历史只有当前页）时回 fallback。
@@ -138,19 +108,16 @@ export async function goBack(fallback = 'kidhome') {
   if (goBack._busy) return
   goBack._busy = true
   try {
-    if (viewStack.length > 1) {
-      viewStack.pop()
-      const prev = viewStack[viewStack.length - 1]
-      // ⚠️ 返回时必须把一次性参数剥掉：album 页的 songId 是「点歌跳转时」的一次性
-      // 起播指令（0.7.2 引入，老板「我自己选个单曲播放」）。不剥的话：从搜索/歌手页
-      // 点歌 → 专辑页自动起播 → 进播放页 → 按返回 → 回专辑页 → 又自动起播 →
-      // 立刻被踢回播放页 = **在播放页按返回永远出不去**（老板 2026-09-20 实测卡死）。
-      // album 页起播过一次后这条指令已经消费掉了，返回必须是「安静地看专辑」。
-      if (prev.name === 'album' && prev.params?.songId) {
-        const { songId, ...rest } = prev.params
-        prev.params = rest
-      }
-      await go(prev.name, prev.params, { replace: true })
+    // 栈操作交给 lib/view-stack.js 的 popForBack（含 album songId 剥离，§3.2）
+    const prev = popForBack()
+    if (prev) {
+      // ⚠️ keep=true（P1 §3.2，2026-10-12）：上一页要「原地重渲染」，渲染入参
+      // 必须是它**自己栈里存的**参数，不能用 goBack 现场传的 prev.params 再覆盖
+      // 一遍 —— 0.14.0 的 replace 合并修的是「深链参数被洗掉」，但它合并的是
+      // 「上一个视图的渲染入参」，等于让上一页拿自己上次渲染的快照再洗一次参数
+      // （stats 的 day/cal 丢失、album.id 被洗成空 → 被踢回首页）。keep 语义下
+      // rememberView 只更新 name 不动 params，栈里那份原样生效。
+      await go(prev.name, prev.params, { replace: true, keep: true })
       return
     }
     await go(fallback, {}, { replace: true })
@@ -166,7 +133,7 @@ export async function go(name, params = {}, opts = {}) {
   // PIN 取消时直接 return —— 视图没变、栈却已经把 parents 压进去了。之后返回会
   // 弹进一个「已经放弃进入」的家长设置页，还再弹一次 PIN。快照栈，路由返回 false
   // （PIN 取消 / 主动放弃进入）就回滚，等价于这次导航没发生过。
-  const stackSnapshot = viewStack.slice()
+  const stackSnapshot = snapshotViewStack()
   rememberView(name, params, opts)
 
   // 卸载上一个视图的监听，否则每次进播放页都会累加 window 事件监听
@@ -197,8 +164,8 @@ export async function go(name, params = {}, opts = {}) {
     // （复审修正：旧视图 DOM 已被清空，只回滚栈不重渲染 = 白屏）。
     // 三审修正（无限递归防护）：若回滚目标的渲染也崩溃，再回滚再 go 会无限递归
     // → 栈溢出。回滚重渲染只允许一层；第二层失败直接渲染静态错误页兜底。
-    viewStack = stackSnapshot
-    const top = viewStack[viewStack.length - 1]
+    restoreViewStack(stackSnapshot)
+    const top = topView()
     if (opts._rollbackRender) {
       // 我们已经是「回滚中的重渲染」且又失败了：别再递归，给用户一个能看的页面
       root.innerHTML = `<div class="empty" style="margin-top:40vh"><div class="glyph">${icon('warning', 44)}</div>
@@ -377,11 +344,16 @@ export function initPlayer() {
     },
     onTrackChange: (t) => {
       window.dispatchEvent(new CustomEvent('sa:track', { detail: t }))
+      // §4.9（2026-10-12）：切歌时刷新迷你条副标题。播放页内的 sa:track 会
+      // 刷新大字标题，但其它页面上的迷你条不会 —— 跨页面时副标题停在上一首。
+      // updateMini() 内部有「值没变不动 DOM」的短路，成本极低。
+      updateMini()
     },
     // 睡眠定时·按章节/歌曲（老板 2026-09-16）：本集播完 → 消耗一次，
     // 到点返回 true 让播放器停在这一集（不推进下一集，避免"下一集刚出声就被掐"）。
     // 放在播放器里而不是视图里，是因为视图可能不在播放页（定时要跨页面生效）。
-    onBeforeAdvance: () => onTrackCompleted(),
+    // itemId 一并传入：sleep 模块用它识别「换书/换源」并把计数作废（P1 §3.1）。
+    onBeforeAdvance: (itemId) => onTrackCompleted(itemId),
     // 整本书/整张专辑播完 → 按章节定时的剩余计数静默清零
     // （计数只对当前这本书有意义，残留到下一本书会"刚听 1 集就被莫名暂停"）
     onBookEnd: () => clearTrackSleepOnBookEnd(),
@@ -541,6 +513,9 @@ export async function playItem(item, { startTime } = {}) {
     author: meta.authorName || meta.author || '',
     duration: item.media?.duration || duration || 0,
   }).catch(() => {})
+  // ND 专辑被本地隐藏过（用户删过历史）→ 重新收听即解除隐藏，
+  // 历史页要让条目回来（P1 §3.3）。故意不 await，不挡起播。
+  unhideHistoryEntry(item.id).catch(() => {})
 
   try {
     await player.load({
@@ -635,6 +610,17 @@ function updateMini() {
 }
 
 /**
+ * state.items 是否还能给「当前源 + 当前库」复用（P1 §3.6）。
+ * 跨源/跨库的旧缓存一律当作「没有」，读取方自己重拉。
+ */
+export function cachedLibraryItems() {
+  if (!Array.isArray(state.items) || !state.items.length) return []
+  if (state.itemsSrc !== hub.active) return []
+  if (state.itemsLibraryId !== state.libraryId) return []
+  return state.items
+}
+
+/**
  * 切换源后让各页拿到正确的"当前库"。
  * state.libraryId 是全局单值 —— 切到另一台服务器时必须重置，
  * 否则书架还拿着上一台的库 id 去请求新服务器（404/空列表）。
@@ -642,6 +628,8 @@ function updateMini() {
 async function resetForSourceSwitch() {
   state.libraryId = null
   state.items = []
+  state.itemsSrc = null
+  state.itemsLibraryId = null
   // 切源 = 直链域名/凭据全变：当前预热作废（不同服务器的 URL，磁盘缓存不命中）
   try { await state.player?.stopWarmup?.() } catch (_) {}
   try {
@@ -768,10 +756,11 @@ async function boot() {
   // 回前台状态对账（老板 2026-09-20 报「暂停后别的 App 一放，悦耳自己出声、
   // 控制器管不住」）：JS 认为已暂停时，插件原生层可能被自动恢复还在播（部分情况
   // 不广播事件）。用户切回悦耳的那一刻问一次原生真值，真在播就立刻压停 + 落进度。
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      try { state.player?.reconcilePaused?.() } catch (_) {}
-    }
+  // §4.8（2026-10-12）：改用 permissions.js 的 onAppResume —— 它除了
+  // visibilitychange 还监听 Capacitor 的 resume 事件（部分 Android WebView
+  // /MIUI/EMUI 回前台只发 resume 不发 visibilitychange），两路都触发时幂等。
+  onAppResume(() => {
+    try { state.player?.reconcilePaused?.() } catch (_) {}
   })
 
   // 闪屏至少在屏幕上待一会儿，避免闪一下就跳走

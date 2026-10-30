@@ -11,22 +11,27 @@
  * 设计：playItem 成功起播时记一条 { id, ts, title, author, duration }；
  * 渲染继续听时与服务端列表**合并**：本地的在前（刚播放的排最上），
  * 去重按 id。上限 20 条，够回看且不膨胀。
+ *
+ * 写入一律走 store.mutateJSON 串行队列（§4.7，2026-10-12）：recordContinue
+ * 在 playItem 里是不 await 的并行写，快速连点两本书时两次「读-改-写」交错
+ * 会丢先写的那条 —— 与离线索引同款问题，统一串行化。
  */
 import { store } from './store.js'
 
 const KEY = 'continueLocal'
 const MAX = 20
 
-export async function recordContinue(entry) {
-  if (!entry?.id) return
-  const list = (await store.getJSON(KEY, [])) || []
-  const next = [{ id: entry.id, ts: Date.now(), ...entry }, ...list.filter(x => x.id !== entry.id)]
-  await store.setJSON(KEY, next.slice(0, MAX))
+export function recordContinue(entry) {
+  if (!entry?.id) return Promise.resolve()
+  return store.mutateJSON(KEY, list => {
+    const cur = Array.isArray(list) ? list : []
+    return [{ id: entry.id, ts: Date.now(), ...entry }, ...cur.filter(x => x.id !== entry.id)].slice(0, MAX)
+  })
 }
 
-export async function removeContinueLocal(id) {
-  const list = (await store.getJSON(KEY, [])) || []
-  await store.setJSON(KEY, list.filter(x => x.id !== id))
+export function removeContinueLocal(id) {
+  return store.mutateJSON(KEY, list =>
+    (Array.isArray(list) ? list : []).filter(x => x.id !== id))
 }
 
 export async function listContinueLocal() {

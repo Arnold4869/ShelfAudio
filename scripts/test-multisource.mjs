@@ -97,7 +97,16 @@ function loadStubbed(relPath, extra = []) {
     .replace(/import \{ AbsApi, abs as absRaw \} from '\.\/api\.js'/, `import { AbsApi } from './.tmp-api-stub.mjs'\nconst absRaw = new AbsApi()`)
     .replace(/import \{ NavidromeApi \} from '\.\/navidrome\.js'/, `import { NavidromeApi } from './.tmp-nd-stub.mjs'`)
     .replace(/import \{ store, CONFIG_KEYS \} from '\.\/store\.js'/, `const mem = new Map()\nexport const __mem = mem\nconst store = {\n  async get(k, d=''){ return mem.has(k) ? mem.get(k) : d },\n  async set(k, v){ mem.set(k, String(v)) },\n  async remove(k){ mem.delete(k) },\n}\nconst CONFIG_KEYS = { server:'server', token:'token', username:'username', ndServer:'ndServer', ndUser:'ndUser', ndPassword:'ndPassword', activeSource:'activeSource', kidPin:'kidPin' }`)
+    // §3.6（2026-10-12 审计修）：setActivePersist 里动态 import('../app.js') 在桩环境
+    // 指向这个假 app（真 app.js 带 DOM，node 装不进来）。断言经 globalThis.__APP_STATE__。
+    .replace(/import\('\.\.\/app\.js'\)/, 'import(globalThis.__APP_STUB_URL__)')
   fs.writeFileSync(path.join(ROOT, '.tmp-servers-stub.mjs'), code)
+}
+// 假 app.js：只导出 state（servers.js 只用 state.items / itemsSrc / itemsLibraryId）
+{
+  fs.writeFileSync(path.join(ROOT, '.tmp-app-stub.mjs'),
+    `export const state = { items: [], itemsSrc: null, itemsLibraryId: null, libraryId: 'abs-lib' }\nglobalThis.__APP_STATE__ = state\n`)
+  globalThis.__APP_STUB_URL__ = pathToFileURL(path.join(ROOT, '.tmp-app-stub.mjs')).href
 }
 
 const { hub } = await import(pathToFileURL(path.join(ROOT, '.tmp-servers-stub.mjs')).href)
@@ -217,7 +226,32 @@ console.log('\n=== 5. 重启恢复（store 落盘 → restore）===')
   ok('ND 凭据恢复成功（能发请求）', await h2.nd.libraries().then(l => l[0].id === 'nd-lib').catch(() => false))
 }
 
-for (const f of ['.tmp-api-stub.mjs', '.tmp-nd-stub.mjs', '.tmp-servers-stub.mjs', '.tmp-api-stub.mjs']) {
+console.log('\n=== 6. 切源/登出清掉跨源共享的 state.items（P1 §3.6）===')
+// 修复前（HEAD）：setActivePersist 不碰 app.state → 搜索页「浏览全部」/缓存页
+// 拿到的是上一个源（可能已登出）的条目：封面空白、点开报错。断言在旧代码上会红。
+{
+  const state = globalThis.__APP_STATE__
+  // 模拟：书架在 ABS 下拉过列表并打了源标记
+  state.items = [{ id: 'abs1', media: { metadata: { title: 'ABS 书' } } }]
+  state.itemsSrc = 'abs'
+  state.itemsLibraryId = 'abs-lib'
+  // 双源在线，从 ABS 切到 ND
+  await hub.setActivePersist('nd')
+  ok('切源后 state.items 清空', state.items.length === 0, JSON.stringify(state.items))
+  ok('切源后 itemsSrc 清空', state.itemsSrc === null, String(state.itemsSrc))
+  ok('切源后 itemsLibraryId 清空', state.itemsLibraryId === null, String(state.itemsLibraryId))
+  // 再切回来：同样清（不能因为目标源相同就跳过 —— 库可能换了）
+  state.items = [{ id: 'nd:ndalb' }]; state.itemsSrc = 'nd'; state.itemsLibraryId = 'nd-lib'
+  await hub.setActivePersist('abs')
+  ok('反向切源同样清空', state.items.length === 0 && state.itemsSrc === null, JSON.stringify(state.items))
+  // 典型路径（审计复现）：书架 ABS → about 里断开 ABS → active 落到 ND → state 不能还是 ABS 的
+  state.items = [{ id: 'abs1' }]; state.itemsSrc = 'abs'; state.itemsLibraryId = 'abs-lib'
+  await hub.logout('abs')
+  ok('登出 ABS（active 落到 nd）后 state.items 清空', state.items.length === 0, JSON.stringify(state.items))
+  ok('登出后 itemsSrc 清空', state.itemsSrc === null, String(state.itemsSrc))
+}
+
+for (const f of ['.tmp-api-stub.mjs', '.tmp-nd-stub.mjs', '.tmp-servers-stub.mjs', '.tmp-app-stub.mjs']) {
   try { fs.unlinkSync(path.join(ROOT, f)) } catch (_) {}
 }
 console.log('\n==============================================')
