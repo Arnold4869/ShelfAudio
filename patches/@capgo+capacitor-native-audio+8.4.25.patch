@@ -1,17 +1,52 @@
-# ShelfAudio 本地补丁（2026-10-11 老板拍板）：播放器磁盘缓存 100MB → 20MB
-# 应用方式：package.json postinstall 自动跑 patch-package（CI 与本地 npm install 都生效）
-# 只改 RemoteAudioAsset.MAX_CACHE_SIZE；iOS（AVPlayer）无此缓存，无需补。
-# 0.17.0 追加（手工续写 hunk，未跑 npx patch-package）：
-#   ① ExoPlayer 换带 DefaultLoadControl 的 Builder：起播缓冲门槛
-#      bufferForPlaybackMs 默认 2500 → 800、bufferForPlaybackAfterRebufferMs → 1500，
-#      min/maxBuffer 保持默认 —— 起播少等约 1.7 秒缓冲。
-#   ② SimpleCache 目录 getCacheDir()/media → getFilesDir()/media（部分机型「清缓存」
-#      会把 cacheDir 一并清掉，预热成果丢失；filesDir 由 clearCache 自己清）。
-#      老目录遗弃不迁移（只是缓存，下次预热自然重建）。
+diff --git a/node_modules/@capgo/capacitor-native-audio/CapgoCapacitorNativeAudio.podspec b/node_modules/@capgo/capacitor-native-audio/CapgoCapacitorNativeAudio.podspec
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/LICENSE b/node_modules/@capgo/capacitor-native-audio/LICENSE
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/Package.swift b/node_modules/@capgo/capacitor-native-audio/Package.swift
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/README.md b/node_modules/@capgo/capacitor-native-audio/README.md
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/build.gradle b/node_modules/@capgo/capacitor-native-audio/android/build.gradle
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/AndroidManifest.xml b/node_modules/@capgo/capacitor-native-audio/android/src/main/AndroidManifest.xml
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/AudioAsset.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/AudioAsset.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/AudioCompletionListener.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/AudioCompletionListener.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/AudioDispatcher.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/AudioDispatcher.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/Constant.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/Constant.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/HlsAvailabilityChecker.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/HlsAvailabilityChecker.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/Logger.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/Logger.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/NativeAudio.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/NativeAudio.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/PlayerThread.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/PlayerThread.java
+old mode 100644
+new mode 100755
 diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java
+old mode 100644
+new mode 100755
+index 18d7d97..52b49fa
 --- a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java
 +++ b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java
-@@ -13,6 +13,7 @@
+@@ -13,6 +13,7 @@ import androidx.media3.datasource.DefaultHttpDataSource;
  import androidx.media3.datasource.cache.CacheDataSource;
  import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor;
  import androidx.media3.datasource.cache.SimpleCache;
@@ -19,7 +54,7 @@ diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee
  import androidx.media3.exoplayer.ExoPlayer;
  import androidx.media3.exoplayer.source.MediaSource;
  import androidx.media3.exoplayer.source.ProgressiveMediaSource;
-@@ -31,7 +32,7 @@
+@@ -31,7 +32,7 @@ public class RemoteAudioAsset extends AudioAsset {
      private float volume;
      private boolean isPrepared = false;
      private static SimpleCache cache;
@@ -28,7 +63,7 @@ diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee
      protected AudioCompletionListener completionListener;
      private static final float FADE_STEP = 0.05f;
      private static final int FADE_DELAY_MS = 80; // 80ms between steps
-@@ -62,7 +63,16 @@
+@@ -62,7 +63,16 @@ public class RemoteAudioAsset extends AudioAsset {
                      public void run() {
                          try {
                              for (int i = 0; i < channels; i++) {
@@ -39,14 +74,14 @@ diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee
 +                                ExoPlayer player = new ExoPlayer.Builder(owner.getContext())
 +                                    .setLoadControl(
 +                                        new DefaultLoadControl.Builder()
-+                                            .setBufferForPlaybackMs(800)
-+                                            .setBufferForPlaybackAfterRebufferMs(1500)
++                                            // min/maxBuffer 用默认值(50000)，只降起播/重缓冲门槛
++                                            .setBufferDurationsMs(50000, 50000, 800, 1500)
 +                                            .build())
 +                                    .build();
                                  player.setPlaybackSpeed(1.0f);
                                  players.add(player);
                                  initializePlayer(player);
-@@ -81,7 +91,7 @@
+@@ -81,7 +91,7 @@ public class RemoteAudioAsset extends AudioAsset {
  
          // Initialize cache if not already done
          if (cache == null) {
@@ -55,7 +90,7 @@ diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee
              if (!cacheDir.exists()) {
                  cacheDir.mkdirs();
              }
-@@ -487,7 +497,7 @@
+@@ -487,7 +497,7 @@ public class RemoteAudioAsset extends AudioAsset {
                  cache.release();
                  cache = null;
              }
@@ -64,3 +99,96 @@ diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee
              if (cacheDir.exists()) {
                  deleteDir(cacheDir);
              }
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/StreamAudioAsset.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/StreamAudioAsset.java
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/res/values/colors.xml b/node_modules/@capgo/capacitor-native-audio/android/src/main/res/values/colors.xml
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/res/values/strings.xml b/node_modules/@capgo/capacitor-native-audio/android/src/main/res/values/strings.xml
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/res/values/styles.xml b/node_modules/@capgo/capacitor-native-audio/android/src/main/res/values/styles.xml
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/docs.json b/node_modules/@capgo/capacitor-native-audio/dist/docs.json
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/audio-asset.d.ts b/node_modules/@capgo/capacitor-native-audio/dist/esm/audio-asset.d.ts
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/audio-asset.js b/node_modules/@capgo/capacitor-native-audio/dist/esm/audio-asset.js
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/audio-asset.js.map b/node_modules/@capgo/capacitor-native-audio/dist/esm/audio-asset.js.map
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/definitions.d.ts b/node_modules/@capgo/capacitor-native-audio/dist/esm/definitions.d.ts
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/definitions.js b/node_modules/@capgo/capacitor-native-audio/dist/esm/definitions.js
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/definitions.js.map b/node_modules/@capgo/capacitor-native-audio/dist/esm/definitions.js.map
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/index.d.ts b/node_modules/@capgo/capacitor-native-audio/dist/esm/index.d.ts
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/index.js b/node_modules/@capgo/capacitor-native-audio/dist/esm/index.js
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/index.js.map b/node_modules/@capgo/capacitor-native-audio/dist/esm/index.js.map
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/web.d.ts b/node_modules/@capgo/capacitor-native-audio/dist/esm/web.d.ts
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/web.js b/node_modules/@capgo/capacitor-native-audio/dist/esm/web.js
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/esm/web.js.map b/node_modules/@capgo/capacitor-native-audio/dist/esm/web.js.map
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/plugin.cjs.js b/node_modules/@capgo/capacitor-native-audio/dist/plugin.cjs.js
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/plugin.cjs.js.map b/node_modules/@capgo/capacitor-native-audio/dist/plugin.cjs.js.map
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/plugin.js b/node_modules/@capgo/capacitor-native-audio/dist/plugin.js
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/dist/plugin.js.map b/node_modules/@capgo/capacitor-native-audio/dist/plugin.js.map
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/AudioAsset+Fade.swift b/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/AudioAsset+Fade.swift
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/AudioAsset.swift b/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/AudioAsset.swift
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/Constant.swift b/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/Constant.swift
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/Logger.swift b/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/Logger.swift
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/Plugin.swift b/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/Plugin.swift
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/RemoteAudioAsset+Fade.swift b/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/RemoteAudioAsset+Fade.swift
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/RemoteAudioAsset.swift b/node_modules/@capgo/capacitor-native-audio/ios/Sources/NativeAudioPlugin/RemoteAudioAsset.swift
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/ios/Tests/NativeAudioPluginTests/PluginTests.swift b/node_modules/@capgo/capacitor-native-audio/ios/Tests/NativeAudioPluginTests/PluginTests.swift
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/ios/Tests/README.md b/node_modules/@capgo/capacitor-native-audio/ios/Tests/README.md
+old mode 100644
+new mode 100755
+diff --git a/node_modules/@capgo/capacitor-native-audio/scripts/configure-dependencies.js b/node_modules/@capgo/capacitor-native-audio/scripts/configure-dependencies.js
+old mode 100644
+new mode 100755
