@@ -692,6 +692,10 @@ async function warmupFirstContinue() {
     if (!track) return
     const rawId = String(track.ino ?? '').trim()
     if (!rawId) return
+    // 落点换算成「本集内偏移」（0.16.1 起随预热下发）：插件 preload 只从文件头
+    // 缓冲，不 seek 到落点的话暖的就是没用的头部区段（字节区间 miss = 白暖）。
+    // 上限夹到本集时长：进度越界（写坏/清残留）时不给 pre-0 seek 一个荒唐位置。
+    const fileTime = Math.min(Math.max(0, start - acc), Number(track.duration) || Infinity)
     const isNd = String(first.id).startsWith('nd:')
     const url = isNd
       ? hub.downloadUrl(first.id, `/rest/stream?id=${encodeURIComponent(rawId)}`)
@@ -702,6 +706,7 @@ async function warmupFirstContinue() {
       url,
       headers: isNd ? null : hub.authHeaders(first.id),
       trackIndex: idx,
+      position: fileTime,
     })
   } catch (_) { /* 预热失败静默：不影响任何正常路径 */ }
 }

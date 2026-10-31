@@ -113,7 +113,10 @@ export class BookPlayer {
     this.warmPrefix = 'pre-'
     this._warmBookId = null       // 当前预热的是哪本书（换书/切源时失效判据）
     this._warmTrackIdx = null
+    this._warmPos = null          // 预热缓冲的字节落点（fileTime 秒）——暖错区间=白暖（0.16.1 修）
     this._warmIdxPromise = null   // 防并发：同一时刻最多一个预热在进行
+    this._startT0 = null          // 起播计时起点（play() 置位，首条 currentTime 结算）
+    this.lastStartLatencyMs = null // 上次起播耗时 play()→首条 currentTime（关于页展示）
     /**
      * 家长管控兜底闸门（2026-09-27）：`async () => boolean`，由 app.js 注入。
      * toggle() 在「当前没在播、意图也不是播放」时先问它 —— 拦下即不开播，
@@ -386,6 +389,7 @@ export class BookPlayer {
       this._wantPlaying = true
       this._starting = true
       this._startDeadline = Date.now() + 15000   // 容忍窗口：远程音频冷启动 + 弱网缓冲
+      this._startT0 = Date.now()                 // 起播耗时埋点：首条 currentTime 结算（关于页展示）
       try {
         if (this.isNativeEngine) {
           // iOS：语音识别插件会残留 .playAndRecord + .defaultToSpeaker 会话，
@@ -418,12 +422,15 @@ export class BookPlayer {
             this.playing = false
             this._wantPlaying = false
             this._starting = false
+            this._startT0 = null
             this.onState({ state: 'error', isPlaying: false, reason: 'play-failed' })
             return
           }
           // web 引擎：await play() 在真正出声时才 resolve，此时缓冲已结束 ——
           // 直接 return 跳过下方原生分支的乐观置位（否则会把 play 事件监听器
           // 刚清掉的 buffering 又置回去，转圈永不消失）。
+          this.lastStartLatencyMs = Date.now() - (this._startT0 || Date.now())
+          this._startT0 = null
           this._starting = false
           return
         }
@@ -438,6 +445,7 @@ export class BookPlayer {
           this._playingAssetIdx = this.trackIndex
         } catch (e2) {
           this._starting = false
+          this._startT0 = null
           this.buffering = false
           this.playing = false
           this.onState({ state: 'error', isPlaying: false, reason: 'play-failed' })
@@ -818,6 +826,7 @@ export class BookPlayer {
     this._warmBookId = null
     this._warmTrackIdx = null
     this._warmUrl = null
+    this._warmPos = null
     this._warmIdxPromise = null
     if (this.isNativeEngine) {
       const warmId = `${this.warmPrefix}0`
@@ -911,9 +920,12 @@ export class BookPlayer {
    * 为什么存在：第一次打开 → 点历史记录 → 出声，慢的一环是 ExoPlayer 冷启动
    * （TCP/TLS + 拉 moov 元数据 + 缓冲首块数据，公网 + 大元数据能到数秒）。
    * 预热 = app 启动后在后台对「继续听第一本」的续播集先 preload（只准备不出声），
-   * ExoPlayer 会把拉到的数据写进它的磁盘缓存（SimpleCache 100MB LRU，按 URL 键控）。
+   * 再 seek 到续播落点（position，0.16.1 起）—— ExoPlayer 把**落点区段**的数据
+   * 写进磁盘缓存（SimpleCache 20MB LRU，按「URL+字节区间」键控）。
    * 用户真点播放时，正式 load 的 preload 走**同一个 URL**（app.js 保证两端用
-   * hub.trackUrl 的同一拼法）→ 磁盘缓存直接命中，几乎秒响。
+   * hub.trackUrl 的同一拼法）且 seek 同一落点 → 磁盘缓存直接命中，几乎秒响。
+   * 0.15.0 的教训：只 preload 不 seek，暖的是文件头那段，而续播从音轨中间开始
+   * —— 区间不重叠全部 miss，等于白暖（真机 10 来秒转圈的根因，0.16.1 修）。
    *
    * 设计要点（回归测试 §21 全覆盖）：
    * - assetId 用独立前缀 `pre-`：`_indexFromAssetId` 只认 `sa-` 前缀，预热轨的所有
@@ -929,21 +941,21 @@ export class BookPlayer {
    *  trackIndex 由调用方（app.js）按章节表算好——预热时 player.tracks 还是空的，
    *  player 自己算不了落点。串行化：多次 warmup 排队，后到的赢。
    */
-  warmup({ itemId, url, headers = null, trackIndex = 0 }) {
+  warmup({ itemId, url, headers = null, trackIndex = 0, position = 0 }) {
     if (!this.isNativeEngine) return Promise.resolve()   // web 引擎无原生缓存可暖
     if (!itemId || !url) return Promise.resolve()
     const run = Promise.resolve(this._warmIdxPromise).catch(() => {})
-      .then(() => this._warmupInner({ itemId, url, headers, trackIndex }))
+      .then(() => this._warmupInner({ itemId, url, headers, trackIndex, position }))
       .catch(() => {})                                   // 预热失败绝不外抛
     this._warmIdxPromise = run
     return run
   }
 
-  async _warmupInner({ itemId, url, headers, trackIndex }) {
+  async _warmupInner({ itemId, url, headers, trackIndex, position = 0 }) {
     // 正式会话进行中/装载中 → 不抢（预热只是锦上添花）
     if (this.playing || this._wantPlaying || this._loading) return
-    // 已有同书同址的预热在位 → 不重复
-    if (this._warmBookId === itemId && this._warmTrackIdx === trackIndex && this._warmUrl === url) return
+    // 已有同书同址同落点的预热在位 → 不重复
+    if (this._warmBookId === itemId && this._warmTrackIdx === trackIndex && this._warmUrl === url && this._warmPos === position) return
     await this.stopWarmup()                     // 作废上一本书/上一版 URL 的预热
     try { await this.init() } catch (_) {}      // 必须等 init 收尾（deinitPlugin 竞态，见 init 注释）
     // init 间隙用户点播了 → 收手（重新查，init 是第一个 await，状态可能已变）
@@ -957,6 +969,18 @@ export class BookPlayer {
     this._warmBookId = itemId
     this._warmTrackIdx = trackIndex
     this._warmUrl = url
+    this._warmPos = position
+    // 0.16.1 关键修复：preload 只从文件头第 0 字节开始缓冲（插件 prepare() 不带位置），
+    // 而续播落点在音轨中间 —— 简单缓存按「URL+字节区间」命中，头部那段对中间起播
+    // 全部 miss，等于白暖（老板 2026-10-31 报「起播还是转圈 10 来秒」的根因）。
+    // 追加一次 seek：暂停态的 seekTo 会把 ExoPlayer 的缓冲挪到正式播放要读的那段，
+    // 正式 play(fileTime) 同区间 → 磁盘缓存命中，接近秒开。
+    if (position > 0) await this._warmSeek(position)
+  }
+
+  /** 预热落点 seek：对 pre-0 下发 setCurrentTime（暂停态 seek，不出声不占焦点）。失败静默。 */
+  async _warmSeek(position) {
+    try { await NativeAudio.setCurrentTime({ assetId: `${this.warmPrefix}0`, time: position }) } catch (_) {}
   }
 
   /** 预热专用 preload：固定 assetId 'pre-0'，只准备不出声，不带通知元数据。 */
@@ -977,6 +1001,7 @@ export class BookPlayer {
     this._warmBookId = null
     this._warmTrackIdx = null
     this._warmUrl = null
+    this._warmPos = null
     this._warmIdxPromise = null
     if (!this.isNativeEngine) return
     try { await NativeAudio.stop({ assetId: `${this.warmPrefix}0` }) } catch (_) {}
@@ -1066,6 +1091,9 @@ export class BookPlayer {
     this._lastTimeEventAt = Date.now()   // 供启动看门狗判断"真的出过声"
     // 首条 currentTime = ExoPlayer 真的开始出声了（play() 置的起播缓冲到此结束）
     if (this.buffering) {
+      // 起播耗时结算：play() → 首条 currentTime（0.16.1 量化埋点，关于页展示）
+      if (this._startT0 != null) this.lastStartLatencyMs = Date.now() - this._startT0
+      this._startT0 = null
       this.buffering = false
       this.onState({ state: 'playing', isPlaying: true, reason: 'first-time-event' })
     }
@@ -1082,6 +1110,7 @@ export class BookPlayer {
     try { NativeAudio.pause({ assetId: id }) } catch (_) {}
     BookPlayer.releaseAudioFocus().catch(() => {})
     this._starting = false
+    this._startT0 = null
     this.buffering = false
     this.playing = false
     this.onState({ state: 'paused', isPlaying: false, reason: 'ghost-guard' })

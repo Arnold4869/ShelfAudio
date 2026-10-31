@@ -40,6 +40,13 @@ export async function renderAbout(root) {
         </div>
         <div class="setting-arrow" id="updArrow" style="display:none">${icon('forward', 20)}</div>
       </div>` : ''}
+      ${state.player?.lastStartLatencyMs != null ? `<div class="setting-row">
+        <div class="setting-ic">${icon('info', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">上次起播耗时</div>
+          <div class="setting-value">${(state.player.lastStartLatencyMs / 1000).toFixed(1)} 秒</div>
+        </div>
+      </div>` : ''}
     </div>
 
     <div class="section-h">权限</div>

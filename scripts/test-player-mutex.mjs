@@ -1010,6 +1010,39 @@ console.log('\n=== 21. 冷启动预热：preload 在 pre- 前缀位、正式装�
   ok('预热 asset 已随正式装载清掉（第 2 集场景）', !state.assets.has('pre-0'))
   await p8.stop()
 
+  // ⑨ 落点预热（0.16.1 核心修复）：position>0 必须对 pre-0 setCurrentTime ——
+  //    暂停态 seek 才会把缓冲挪到续播区段；只 preload 暖的是文件头 = 白暖
+  {
+    state.assets.clear(); state.calls.length = 0
+    const p9 = new BookPlayer({})
+    p9._watchdogMs = 500
+    await p9.warmup({ itemId: 'bookA', url: 'http://srv/f1.m4a', trackIndex: 0, position: 321.5 })
+    const setTimeCalls = state.calls.filter(c => c[0] === 'setTime')
+    ok('落点预热：对 pre-0 seek 到续播落点',
+       setTimeCalls.length === 1 && setTimeCalls[0][1] === 'pre-0' && setTimeCalls[0][2] === 321.5,
+       JSON.stringify(setTimeCalls))
+    ok('落点预热：判据登记 position', p9._warmPos === 321.5)
+    ok('落点预热：仍然绝不 play（只准备不出声）', !state.calls.some(c => c[0] === 'play'))
+
+    // ⑩ position=0（从头听）不 seek：第 0 字节本来就是 prepare 的缓冲起点
+    state.calls.length = 0
+    await p9.warmup({ itemId: 'bookB', url: 'http://srv/g9.m4a', trackIndex: 0, position: 0 })
+    ok('从头预热（position=0）不触发 setCurrentTime', !state.calls.some(c => c[0] === 'setTime'))
+
+    // ⑪ 同书同址同落点幂等；落点变化要重新暖（正式播放要读的区段变了）
+    state.calls.length = 0
+    await p9.warmup({ itemId: 'bookB', url: 'http://srv/g9.m4a', trackIndex: 0, position: 0 })
+    ok('同书同址同落点幂等（无新 preload/setTime）',
+       !state.calls.some(c => c[0] === 'preload' || c[0] === 'setTime'))
+    await p9.warmup({ itemId: 'bookB', url: 'http://srv/g9.m4a', trackIndex: 0, position: 88 })
+    const st2 = state.calls.filter(c => c[0] === 'setTime')
+    ok('落点变化 → 重新预热并 seek 新落点', st2.length === 1 && st2[0][2] === 88, JSON.stringify(st2))
+
+    // ⑫ stop() 清掉落点判据
+    await p9.stop()
+    ok('stop() 清掉预热落点判据', p9._warmPos === null)
+  }
+
   console.log(`  —— 互斥总览：${playingSet().length === 0 ? '收尾干净' : '❌ 有残留 ' + playingSet()}`)
 }
 
