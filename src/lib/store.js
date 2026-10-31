@@ -150,4 +150,9 @@ export const CONFIG_KEYS = {
   // 下次进度同步会重建 → 删完立刻回来。本地记一份兜底（P1 §3.3，2026-10-12）。
   ndHiddenContinue: 'ndHiddenContinue',
   warmupEnabled: 'warmupEnabled',         // 冷启动预热开关 '1'|'0'（默认开；预热「继续听第一本」省起播等待）
+  // 「最近在听」落点记忆（0.17.0 快速起播）：每次进度同步时写一份本地快照，
+  // boot() 里 hub.restore()（纯本地读）后立刻用它发起 warmup ——
+  // 不用先等 loadHistory()/libraries() 这些网络请求才知道「最近在听哪本、播到哪」。
+  lastListenWarm: 'lastListenWarm',       // JSON：{source:'abs'|'nd',itemId,ino,trackIndex,fileTime,ts}
+  autoCacheEnabled: 'autoCacheEnabled',   // Wi-Fi 自动缓存正在听的书（当前集+下一集）'1'|'0'（默认开）
 }

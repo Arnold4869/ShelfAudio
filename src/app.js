@@ -7,6 +7,7 @@
 import { hub, ndId } from './lib/servers.js'
 import { AbsApi } from './lib/api.js'
 import { store, CONFIG_KEYS } from './lib/store.js'
+import { buildWarmupPlan, isValidLastListen, isFreshEnough } from './lib/faststart.js'
 import { icon } from './lib/icons.js'
 import { fallbackCover } from './lib/cover.js'
 import { BookPlayer } from './lib/player.js'
@@ -533,6 +534,37 @@ export async function playItem(item, { startTime } = {}) {
       },
     })
     await player.play()
+    // 本地落点记忆（0.17.0 快速起播）：播放真正装载成功后写一份「最近在听」
+    // 快照，下次冷启动 hub.restore()（纯本地读）后立刻用它发起即时预热，
+    // 不用先等 loadHistory()/libraries() 三个网络请求（warmupFirstContinue 的老路径）。
+    // fileTime 必须是「本集内偏移」（与 warmupFirstContinue 的 acc 扫描同口径）——
+    // startBookTime 是整本书时间，换算方式与 _trackIndexForBookTime 一致：
+    // 累计时长扫描找到落点所在集，减去该集起点。故意不 await（不挡播放路径），
+    // 失败静默（这只是预热加速的素材，丢了无非回到老路径）。
+    try {
+      const cs = state.current
+      if (cs && Array.isArray(cs.tracks) && cs.tracks.length) {
+        let acc = 0, idx = 0
+        const st = Number(start) || 0
+        for (let i = 0; i < cs.tracks.length; i++) {
+          const d = Number(cs.tracks[i].duration) || 0
+          if (st < acc + d || d <= 0) { idx = i; break }
+          acc += d
+        }
+        const tr = cs.tracks[idx]
+        const ino = String(tr?.contentUrl?.match(/(?:file\/|\bid=)([^&/?]+)/)?.[1] ?? '').trim()
+        if (ino) {
+          await store.setJSON(CONFIG_KEYS.lastListenWarm, {
+            source: String(cs.item?.id || '').startsWith('nd:') ? 'nd' : 'abs',
+            itemId: cs.item?.id || '',
+            ino,
+            trackIndex: idx,
+            fileTime: Math.min(Math.max(0, st - acc), Number(tr?.duration) || Infinity),
+            ts: Date.now(),
+          })
+        }
+      }
+    } catch (_) {}
   } catch (e) {
     // load/play 失败不能把用户晾在播放页显示"正在播放"却没声音 ——
     // 把状态复位，给出可见的错误提示（"继续听第一本加载不出来"的可见兜底）。
@@ -642,6 +674,39 @@ async function resetForSourceSwitch() {
 
 export { updateMini, resetForSourceSwitch, warmupFirstContinue }
 
+/**
+ * 本地落点即时预热（0.17.0 快速起播任务1）：
+ * boot() 里 hub.restore() 完成（纯本地读，无网络）后立刻用本地存的
+ * 「最近在听」快照直接发起 warmup —— 不等 libraries()/loadHistory()/getItem
+ * 那三个网络请求（warmupFirstContinue 的老路径要串行等它们，弱网下预热
+ * 要十几秒后才开始，起播提速的意义打折）。
+ *
+ * 安全边界（与 warmupFirstContinue 同款，缺一不可）：
+ * - 只预热不 play：player.warmup 的既有语义（configure focus:false，不碰焦点）
+ * - playbackGate 拦截：孩子到点/额度用完绝不发起网络
+ * - warmupEnabled 开关沿用（关了快速起播 = 全部预热都关）
+ * - 记录过期（7 天）/缺字段/直链拼不出 → 跳过，全静默
+ * - warmupFirstContinue() 照常在其后跑：player.warmup 串行队列后到者赢，
+ *   两者目标一致时等于重暖一次（幂等、无害）；换书/切源照旧由判据兜底。
+ */
+async function warmupFromLocal() {
+  try {
+    if ((await store.get(CONFIG_KEYS.warmupEnabled, '1')) !== '1') return
+    if ((await playbackGate()).blocked) return
+    const rec = await store.getJSON(CONFIG_KEYS.lastListenWarm, null)
+    if (!isValidLastListen(rec) || !isFreshEnough(rec)) return
+    const p = state.player
+    if (!p) return
+    // 已在播/装载的就是这本 → 无需预热（与 warmupFirstContinue 同判据）
+    if ((p.playing || p._wantPlaying) && p.itemId === rec.itemId) return
+    // 只处理当前激活源的（别源 URL 域名/凭据全不同，磁盘缓存不命中）
+    if (String(rec.itemId || '').startsWith('nd:') !== (hub.active === 'nd')) return
+    const plan = buildWarmupPlan(rec, hub)
+    if (!plan) return
+    await p.warmup(plan)
+  } catch (_) { /* 失败全静默：预热是纯增益 */ }
+}
+
 // ---------------- 冷启动预热（老板 2026-10-11 拍板：只做预热，不做内网直连）----------------
 /**
  * App 启动后在后台对「继续听第一本」做 ExoPlayer 预热：提前拉元数据+首块数据
@@ -740,7 +805,15 @@ async function boot() {
       await go('kidhome')
       // 冷启动预热（不阻塞）：对「继续听第一本」提前暖 ExoPlayer，
       // 点历史记录时几乎秒响（老板 2026-10-11 报「第一次打开要缓存好久」）
+      // 0.17.0：先用本地落点记忆立刻预热一次（不等网络），warmupFirstContinue
+      // 在其后照常跑（串行队列后到者赢，目标一致时幂等重暖无害）。
+      warmupFromLocal()
       warmupFirstContinue()
+      // Wi-Fi 自动缓存正在听的书（当前集+下一集，0.17.0 任务3，不阻塞）
+      import('./lib/autocache.js').then(m => {
+        m.autoCacheTick()
+        m.watchNetworkForAutoCache()   // 网络恢复到 Wi-Fi 时再触发一轮
+      }).catch(() => {})
       // 本机收藏补齐到 ABS 服务器：用户若在 ABS 后台补了 update 权限，
       // 之前只能存本机的收藏会自动同步过去（失败就算了，不打扰用户）
       syncToServer(hub.abs).catch(() => {})
@@ -766,6 +839,8 @@ async function boot() {
   // /MIUI/EMUI 回前台只发 resume 不发 visibilitychange），两路都触发时幂等。
   onAppResume(() => {
     try { state.player?.reconcilePaused?.() } catch (_) {}
+    // 回前台对账（0.17.0 任务3）：Wi-Fi 下顺手补当前集+下一集的离线缓存
+    import('./lib/autocache.js').then(m => m.autoCacheTick()).catch(() => {})
   })
 
   // 闪屏至少在屏幕上待一会儿，避免闪一下就跳走

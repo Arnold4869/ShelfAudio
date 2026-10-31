@@ -261,6 +261,96 @@ export async function downloadBook(book, onProgress = () => {}) {
   return { ok, fail }
 }
 
+/**
+ * 按集下载（0.17.0 Wi-Fi 自动缓存，任务3）：只把指定的少数几集下到本地，
+ * 不做整本下载。复用 downloadBook 的全部既有机制：
+ *   bookDir/trackFile/extOf 命名、downloadFile + hub.downloadUrl 直链、
+ *   stat 大小校验、半成品删除、mutateIndex 串行队列写索引。
+ * 「已缓存」判断沿用同一条规则：索引记过该集 && stat size 与记录吻合（>0）——
+ * 半成品（强杀 App 留下的截断文件）会被重新下载。
+ *
+ * 供后台自动缓存用：单次调用只碰一两集，绝不阻塞播放路径；失败向上抛，
+ * 由调用方（autocache.js）静默兜住。
+ *
+ * @param {string} bookId        书 id（nd: 前缀 = ND）
+ * @param {string} bookTitle     缓存管理页展示用（索引里已有的话以旧值为准）
+ * @param {Array<{index?:number,title?,contentUrl,duration?}>} tracks 详情接口组装的音轨表（同 downloadBook 形状）
+ * @param {number[]} indexes     要确保已缓存的集下标（0-based，通常 1~2 个）
+ * @returns {Promise<{ok:number,fail:number,skipped:number}>}
+ */
+export async function downloadTracks(bookId, bookTitle, tracks, indexes) {
+  if (!native()) throw new Error('离线下载只在手机 App 里可用')
+  const want = (Array.isArray(indexes) ? indexes : []).filter(i => Number.isInteger(i) && i >= 0)
+  if (!want.length) return { ok: 0, fail: 0, skipped: 0 }
+  const dir = bookDir(bookId)
+  try { await Filesystem.mkdir({ path: dir, directory: Directory.Data, recursive: true }) } catch (_) {}
+
+  let idx
+  try { idx = await readIndexForWrite() }
+  catch (_) { throw new Error('离线索引读取失败') }
+  const rec = idx[bookId] || { title: bookTitle || '', at: 0, bytes: 0, tracks: {} }
+  rec.tracks = rec.tracks || {}
+  rec.title = bookTitle || rec.title
+
+  let ok = 0, fail = 0, skipped = 0, bytes = 0
+  for (const n of want) {
+    const t = tracks[n]
+    if (!t) { skipped++; continue }
+    const file = trackFile(n, t.title || `第${n + 1}集`, extOf(t.contentUrl))
+    const path = `${dir}/${file}`
+    // 已下过且文件在（索引记录 + stat 大小吻合）→ 跳过（同一集绝不重复下载）
+    if (rec.tracks[n]) {
+      try {
+        const st = await Filesystem.stat({ path, directory: Directory.Data })
+        if (st?.size === rec.tracks[n].size && st.size > 0) { skipped++; continue }
+      } catch (_) { /* 文件不在 → 重新下 */ }
+    }
+    try {
+      const res = await Filesystem.downloadFile({
+        url: hub.downloadUrl(bookId, t.contentUrl, t.title),
+        path,
+        directory: Directory.Data,
+        headers: hub.authHeaders(bookId),
+        connectTimeout: 30000,
+        readTimeout: 120000,
+      })
+      const st = await Filesystem.stat({ path, directory: Directory.Data })
+      if (!st?.size) throw new Error('文件为空')
+      bytes += st.size
+      rec.tracks[n] = { path, size: st.size }
+      ok++
+    } catch (e) {
+      fail++
+      try { await Filesystem.deleteFile({ path, directory: Directory.Data }) } catch (_) {}
+      console.warn('自动缓存下载失败', file, e)
+    }
+  }
+  if (ok) {
+    // 只在有新增时重算 bytes 并入队写索引：skip-only 的调用（节流高频触发）
+    // 不产生任何写放大。bytes 不会少算 —— 删除走 removeBook/clearAll，不在这里。
+    rec.bytes = Object.values(rec.tracks).reduce((s, v) => s + (Number(v?.size) || 0), 0)
+    rec.at = Date.now()
+    await mutateIndex(ix => { ix[bookId] = rec })
+  }
+  return { ok, fail, skipped }
+}
+
+/**
+ * 某一集是否已缓存（0.17.0 自动缓存用）：索引记过该集 && stat size 吻合（>0）。
+ * 判据与 downloadTracks/downloadBook 内部完全一致；索引读失败 → false
+ * （保守重下，绝不因读失败把半成品当已缓存放过）。
+ */
+export async function isTrackCached(bookId, idx) {
+  try {
+    const i = await readIndexStrict()
+    const rec = i?.[bookId]
+    const meta = rec?.tracks?.[idx]
+    if (!meta) return false
+    const st = await Filesystem.stat({ path: meta.path, directory: Directory.Data })
+    return st?.size === meta.size && st.size > 0
+  } catch (_) { return false }
+}
+
 /** 删除一本书的缓存。桥错误时抛错 —— 静默当成功会让调用方 toast「已删除」
  *  却什么都没删（2026-10-12 审计修 §3.5）。
  *  JSON 损坏时**照删**（NF-1）：要删的目录名只由 bookId 决定，不依赖索引内容 ——

@@ -1449,6 +1449,33 @@ export class BookPlayer {
     // 之前裸调用，若 syncSession 同步抛错就是 unhandled rejection。
     try { Promise.resolve(api.syncSession(this.sessionId, this.currentBookTime, listened, this.duration)).catch(() => {}) }
     catch (_) {}
+    // 本地落点记忆（0.17.0 快速起播任务1）：每次进度同步时重写「最近在听」快照，
+    // 保证下次冷启动 warmupFromLocal 用的是最新落点（不依赖 playItem 只写一次）。
+    // fileTime = 本集内偏移 = currentBookTime - startOffset（与 _trackIndexForBookTime 同口径）。
+    // 覆盖 playItem 里的那次写入（那里拿不到 startOffset 只能推算，且只在真正 play
+    // 成功后写 —— 暂停/跳转/切集后的落点变化它覆盖不到）。故意不 await、失败静默：
+    // 这只是预热素材，丢了无非回到 warmupFirstContinue 老路径。
+    try {
+      const t = this.tracks?.[this.trackIndex]
+      const ino = String(t?.contentUrl?.match(/(?:file\/|\bid=)([^&/?]+)/)?.[1] ?? '').trim()
+      if (ino) {
+        const rec = {
+          source: String(this.itemId || '').startsWith('nd:') ? 'nd' : 'abs',
+          itemId: this.itemId || '',
+          ino,
+          trackIndex: this.trackIndex || 0,
+          fileTime: Math.max(0, this.currentBookTime - (t.startOffset || 0)),
+          ts: Date.now(),
+        }
+        import('./store.js').then(m => m.store.setJSON(m.CONFIG_KEYS.lastListenWarm, rec)).catch(() => {})
+      }
+    } catch (_) {}
+    // Wi-Fi 自动缓存（0.17.0 任务3）：进度同步（≈每 10s 一次）后顺手触发一轮，
+    // 决策/节流在 autocache 里（decideAutoCache 纯函数 + 5 分钟节流 + 串行队列），
+    // 播放中会被 active 判据挡掉，真正下载只发生在暂停/换集间隙。动态 import
+    // 是为了不把 app.js 拉进 player 的依赖图（player 在 app 之前加载）。
+    // 故意不 await、不 catch 未处理（autoCacheTick 内部已全静默）。
+    try { import('./autocache.js').then(m => m.autoCacheTick()).catch(() => {}) } catch (_) {}
   }
 
   _api() { return window.__abs || null }

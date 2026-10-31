@@ -57,6 +57,13 @@ export async function renderSettings(root, { firstRun = false } = {}) {
           <div class="setting-value" id="warmupVal"></div>
         </div>
       </div>
+      <div class="setting-row" id="rowAutoCache">
+        <div class="setting-ic">${icon('download', 22)}</div>
+        <div class="setting-main">
+          <div class="setting-label">自动缓存</div>
+          <div class="setting-value" id="autoCacheVal"></div>
+        </div>
+      </div>
       <div class="setting-row" id="rowServers">
         <div class="setting-ic">${icon('server', 22)}</div>
         <div class="setting-main">
@@ -126,6 +133,22 @@ export async function renderSettings(root, { firstRun = false } = {}) {
     await paintWarmup()
     toast(cur ? '已关闭快速起播' : '已开启快速起播')
     if (!cur) warmupFirstContinue()
+  }
+
+  // 自动缓存（Wi-Fi 下后台缓存正在听的书，当前集+下一集）：点行切换，落盘立即生效。
+  // 开启后立刻触发一轮（onAppResume/进度同步/网络恢复也有触发点）。
+  const paintAutoCache = async () => {
+    const on = (await store.get(CONFIG_KEYS.autoCacheEnabled, '1')) === '1'
+    $('#autoCacheVal').textContent = on ? '已开启' : '已关闭'
+  }
+  paintAutoCache()
+  $('#rowAutoCache').onclick = async () => {
+    haptic.tap()
+    const cur = (await store.get(CONFIG_KEYS.autoCacheEnabled, '1')) === '1'
+    await store.set(CONFIG_KEYS.autoCacheEnabled, cur ? '0' : '1')
+    await paintAutoCache()
+    toast(cur ? '已关闭自动缓存' : '已开启自动缓存')
+    if (!cur) import('../lib/autocache.js').then(m => m.autoCacheTick()).catch(() => {})
   }
 
   // 家长设置：进之前验密码。没设过密码就直接进（否则用户永远进不去）。

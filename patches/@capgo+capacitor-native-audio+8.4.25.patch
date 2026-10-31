@@ -1,10 +1,25 @@
 # ShelfAudio 本地补丁（2026-10-11 老板拍板）：播放器磁盘缓存 100MB → 20MB
 # 应用方式：package.json postinstall 自动跑 patch-package（CI 与本地 npm install 都生效）
 # 只改 RemoteAudioAsset.MAX_CACHE_SIZE；iOS（AVPlayer）无此缓存，无需补。
+# 0.17.0 追加（手工续写 hunk，未跑 npx patch-package）：
+#   ① ExoPlayer 换带 DefaultLoadControl 的 Builder：起播缓冲门槛
+#      bufferForPlaybackMs 默认 2500 → 800、bufferForPlaybackAfterRebufferMs → 1500，
+#      min/maxBuffer 保持默认 —— 起播少等约 1.7 秒缓冲。
+#   ② SimpleCache 目录 getCacheDir()/media → getFilesDir()/media（部分机型「清缓存」
+#      会把 cacheDir 一并清掉，预热成果丢失；filesDir 由 clearCache 自己清）。
+#      老目录遗弃不迁移（只是缓存，下次预热自然重建）。
 diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java
 --- a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java
 +++ b/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee/forgr/audio/RemoteAudioAsset.java
-@@ -31,7 +31,7 @@ public class RemoteAudioAsset extends AudioAsset {
+@@ -13,6 +13,7 @@
+ import androidx.media3.datasource.cache.CacheDataSource;
+ import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor;
+ import androidx.media3.datasource.cache.SimpleCache;
++import androidx.media3.exoplayer.DefaultLoadControl;
+ import androidx.media3.exoplayer.ExoPlayer;
+ import androidx.media3.exoplayer.source.MediaSource;
+ import androidx.media3.exoplayer.source.ProgressiveMediaSource;
+@@ -31,7 +32,7 @@
      private float volume;
      private boolean isPrepared = false;
      private static SimpleCache cache;
@@ -13,3 +28,39 @@ diff --git a/node_modules/@capgo/capacitor-native-audio/android/src/main/java/ee
      protected AudioCompletionListener completionListener;
      private static final float FADE_STEP = 0.05f;
      private static final int FADE_DELAY_MS = 80; // 80ms between steps
+@@ -62,7 +63,16 @@
+                     public void run() {
+                         try {
+                             for (int i = 0; i < channels; i++) {
+-                                ExoPlayer player = new ExoPlayer.Builder(owner.getContext()).build();
++                                // ShelfAudio 0.17.0 起播提速：降低起播缓冲门槛，
++                                // 默认 2.5s(2500ms) 才开播 → 800ms；重缓冲后 1500ms。
++                                // minBuffer/maxBuffer 保持 DefaultLoadControl 默认值。
++                                ExoPlayer player = new ExoPlayer.Builder(owner.getContext())
++                                    .setLoadControl(
++                                        new DefaultLoadControl.Builder()
++                                            .setBufferForPlaybackMs(800)
++                                            .setBufferForPlaybackAfterRebufferMs(1500)
++                                            .build())
++                                    .build();
+                                 player.setPlaybackSpeed(1.0f);
+                                 players.add(player);
+                                 initializePlayer(player);
+@@ -81,7 +91,7 @@
+ 
+         // Initialize cache if not already done
+         if (cache == null) {
+-            File cacheDir = new File(owner.getContext().getCacheDir(), "media");
++            File cacheDir = new File(owner.getContext().getFilesDir(), "media");
+             if (!cacheDir.exists()) {
+                 cacheDir.mkdirs();
+             }
+@@ -487,7 +497,7 @@
+                 cache.release();
+                 cache = null;
+             }
+-            File cacheDir = new File(context.getCacheDir(), "media");
++            File cacheDir = new File(context.getFilesDir(), "media");
+             if (cacheDir.exists()) {
+                 deleteDir(cacheDir);
+             }
