@@ -927,9 +927,15 @@ export class BookPlayer {
    * 0.15.0 的教训：只 preload 不 seek，暖的是文件头那段，而续播从音轨中间开始
    * —— 区间不重叠全部 miss，等于白暖（真机 10 来秒转圈的根因，0.16.1 修）。
    *
-   * 设计要点（回归测试 §21 全覆盖）：
-   * - assetId 用独立前缀 `pre-`：`_indexFromAssetId` 只认 `sa-` 前缀，预热轨的所有
-   *   事件（currentTime/complete/playbackState）会被现有过滤直接丢掉 —— 零侵入。
+   * 设计要点（回归测试 §21/§22 全覆盖）：
+   * - assetId 用独立前缀 `pre-`：`_indexFromAssetId` 只认 `sa-` 前缀 → 预热轨的事件
+   *   解析不出真实音轨。这类事件**必须当场丢弃**：currentTime 一直有过滤，
+   *   complete/playbackState 到 0.17.1 才补上（此前写的是「认不出就放行」）。
+   * - ⚠️ 0.17.1 真机 bug 的根因一句话：**落点快照的 fileTime 没钳到本集时长** ——
+   *   集尾暂停/听完时写出 duration，下次冷启动把预热轨 seek 到音轨末尾 → ExoPlayer 进
+   *   STATE_ENDED → 插件发 complete/playbackState（assetId='pre-0'）→ 被当成"本集播完"，
+   *   正在播的音轨被杀掉重装（出声 2 秒 → 掐断 → 转圈十几秒 → 停在暂停态要再点一次）。
+   *   两头一起修：落点钳上限（_syncProgress）+ 非本播放器 assetId 一律不理（事件过滤）。
    * - 不做「搬移到正式位」的花活：正式 load 里 stop() 会清掉 pre-0 asset，
    *   但磁盘缓存不随 unload 消失 —— 同 URL 的常规 preload 自动命中，效果等价、
    *   路径唯一、无竞态。
@@ -1135,6 +1141,13 @@ export class BookPlayer {
   }
 
   _onNativeState(ev) {
+    // ⚠️ 0.17.1：非本播放器音轨的状态事件一律不予理会。预热轨（`pre-0`）在
+    //   stopWarmup()/stop()/unload 时会被插件发一条 playbackState{assetId:'pre-0', state:'stopped'}，
+    //   而这里**原本完全没有 assetId 过滤** —— _wantPlaying=true 时它径直走进
+    //   _resolveRealPause 反查路径，把正在播的会话搅成转圈/暂停（真机「起播被劫持」的第二条腿）。
+    //   ⚠️ 只挡「assetId 存在且解析不出真实音轨」：远程控制事件（remotePlay/remotePause）
+    //   常常**不带 assetId**，那条路必须照旧处理，否则锁屏按键失灵（回归测试 §22）。
+    if (ev && ev.assetId && this._indexFromAssetId(ev.assetId) === null) return
     // 远程控制（锁屏/通知栏）也会触发这里，UI 必须跟着变
     const playing = ev?.state === 'playing'
 
@@ -1269,9 +1282,16 @@ export class BookPlayer {
   async _onTrackEnd(ev) {
     // ⚠️ 必须校验 assetId：换集时被停掉的旧音轨可能延迟抛出 complete，
     // 不校验就会把刚选的新集又推进一集（表现为"选集后自己跳走"）。
+    // ⚠️ 0.17.1 真机 bug（起播 2 秒出声后被掐断、转圈十几秒、停在暂停态）：
+    //   **解析不出下标（idx===null）同样必须挡**。预热轨的 assetId 是 `pre-0`，
+    //   `_indexFromAssetId` 只认 `sa-` → 返回 null；旧写法 `idx !== null && idx !== trackIndex`
+    //   等于「认不出就放行」，于是预热轨 seek 到音轨末尾触发的 STATE_ENDED → complete
+    //   被当成"本集播完" → _gotoTrack(下一集) 把正在播的音轨杀掉重装。
+    //   凡不是本播放器真实音轨的 complete，一律不予理会（回归测试 §22）。
     if (ev && ev.assetId) {
       const idx = this._indexFromAssetId(ev.assetId)
-      if (idx !== null && idx !== this.trackIndex) return
+      if (idx === null) return                     // 非本播放器音轨（预热 pre- 等）→ 忽略
+      if (idx !== this.trackIndex) return          // 本播放器的别的轨（旧集迟到事件）→ 忽略
     }
     // 睡眠定时·按章节（老板 2026-09-16）：本集播完算消耗一次，
     // 听满 N 集/首 → 停在这里，**不**推进下一集。
@@ -1455,6 +1475,10 @@ export class BookPlayer {
     // 覆盖 playItem 里的那次写入（那里拿不到 startOffset 只能推算，且只在真正 play
     // 成功后写 —— 暂停/跳转/切集后的落点变化它覆盖不到）。故意不 await、失败静默：
     // 这只是预热素材，丢了无非回到 warmupFirstContinue 老路径。
+    // ⚠️ fileTime 必须钳到 [0, 本集时长]（0.17.1 真机 bug 的源头）：在集尾暂停/听完时
+    //   currentBookTime 正好 = startOffset + duration，不钳上限就写出「落点在音轨之外」，
+    //   下次冷启动拿它 seek 预热轨 → ExoPlayer seek 到末尾直接 STATE_ENDED → 插件发
+    //   complete/playbackState（assetId='pre-0'）→ 起播被劫持。口径与 playItem 那份写入一致。
     try {
       const t = this.tracks?.[this.trackIndex]
       const ino = String(t?.contentUrl?.match(/(?:file\/|\bid=)([^&/?]+)/)?.[1] ?? '').trim()
@@ -1464,7 +1488,8 @@ export class BookPlayer {
           itemId: this.itemId || '',
           ino,
           trackIndex: this.trackIndex || 0,
-          fileTime: Math.max(0, this.currentBookTime - (t.startOffset || 0)),
+          fileTime: Math.min(Math.max(0, this.currentBookTime - (t?.startOffset || 0)),
+                             Number(t?.duration) || Infinity),
           ts: Date.now(),
         }
         import('./store.js').then(m => m.store.setJSON(m.CONFIG_KEYS.lastListenWarm, rec)).catch(() => {})

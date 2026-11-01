@@ -80,6 +80,9 @@ let code = SRC
   .replace(/import \{ abs \} from '\.\/api\.js'/, 'const abs = globalThis.__FAKE_ABS__')
   // 家长音量上限是动态 import('./parental.js')（懒加载），替身也换成可控桩
   .replace(/import\('\.\/parental\.js'\)/g, 'import(globalThis.__PARENTAL_URL__)')
+  // 本地落点记忆（0.17.0）走动态 import('./store.js')：同样换成可控桩，
+  // 否则替身文件里那条 import 解析不到真 store，lastListenWarm 写入在测试里不可观测。
+  .replace(/import\('\.\/store\.js'\)/g, 'import(globalThis.__STORE_URL__)')
 fs.writeFileSync(stubPath, code)
 
 // parental.js 桩：store 由内存 Map 代替，cap 可在用例里现场改
@@ -109,6 +112,31 @@ export async function hasTimeWindowConfig() { return false }
   const p = path.join(ROOT, '.tmp-parental-stub.mjs')
   fs.writeFileSync(p, stub)
   globalThis.__PARENTAL_URL__ = pathToFileURL(p).href
+}
+
+// store.js 桩：setJSON 的写入记到 __SA_STORE_WRITES__，供「落点记忆」断言取证
+{
+  const mem = new Map()
+  globalThis.__SA_TEST_JSON_STORE__ = mem
+  globalThis.__SA_STORE_WRITES__ = []
+  const stub = `
+const mem = globalThis.__SA_TEST_JSON_STORE__
+const writes = globalThis.__SA_STORE_WRITES__
+export const store = {
+  async get(k, d = '') { return mem.has(k) ? mem.get(k) : d },
+  async set(k, v) { mem.set(k, String(v)); return true },
+  async getJSON(k, d = null) { return mem.has(k) ? JSON.parse(mem.get(k)) : d },
+  async setJSON(k, v) { mem.set(k, JSON.stringify(v)); writes.push([k, v]); return true },
+}
+export const CONFIG_KEYS = {
+  lastListenWarm: 'lastListenWarm',
+  warmupEnabled: 'warmupEnabled',
+  autoCacheEnabled: 'autoCacheEnabled',
+}
+`
+  const p = path.join(ROOT, '.tmp-store-stub.mjs')
+  fs.writeFileSync(p, stub)
+  globalThis.__STORE_URL__ = pathToFileURL(p).href
 }
 
 globalThis.__FAKE_AUDIO__ = FakeAudio
@@ -1044,6 +1072,167 @@ console.log('\n=== 21. 冷启动预热：preload 在 pre- 前缀位、正式装�
   }
 
   console.log(`  —— 互斥总览：${playingSet().length === 0 ? '收尾干净' : '❌ 有残留 ' + playingSet()}`)
+}
+
+console.log('\n=== 22. 预热轨（pre-）事件绝不许劫持正式播放（0.17.1 真机 bug：起播 2 秒被顶到下一集）===')
+{
+  // 根因链（真机 0.17.0）：_syncProgress 写的落点快照没钳上限 → 在集尾暂停/听完时
+  // fileTime = 本集 duration；下次冷启动拿它去 seek 预热轨 pre-0 → ExoPlayer
+  // seek 到音轨末尾直接进 STATE_ENDED → 插件发 complete / playbackState(stopped)，
+  // assetId='pre-0'。旧过滤器「解析不出下标就放行」把它当成"本集播完" →
+  // _gotoTrack(下一集) 把正在播的音轨杀掉重装（出声 2 秒 → 掐断 → 转圈十几秒 → 停在暂停态）。
+  const warmTracks = [
+    { index: 1, startOffset: 0,   duration: 300, url: 'u0', headers: {}, contentUrl: 'http://srv/api/items/bk/file/ino0' },
+    { index: 2, startOffset: 300, duration: 300, url: 'u1', headers: {}, contentUrl: 'http://srv/api/items/bk/file/ino1' },
+    { index: 3, startOffset: 600, duration: 300, url: 'u2', headers: {}, contentUrl: 'http://srv/api/items/bk/file/ino2' },
+  ]
+
+  // ① 在播状态下喂 pre-0 的 complete：不得推进集、不得换集重装、不得破坏播放态
+  state.assets.clear(); state.calls.length = 0
+  const p1 = new BookPlayer({})
+  p1._watchdogMs = 500
+  await p1.load({ itemId: 'bk', tracks: warmTracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  await p1.play()
+  state.calls.length = 0
+  let st22 = []
+  p1.onState = s => st22.push(s)
+  let gotoCalls = 0
+  const realGoto = p1._gotoTrack.bind(p1)
+  p1._gotoTrack = i => { gotoCalls++; return realGoto(i) }
+  await p1._onTrackEnd({ assetId: 'pre-0' })
+  await new Promise(r => setTimeout(r, 40))
+  ok('pre-0 的 complete 不推进 trackIndex', p1.trackIndex === 0, `实际=${p1.trackIndex}`)
+  ok('pre-0 的 complete 不调用 _gotoTrack', gotoCalls === 0, `实际=${gotoCalls}`)
+  ok('pre-0 的 complete 不触发换集/重装（无 stop|unload|preload|play 桥调用）',
+     !state.calls.some(c => ['stop', 'unload', 'preload', 'play'].includes(c[0])),
+     JSON.stringify(state.calls))
+  ok('pre-0 的 complete 不破坏播放态（仍在播 sa-0）',
+     p1.playing === true && p1._wantPlaying === true && playingSet().join() === 'sa-0',
+     `playing=${p1.playing} want=${p1._wantPlaying} assets=${playingSet()}`)
+  ok('pre-0 的 complete 不发任何状态事件（UI 不闪转圈/暂停）', st22.length === 0, JSON.stringify(st22))
+  // 反向：真音轨的 complete 照旧推进 —— 新过滤不许误杀正常换集
+  await p1._onTrackEnd({ assetId: 'sa-0' })
+  ok('本集 complete 仍正常推进（过滤器没误杀真实音轨）', p1.trackIndex === 1, `实际=${p1.trackIndex}`)
+  await p1.stop()
+
+  // ② _wantPlaying=true 时喂 pre-0 的 playbackState{stopped}：不得进反查路径把播放杀掉
+  state.assets.clear(); state.calls.length = 0
+  const p2 = new BookPlayer({})
+  p2._watchdogMs = 500
+  await p2.load({ itemId: 'bk', tracks: warmTracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  await p2.play()
+  state.calls.length = 0
+  st22 = []
+  p2.onState = s => st22.push(s)
+  let resolveCalls = 0
+  const realResolve = p2._resolveRealPause.bind(p2)
+  p2._resolveRealPause = ev => { resolveCalls++; return realResolve(ev) }
+  const bufBefore = p2.buffering
+  ok('前置条件：意图=播放且在播', p2.playing === true && p2._wantPlaying === true,
+     `playing=${p2.playing} want=${p2._wantPlaying}`)
+  await p2._onNativeState({ assetId: 'pre-0', state: 'stopped' })
+  ok('pre-0 的 stopped 不进 _resolveRealPause 反查路径', resolveCalls === 0, `反查调用=${resolveCalls}`)
+  ok('pre-0 的 stopped 不发任何状态事件（不闪 buffering/paused）', st22.length === 0, JSON.stringify(st22))
+  ok('pre-0 的 stopped 不动播放态与意图',
+     p2.playing === true && p2._wantPlaying === true && playingSet().join() === 'sa-0',
+     `playing=${p2.playing} want=${p2._wantPlaying} assets=${playingSet()}`)
+  ok('pre-0 的 stopped 不下发 pause/stop/unload',
+     !state.calls.some(c => ['pause', 'stop', 'unload'].includes(c[0])), JSON.stringify(state.calls))
+  await new Promise(r => setTimeout(r, 40))
+  ok('pre-0 的 stopped 过后播放仍完好（异步反查没把它绕杀、缓冲观感没被改动）',
+     p2.playing === true && p2._wantPlaying === true && p2.buffering === bufBefore,
+     `playing=${p2.playing} want=${p2._wantPlaying} buffering=${p2.buffering}(前置=${bufBefore})`)
+  // 反向：真实音轨的 stopped 仍走反查核实（新过滤只挡非本播放器的 assetId）
+  resolveCalls = 0
+  await p2._onNativeState({ assetId: 'sa-0', state: 'stopped' })
+  ok('真音轨的 stopped 仍进反查路径（没被误杀）', resolveCalls === 1, `反查调用=${resolveCalls}`)
+  await new Promise(r => setTimeout(r, 60))
+  // 反向：远程控制事件常不带 assetId，必须照旧处理
+  resolveCalls = 0
+  await p2._onNativeState({ state: 'paused', reason: 'remotePause' })
+  ok('无 assetId 的 remotePause 仍被处理（进反查）', resolveCalls === 1, `反查调用=${resolveCalls}`)
+  await new Promise(r => setTimeout(r, 60))
+  await p2.pause()
+  st22 = []
+  await p2._onNativeState({ state: 'playing', reason: 'remotePlay' })
+  ok('无 assetId 的 remotePlay 仍被当作用户意图',
+     p2._wantPlaying === true && st22.at(-1)?.isPlaying === true, JSON.stringify(st22))
+  await p2.stop()
+
+  // ②b 真机杀伤复刻：反查那一刻 asset.isPlaying() 闪回 false（缓冲中/焦点被短暂抢占）
+  //    → 未修复时 pre-0 的一条 stopped 事件就足以把正在播的会话错杀成
+  //      「playing=false + _wantPlaying=false」= 老板报的「停在暂停态要再点一次」。
+  state.assets.clear(); state.calls.length = 0
+  const p2b = new BookPlayer({})
+  p2b._watchdogMs = 500
+  await p2b.load({ itemId: 'bk', tracks: warmTracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  await p2b.play()
+  const realIsPlaying = FakeAudio.isPlaying
+  const realResolveForB = BookPlayer.prototype._resolveRealPause   // 计数后仍跑真逻辑
+  FakeAudio.isPlaying = async () => ({ isPlaying: false })    // 反查闪回 false
+  try {
+    resolveCalls = 0
+    p2b._resolveRealPause = ev => { resolveCalls++; realResolveForB.call(p2b, ev) }
+    st22 = []
+    p2b.onState = s => st22.push(s)
+    await p2b._onNativeState({ assetId: 'pre-0', state: 'stopped' })
+    await new Promise(r => setTimeout(r, 60))
+    ok('②b pre-0 的 stopped + 反查闪回 false：不进反查路径', resolveCalls === 0, `反查调用=${resolveCalls}`)
+    ok('②b pre-0 的 stopped 不把会话错杀成暂停（意图与播放态完好）',
+       p2b.playing === true && p2b._wantPlaying === true,
+       `playing=${p2b.playing} want=${p2b._wantPlaying} states=${JSON.stringify(st22)}`)
+    ok('②b pre-0 的 stopped 没发出 paused 事件',
+       !st22.some(s => s.state === 'paused'), JSON.stringify(st22))
+    // 反向：真实音轨的 stopped 在同样闪回 false 时照旧按真停处理（新过滤不许改成吞事件）
+    // 先复位：上一子例在**未修复**代码里已经把这颗 player 打成暂停态，本例只验真音轨路径
+    p2b._wantPlaying = true
+    p2b.playing = true
+    p2b._verifyingPause = false
+    if (state.assets.get('sa-0')) state.assets.get('sa-0').playing = true
+    resolveCalls = 0
+    st22 = []
+    await p2b._onNativeState({ assetId: 'sa-0', state: 'stopped' })
+    await new Promise(r => setTimeout(r, 60))
+    ok('②b 真音轨的 stopped 照旧进反查并按真停收敛',
+       resolveCalls === 1 && p2b.playing === false && p2b._wantPlaying === false,
+       `反查=${resolveCalls} playing=${p2b.playing} want=${p2b._wantPlaying}`)
+  } finally {
+    FakeAudio.isPlaying = realIsPlaying
+    await p2b.stop().catch(() => {})
+  }
+
+  // ③ 落点快照必须钳到本集时长（越界/集尾都不写出去）
+  state.assets.clear(); state.calls.length = 0
+  globalThis.window.__abs = { syncSession: async () => {} }   // _api() 走这条
+  const grabRec = () => (globalThis.__SA_STORE_WRITES__.find(([k]) => k === 'lastListenWarm') || [])[1]
+  const p3 = new BookPlayer({})
+  p3._watchdogMs = 500
+  await p3.load({ itemId: 'bk', tracks: warmTracks, sessionId: 's', duration: 900, startBookTime: 0 })
+  p3.trackIndex = 1
+  globalThis.__SA_STORE_WRITES__.length = 0
+  p3.currentBookTime = 300 + 420        // 越界：本集只有 300s
+  p3._syncProgress(true)
+  await new Promise(r => setTimeout(r, 40))
+  const recOver = grabRec()
+  ok('进度同步写出 lastListenWarm 快照', !!recOver, JSON.stringify(globalThis.__SA_STORE_WRITES__))
+  ok('越界落点钳到本集时长（fileTime ≤ duration）',
+     !!recOver && recOver.fileTime === 300, `fileTime=${recOver?.fileTime}`)
+  ok('钳制不改口径：trackIndex/ino 原样', !!recOver && recOver.trackIndex === 1 && recOver.ino === 'ino1',
+     JSON.stringify(recOver))
+  globalThis.__SA_STORE_WRITES__.length = 0
+  p3.currentBookTime = 300 + 111        // 正常集中落点
+  p3._syncProgress(true)
+  await new Promise(r => setTimeout(r, 40))
+  ok('正常落点原样写入（钳制不误伤）', grabRec()?.fileTime === 111, `fileTime=${grabRec()?.fileTime}`)
+  globalThis.__SA_STORE_WRITES__.length = 0
+  p3.currentBookTime = 0 - 5            // 负偏移（异常进度）
+  p3.trackIndex = 0
+  p3._syncProgress(true)
+  await new Promise(r => setTimeout(r, 40))
+  ok('负落点仍钳到 0 下界', grabRec()?.fileTime === 0, `fileTime=${grabRec()?.fileTime}`)
+  await p3.stop()
+  delete globalThis.window.__abs
+  try { fs.unlinkSync(path.join(ROOT, '.tmp-store-stub.mjs')) } catch (_) {}
 }
 
 console.log('\n==============================================')
